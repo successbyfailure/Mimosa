@@ -11,9 +11,10 @@ from datetime import timedelta
 from typing import Dict, List, Optional
 
 import httpx
+from mimosa.core.api import FirewallGateway
 
 
-class PFSenseClient:
+class PFSenseClient(FirewallGateway):
     """Cliente HTTP contra la API de pfSense/OPNsense.
 
     El cliente asume la existencia de un alias (tabla) en el firewall y
@@ -104,6 +105,11 @@ class PFSenseClient:
         if isinstance(data, list):
             return data
         return []
+
+    def list_blocks(self) -> List[str]:
+        """Compatibilidad con la interfaz :class:`FirewallGateway`."""
+
+        return self.list_table()
 
     def _schedule_unblock(self, ip: str, *, minutes: int) -> None:
         delay = timedelta(minutes=minutes).total_seconds()

@@ -2,7 +2,9 @@
 
 Expone endpoints internos para interacción entre módulos (web, proxy, bot).
 """
-from typing import List
+from typing import List, Optional
+
+from mimosa.core.blocking import BlockEntry, BlockManager
 from pydantic import BaseModel
 
 
@@ -23,19 +25,36 @@ class BlockResponse(BaseModel):
 class CoreAPI:
     """Punto de entrada para acciones de seguridad compartidas."""
 
-    def __init__(self, firewall_gateway: "FirewallGateway"):
+    def __init__(
+        self,
+        firewall_gateway: "FirewallGateway",
+        block_manager: Optional[BlockManager] = None,
+    ):
         self.firewall_gateway = firewall_gateway
+        self.block_manager = block_manager or BlockManager()
 
     def register_block(self, request: BlockRequest) -> BlockResponse:
         """Registra un bloqueo de IP usando la integración de firewall."""
 
+        self.block_manager.add(request.source_ip, request.reason)
         self.firewall_gateway.block_ip(request.source_ip, request.reason)
         return BlockResponse(blocked=True, message=f"IP {request.source_ip} bloqueada")
 
-    def list_blocks(self) -> List[str]:
-        """Devuelve la lista actual de IPs bloqueadas."""
+    def block_ip(self, ip: str, reason: str) -> None:
+        """Atajo para bloquear sin crear manualmente un :class:`BlockRequest`."""
 
-        return self.firewall_gateway.list_blocks()
+        self.register_block(BlockRequest(source_ip=ip, reason=reason))
+
+    def unblock_ip(self, ip: str) -> None:
+        """Elimina un bloqueo tanto del firewall como del registro local."""
+
+        self.block_manager.remove(ip)
+        self.firewall_gateway.unblock_ip(ip)
+
+    def list_blocks(self) -> List[BlockEntry]:
+        """Devuelve la lista actual de IPs bloqueadas con su metadata."""
+
+        return self.block_manager.list()
 
 
 class FirewallGateway:
@@ -45,4 +64,7 @@ class FirewallGateway:
         raise NotImplementedError
 
     def list_blocks(self) -> List[str]:
+        raise NotImplementedError
+
+    def unblock_ip(self, ip: str) -> None:
         raise NotImplementedError
