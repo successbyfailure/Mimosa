@@ -1,6 +1,6 @@
 # Mimosa
 
-Mimosa es un sistema de protección ante automatismos y accesos no deseados. Este esqueleto inicial incluye los módulos principales y ejemplos mínimos de código para cada uno.
+Mimosa es un sistema de defensa para homelabs y entusiastas creado con nocturnidad e IA. Este esqueleto inicial incluye los módulos principales y ejemplos mínimos de código para cada uno.
 
 ## Estructura de módulos
 - `core/`: API interna, detección, bloqueos e integración de firewall.
