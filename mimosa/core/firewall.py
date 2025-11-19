@@ -17,3 +17,8 @@ class DummyFirewall(FirewallGateway):
 
     def list_blocks(self) -> List[str]:
         return list(self._blocked)
+
+    def unblock_ip(self, ip: str) -> None:
+        if ip in self._blocked:
+            self._blocked.remove(ip)
+        print(f"[FIREWALL] Desbloqueando {ip}")
