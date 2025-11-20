@@ -32,6 +32,7 @@ class _BaseSenseClient(FirewallGateway):
         verify_ssl: bool = True,
         timeout: float = 10.0,
         client: Optional[httpx.Client] = None,
+        apply_changes: bool = True,
     ) -> None:
         sanitized_url = base_url.rstrip("/")
         self.base_url = sanitized_url
@@ -41,6 +42,7 @@ class _BaseSenseClient(FirewallGateway):
         )
         self._lock = threading.Lock()
         self._timers: Dict[str, threading.Timer] = {}
+        self._apply_changes = apply_changes
 
     def block_ip(
         self, ip: str, reason: str = "", duration_minutes: Optional[int] = None
@@ -53,6 +55,7 @@ class _BaseSenseClient(FirewallGateway):
         """
 
         self._block_ip_backend(ip, reason)
+        self._apply_changes_if_enabled()
         if duration_minutes and duration_minutes > 0:
             self._schedule_unblock(ip, minutes=duration_minutes)
 
@@ -60,6 +63,7 @@ class _BaseSenseClient(FirewallGateway):
         """Elimina una IP del alias configurado."""
 
         self._unblock_ip_backend(ip)
+        self._apply_changes_if_enabled()
         with self._lock:
             timer = self._timers.pop(ip, None)
         if timer:
@@ -89,7 +93,9 @@ class _BaseSenseClient(FirewallGateway):
     def ensure_ready(self) -> None:
         """Intenta garantizar que el alias de bloqueos exista antes de usarlo."""
 
-        self._ensure_alias_exists()
+        created = self._ensure_alias_exists()
+        if created:
+            self._apply_changes_if_enabled()
 
     def _schedule_unblock(self, ip: str, *, minutes: int) -> None:
         delay = timedelta(minutes=minutes).total_seconds()
@@ -127,10 +133,26 @@ class _BaseSenseClient(FirewallGateway):
     def _list_table_backend(self) -> List[str]:
         raise NotImplementedError
 
-    def _ensure_alias_exists(self) -> None:
-        """Crea el alias de bloqueos si la plataforma lo soporta."""
+    def _ensure_alias_exists(self) -> bool:
+        """Crea el alias de bloqueos si la plataforma lo soporta.
+
+        Devuelve ``True`` si se ha solicitado la creación del alias
+        (permitiendo lanzar un reload del firewall) o ``False`` si ya
+        existía.
+        """
 
         raise NotImplementedError
+
+    @property
+    def _apply_endpoint(self) -> str:
+        """Endpoint para aplicar/reload cambios en el firewall."""
+
+        raise NotImplementedError
+
+    def _apply_changes_if_enabled(self) -> None:
+        if not self._apply_changes:
+            return
+        self._request("POST", self._apply_endpoint)
 
 
 class OPNsenseClient(_BaseSenseClient):
@@ -174,7 +196,9 @@ class OPNsenseClient(_BaseSenseClient):
             )
         except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
             if exc.response.status_code == 404:
-                self._ensure_alias_exists()
+                created = self._ensure_alias_exists()
+                if created:
+                    self._apply_changes_if_enabled()
                 response = self._request(
                     "GET", f"/api/firewall/alias_util/list/{self.alias_name}"
                 )
@@ -187,10 +211,10 @@ class OPNsenseClient(_BaseSenseClient):
             return data
         return []
 
-    def _ensure_alias_exists(self) -> None:
+    def _ensure_alias_exists(self) -> bool:
         try:
             self._request("GET", f"/api/firewall/alias_util/list/{self.alias_name}")
-            return
+            return False
         except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
             if exc.response.status_code != 404:
                 raise
@@ -204,7 +228,7 @@ class OPNsenseClient(_BaseSenseClient):
         }
         try:
             self._request("POST", "/api/firewall/alias_util/add", json=payload)
-            return
+            return True
         except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
             if exc.response.status_code != 404:
                 raise
@@ -212,10 +236,15 @@ class OPNsenseClient(_BaseSenseClient):
         # Si el alias aún no existe, es posible que el listado falle por un 404
         # inicial. Reintentamos tras haber solicitado la creación.
         self._request("GET", f"/api/firewall/alias_util/list/{self.alias_name}")
+        return True
 
     @property
     def _status_endpoint(self) -> str:
         return "/api/core/firmware/info"
+
+    @property
+    def _apply_endpoint(self) -> str:
+        return "/api/firewall/filter/apply"
 
 
 class PFSenseClient(_BaseSenseClient):
@@ -257,7 +286,9 @@ class PFSenseClient(_BaseSenseClient):
             response = self._request("GET", f"/api/v1/firewall/alias/{self.alias_name}")
         except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
             if exc.response.status_code == 404:
-                self._ensure_alias_exists()
+                created = self._ensure_alias_exists()
+                if created:
+                    self._apply_changes_if_enabled()
                 response = self._request("GET", f"/api/v1/firewall/alias/{self.alias_name}")
             else:
                 raise
@@ -270,10 +301,10 @@ class PFSenseClient(_BaseSenseClient):
             return [item.get("address", item) if isinstance(item, dict) else item for item in data]
         return []
 
-    def _ensure_alias_exists(self) -> None:
+    def _ensure_alias_exists(self) -> bool:
         try:
             self._request("GET", f"/api/v1/firewall/alias/{self.alias_name}")
-            return
+            return False
         except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
             if exc.response.status_code != 404:
                 raise
@@ -285,10 +316,15 @@ class PFSenseClient(_BaseSenseClient):
             "addresses": [],
         }
         self._request("POST", "/api/v1/firewall/alias", json=payload)
+        return True
 
     @property
     def _status_endpoint(self) -> str:
         return "/api/v1/system/status"
+
+    @property
+    def _apply_endpoint(self) -> str:
+        return "/api/v1/diagnostics/filter/reload"
 
     def check_connection(self) -> None:
         """Comprueba conectividad y detecta credenciales inválidas."""

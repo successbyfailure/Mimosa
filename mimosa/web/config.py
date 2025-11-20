@@ -25,6 +25,7 @@ class FirewallConfig:
     alias_name: str = "mimosa_blocklist"
     verify_ssl: bool = True
     timeout: float = 5.0
+    apply_changes: bool = True
 
     @classmethod
     def new(
@@ -38,6 +39,7 @@ class FirewallConfig:
         alias_name: str = "mimosa_blocklist",
         verify_ssl: bool = True,
         timeout: float = 5.0,
+        apply_changes: bool = True,
     ) -> "FirewallConfig":
         return cls(
             id=uuid.uuid4().hex,
@@ -49,6 +51,7 @@ class FirewallConfig:
             alias_name=alias_name,
             verify_ssl=verify_ssl,
             timeout=timeout,
+            apply_changes=apply_changes,
         )
 
 
@@ -113,6 +116,7 @@ def build_firewall_gateway(config: FirewallConfig) -> FirewallGateway:
             alias_name=config.alias_name,
             verify_ssl=config.verify_ssl,
             timeout=config.timeout,
+            apply_changes=config.apply_changes,
         )
     if config.type == "pfsense":
         return PFSenseClient(
@@ -122,6 +126,7 @@ def build_firewall_gateway(config: FirewallConfig) -> FirewallGateway:
             alias_name=config.alias_name,
             verify_ssl=config.verify_ssl,
             timeout=config.timeout,
+            apply_changes=config.apply_changes,
         )
     raise ValueError(f"Tipo de firewall no soportado: {config.type}")
 

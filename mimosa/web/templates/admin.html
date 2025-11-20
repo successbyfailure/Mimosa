@@ -35,10 +35,14 @@
       <label>Timeout (s)</label>
       <input name="timeout" type="number" step="0.5" value="5" />
     </div>
-    <div style="display:flex; align-items:flex-end; gap:10px;">
+    <div style="display:flex; align-items:flex-end; gap:10px; flex-wrap: wrap;">
       <label style="display:flex; gap:8px; align-items:center;">
         <input type="checkbox" name="verify_ssl" checked style="width:auto;" />
         Verificar SSL
+      </label>
+      <label style="display:flex; gap:8px; align-items:center;">
+        <input type="checkbox" name="apply_changes" checked style="width:auto;" />
+        Recargar reglas tras cambios
       </label>
       <button type="submit">Guardar</button>
       <button type="button" class="secondary" onclick="testConnection(event)">Probar conexión</button>
@@ -46,6 +50,11 @@
   </form>
   <div id="form-message" class="muted" style="margin-top:10px;"></div>
 </section>
+
+<p class="muted" style="margin-top:-6px; margin-bottom:18px;">
+  Cuando está activo <strong>Recargar reglas tras cambios</strong>, Mimosa invoca el endpoint de apply/reload del firewall
+  después de crear alias y modificar entradas. Desactívalo solo en entornos de prueba para evitar aplicar cambios reales.
+</p>
 
 <section class="card">
   <div class="flex space">
@@ -62,11 +71,12 @@
         <th>Tipo</th>
         <th>Alias</th>
         <th>Verificación SSL</th>
+        <th>Apply/Reload</th>
         <th>Acciones</th>
       </tr>
     </thead>
     <tbody id="fw-table">
-      <tr><td colspan="5" class="muted">Cargando...</td></tr>
+      <tr><td colspan="6" class="muted">Cargando...</td></tr>
     </tbody>
   </table>
 </section>
@@ -171,6 +181,10 @@
           <input type="checkbox" name="verify_ssl" style="width:auto;" />
           Verificar SSL
         </label>
+        <label style="display:flex; gap:8px; align-items:center;">
+          <input type="checkbox" name="apply_changes" style="width:auto;" />
+          Recargar reglas tras cambios
+        </label>
         <button type="submit">Guardar cambios</button>
         <button type="button" class="secondary" onclick="setupFirewall(event)">Setup Mimosa</button>
       </div>
@@ -213,7 +227,7 @@ async function loadFirewalls() {
   const tbody = document.getElementById('fw-table');
   tbody.innerHTML = '';
   if (!data.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="muted">No hay firewalls configurados.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="muted">No hay firewalls configurados.</td></tr>';
     renderBlockSelector();
     return;
   }
@@ -224,6 +238,7 @@ async function loadFirewalls() {
       <td>${cfg.type}</td>
       <td>${cfg.alias_name}</td>
       <td>${cfg.verify_ssl ? 'Sí' : 'No'}</td>
+      <td>${cfg.apply_changes ? 'Sí' : 'No'}</td>
       <td style="text-align:right; display:flex; gap:8px; justify-content:flex-end;">
         <button class="secondary" onclick="openEditModal('${cfg.id}')">Editar</button>
         <button class="secondary" onclick="deleteFirewall('${cfg.id}')">Eliminar</button>
@@ -264,6 +279,7 @@ async function submitForm(event) {
     form.alias_name.value = 'mimosa_blocklist';
     form.timeout.value = '5';
     form.verify_ssl.checked = true;
+    form.apply_changes.checked = true;
     loadFirewalls();
   } else {
     message.textContent = 'Error al guardar';
@@ -274,6 +290,7 @@ async function submitForm(event) {
 function buildPayload(form) {
   const payload = Object.fromEntries(new FormData(form));
   payload.verify_ssl = form.verify_ssl.checked;
+  payload.apply_changes = form.apply_changes.checked;
   payload.timeout = parseFloat(payload.timeout || '5');
   return payload;
 }
@@ -287,6 +304,9 @@ function setFormValues(form, cfg) {
   form.api_secret.value = cfg.api_secret || '';
   form.timeout.value = cfg.timeout ?? 5;
   form.verify_ssl.checked = Boolean(cfg.verify_ssl);
+  if (form.apply_changes) {
+    form.apply_changes.checked = cfg.apply_changes ?? true;
+  }
 }
 
 async function testConnection(event) {

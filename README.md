@@ -25,6 +25,7 @@ Mimosa incluye una pequeña aplicación FastAPI para consultar métricas y gesti
 1. Instala las dependencias actualizadas: `pip install -r requirements.txt`.
 2. Lanza el servidor: `uvicorn mimosa.web.app:app --reload`.
 3. Abre en el navegador `http://localhost:8000` para ver el dashboard y `http://localhost:8000/admin` para gestionar los firewalls configurados (persisten en `data/firewalls.json`).
+4. La UI aplica automáticamente un *apply/reload* tras crear alias o modificar entradas en pfSense/OPNsense para que los cambios surtan efecto. Puedes desactivar el flag de "Recargar reglas tras cambios" en la pantalla de administración si necesitas hacer pruebas sin impactar el firewall.
 
 ## Despliegue con Docker Compose
 1. Crea un fichero `.env` a partir de `env.example` con tus credenciales de firewall y la ruta de base de datos deseada.
