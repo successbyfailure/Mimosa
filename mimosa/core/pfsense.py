@@ -67,7 +67,7 @@ class PFSenseClient(FirewallGateway):
         self._timers: Dict[str, threading.Timer] = {}
 
     def block_ip(
-        self, ip: str, *, reason: str = "", duration_minutes: Optional[int] = None
+        self, ip: str, reason: str = "", duration_minutes: Optional[int] = None
     ) -> None:
         """Añade una IP al alias configurado.
 

@@ -3,11 +3,14 @@ import os
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, FastAPI, Form
 from fastapi.responses import HTMLResponse
 
+from mimosa.core.api import BlockRequest, CoreAPI
+from mimosa.core.offenses import OffenseStore
+from mimosa.core.firewall import DummyFirewall
 from mimosa.proxy_trap.endpoint import forbidden_interface_attempts, router as proxy_router
 
 app = FastAPI(title="Mimosa Dashboard")
@@ -39,7 +42,6 @@ class AdminState:
     """Mantiene la configuración editable desde el panel de administración."""
 
     def __init__(self) -> None:
-        self.blocklist: List[Dict[str, str]] = []
         self.alert_rules: List[AlertRule] = [
             AlertRule(
                 rule_id="ports-default",
@@ -60,16 +62,6 @@ class AdminState:
             block_minutes=int(os.getenv("BLOCK_DURATION_MINUTES", "60")),
         )
 
-    def add_block(self, ip: str, reason: str) -> None:
-        self.blocklist = [entry for entry in self.blocklist if entry["ip"] != ip]
-        self.blocklist.append(
-            {"ip": ip, "reason": reason or "Bloqueo manual", "created_at": datetime.utcnow()}
-        )
-        self.blocklist.sort(key=lambda entry: entry["created_at"], reverse=True)
-
-    def remove_block(self, ip: str) -> None:
-        self.blocklist = [entry for entry in self.blocklist if entry["ip"] != ip]
-
     def add_alert_rule(self, condition: str, target: str, severity: str) -> None:
         rule_id = f"rule-{int(datetime.utcnow().timestamp() * 1000)}"
         self.alert_rules.append(
@@ -88,6 +80,8 @@ class AdminState:
 
 
 admin_state = AdminState()
+core_api = CoreAPI(DummyFirewall())
+offense_store = OffenseStore()
 
 
 def _demo_tasks() -> List[Dict[str, str]]:
@@ -117,10 +111,18 @@ def _blocked_ip_summary() -> List[Dict[str, str]]:
     """Agrega intentos del proxy para mostrar un gráfico ligero."""
 
     if forbidden_interface_attempts:
-        counts = Counter(attempt.get("client", "desconocido") for attempt in forbidden_interface_attempts)
+        counts = Counter(
+            attempt.get("client", "desconocido") for attempt in forbidden_interface_attempts
+        )
         return [
             {"ip": ip, "count": str(count)}
             for ip, count in counts.most_common(6)
+        ]
+
+    blocked = core_api.list_blocks()
+    if blocked:
+        return [
+            {"ip": entry.ip, "count": "1"} for entry in blocked[:6]
         ]
 
     # Datos de ejemplo cuando no hay actividad real
@@ -134,66 +136,74 @@ def _blocked_ip_summary() -> List[Dict[str, str]]:
 def _recent_incidents() -> List[Dict[str, str]]:
     """Construye una tabla de incidentes a partir de intentos o datos ficticios."""
 
+    stored_offenses = offense_store.list_recent(limit=10)
     incidents: List[Dict[str, str]] = []
-    if forbidden_interface_attempts:
-        for attempt in forbidden_interface_attempts[-10:]:
-            incidents.append(
-                {
-                    "timestamp": attempt.get("timestamp", datetime.utcnow().isoformat(timespec="seconds")),
-                    "host": attempt.get("host", "desconocido"),
-                    "client": attempt.get("client", "desconocido"),
-                    "path": attempt.get("path", "/"),
-                    "user_agent": attempt.get("user_agent", ""),
-                }
-            )
-    else:
-        base_time = datetime.utcnow()
-        incidents = [
+    for offense in stored_offenses:
+        incidents.append(
             {
-                "timestamp": (base_time - timedelta(minutes=12)).isoformat(timespec="seconds"),
-                "host": "api.mimosa.local",
-                "client": "203.0.113.42",
-                "path": "/auth/login",
-                "user_agent": "curl/8.6.0",
-            },
-            {
-                "timestamp": (base_time - timedelta(minutes=34)).isoformat(timespec="seconds"),
-                "host": "api.mimosa.local",
-                "client": "198.51.100.7",
-                "path": "/admin",
-                "user_agent": "python-requests/2.31",
-            },
-            {
-                "timestamp": (base_time - timedelta(hours=2, minutes=5)).isoformat(timespec="seconds"),
-                "host": "api.mimosa.local",
-                "client": "192.0.2.15",
-                "path": "/api/trap",
-                "user_agent": "Mozilla/5.0",
-            },
-        ]
+                "timestamp": offense.created_at.isoformat(timespec="seconds"),
+                "host": offense.host or "desconocido",
+                "client": offense.source_ip,
+                "path": offense.path or "/",
+                "user_agent": offense.user_agent or "",
+            }
+        )
 
-    return incidents
+    if incidents:
+        return incidents
+
+    base_time = datetime.utcnow()
+    return [
+        {
+            "timestamp": (base_time - timedelta(minutes=12)).isoformat(timespec="seconds"),
+            "host": "api.mimosa.local",
+            "client": "203.0.113.42",
+            "path": "/auth/login",
+            "user_agent": "curl/8.6.0",
+        },
+        {
+            "timestamp": (base_time - timedelta(minutes=34)).isoformat(timespec="seconds"),
+            "host": "api.mimosa.local",
+            "client": "198.51.100.7",
+            "path": "/admin",
+            "user_agent": "python-requests/2.31",
+        },
+        {
+            "timestamp": (base_time - timedelta(hours=2, minutes=5)).isoformat(timespec="seconds"),
+            "host": "api.mimosa.local",
+            "client": "192.0.2.15",
+            "path": "/api/trap",
+            "user_agent": "Mozilla/5.0",
+        },
+    ]
 
 
 def _render_blocklist_rows() -> str:
     """Pinta las filas de la tabla de bloqueos manuales."""
 
-    if not admin_state.blocklist:
+    blocks = core_api.list_blocks()
+    if not blocks:
         return """
-        <tr><td class=\"py-3 px-3 text-sm text-slate-500\" colspan=\"4\">No hay bloqueos activos.</td></tr>
+        <tr><td class=\"py-3 px-3 text-sm text-slate-500\" colspan=\"5\">No hay bloqueos activos.</td></tr>
         """
 
+    def format_expiry(expires_at: Optional[datetime]) -> str:
+        if not expires_at:
+            return "Sin caducidad"
+        return expires_at.isoformat(timespec="seconds")
+
     rows = []
-    for entry in admin_state.blocklist:
+    for entry in blocks:
         rows.append(
             f"""
             <tr class=\"border-b border-slate-100 last:border-none\">
-                <td class=\"py-2 px-3 text-sm font-semibold\">{entry['ip']}</td>
-                <td class=\"py-2 px-3 text-sm text-slate-700\">{entry['reason']}</td>
-                <td class=\"py-2 px-3 text-xs text-slate-500\">{entry['created_at'].isoformat(timespec='seconds')}</td>
+                <td class=\"py-2 px-3 text-sm font-semibold\">{entry.ip}</td>
+                <td class=\"py-2 px-3 text-sm text-slate-700\">{entry.reason}</td>
+                <td class=\"py-2 px-3 text-xs text-slate-500\">{entry.created_at.isoformat(timespec='seconds')}</td>
+                <td class=\"py-2 px-3 text-xs text-slate-500\">{format_expiry(entry.expires_at)}</td>
                 <td class=\"py-2 px-3\">
                     <button
-                        hx-post=\"/api/admin/blocklist/{entry['ip']}/remove\"
+                        hx-post=\"/api/admin/blocklist/{entry.ip}/remove\"
                         hx-target=\"#blocklist\"
                         hx-swap=\"innerHTML\"
                         class=\"text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 rounded px-3 py-1 transition\"
@@ -403,7 +413,12 @@ async def blocklist_partial() -> str:
 async def add_block(ip: str = Form(...), reason: str = Form("Bloqueo manual")) -> str:
     """Registra un bloqueo manual desde el panel."""
 
-    admin_state.add_block(ip.strip(), reason.strip())
+    payload = BlockRequest(
+        source_ip=ip.strip(),
+        reason=reason.strip() or "Bloqueo manual",
+        duration_minutes=admin_state.blocking_policy.block_minutes,
+    )
+    core_api.register_block(payload)
     return _render_blocklist_rows()
 
 
@@ -411,7 +426,7 @@ async def add_block(ip: str = Form(...), reason: str = Form("Bloqueo manual")) -
 async def remove_block(ip: str) -> str:
     """Elimina una IP bloqueada manualmente."""
 
-    admin_state.remove_block(ip)
+    core_api.unblock_ip(ip)
     return _render_blocklist_rows()
 
 
@@ -567,11 +582,12 @@ async def index() -> str:
                                         <th class="py-2 px-3">IP</th>
                                         <th class="py-2 px-3">Motivo</th>
                                         <th class="py-2 px-3">Creado</th>
+                                        <th class="py-2 px-3">Expira</th>
                                         <th class="py-2 px-3">Acciones</th>
                                     </tr>
                                 </thead>
                                 <tbody id="blocklist" hx-get="/api/admin/blocklist" hx-trigger="load" hx-swap="innerHTML">
-                                    <tr><td class="py-3 px-3 text-sm text-slate-500" colspan="4">Cargando bloqueos...</td></tr>
+                                    <tr><td class="py-3 px-3 text-sm text-slate-500" colspan="5">Cargando bloqueos...</td></tr>
                                 </tbody>
                             </table>
                         </div>

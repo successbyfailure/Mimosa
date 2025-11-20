@@ -6,9 +6,12 @@ from typing import Dict, List
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from mimosa.core.offenses import OffenseStore
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 forbidden_interface_attempts: List[Dict[str, str]] = []
+offense_store = OffenseStore()
 
 
 @router.post("/trap")
@@ -38,6 +41,15 @@ def _register_forbidden_interface_attempt(request: Request) -> Dict[str, str]:
         attempt["path"],
         attempt["method"],
         attempt["client"],
+    )
+    offense_store.record(
+        source_ip=attempt["client"],
+        description="Acceso a interfaz prohibida detectado",
+        severity="alto",
+        host=attempt["host"],
+        path=attempt["path"],
+        user_agent=attempt["user_agent"],
+        context={"method": attempt["method"]},
     )
     return attempt
 
