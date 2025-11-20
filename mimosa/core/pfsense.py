@@ -220,18 +220,35 @@ class OPNsenseClient(_BaseSenseClient):
                 raise
 
         payload = {
+            "alias": {
+                "name": self.alias_name,
+                "type": "network",
+                "content": "",
+                "description": "Mimosa blocklist",
+                "enabled": "1",
+            }
+        }
+
+        try:
+            # API moderna (24.7+) documentada en
+            # https://docs.opnsense.org/development/api/core/firewall.html
+            self._request("POST", "/api/firewall/alias/addItem", json=payload)
+            return True
+        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
+            if exc.response.status_code != 404:
+                raise
+
+        # Compatibilidad con instalaciones antiguas donde alias_util sigue
+        # siendo el punto de entrada para crear alias vacíos.
+        legacy_payload = {
             "name": self.alias_name,
             "type": "network",
             "content": "",
             "description": "Mimosa blocklist",
             "enabled": "1",
         }
-        try:
-            self._request("POST", "/api/firewall/alias_util/add", json=payload)
-            return True
-        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
-            if exc.response.status_code != 404:
-                raise
+
+        self._request("POST", "/api/firewall/alias_util/add", json=legacy_payload)
 
         # Si el alias aún no existe, es posible que el listado falle por un 404
         # inicial. Reintentamos tras haber solicitado la creación.
