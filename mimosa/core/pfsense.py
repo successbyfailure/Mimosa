@@ -196,13 +196,22 @@ class OPNsenseClient(_BaseSenseClient):
                 raise
 
         payload = {
-            "enabled": "1",
             "name": self.alias_name,
             "type": "network",
             "content": "",
             "description": "Mimosa blocklist",
+            "enabled": "1",
         }
-        self._request("POST", "/api/firewall/alias/addItem", json=payload)
+        try:
+            self._request("POST", "/api/firewall/alias_util/add", json=payload)
+            return
+        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
+            if exc.response.status_code != 404:
+                raise
+
+        # Si el alias aún no existe, es posible que el listado falle por un 404
+        # inicial. Reintentamos tras haber solicitado la creación.
+        self._request("GET", f"/api/firewall/alias_util/list/{self.alias_name}")
 
     @property
     def _status_endpoint(self) -> str:
