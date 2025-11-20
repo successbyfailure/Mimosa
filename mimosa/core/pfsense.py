@@ -86,6 +86,11 @@ class _BaseSenseClient(FirewallGateway):
 
         self._request("GET", self._status_endpoint)
 
+    def ensure_ready(self) -> None:
+        """Intenta garantizar que el alias de bloqueos exista antes de usarlo."""
+
+        self._ensure_alias_exists()
+
     def _schedule_unblock(self, ip: str, *, minutes: int) -> None:
         delay = timedelta(minutes=minutes).total_seconds()
         timer = threading.Timer(delay, lambda: self.unblock_ip(ip))
@@ -120,6 +125,11 @@ class _BaseSenseClient(FirewallGateway):
         raise NotImplementedError
 
     def _list_table_backend(self) -> List[str]:
+        raise NotImplementedError
+
+    def _ensure_alias_exists(self) -> None:
+        """Crea el alias de bloqueos si la plataforma lo soporta."""
+
         raise NotImplementedError
 
 
@@ -158,15 +168,41 @@ class OPNsenseClient(_BaseSenseClient):
         self._request("POST", f"/api/firewall/alias_util/remove/{self.alias_name}/{ip}")
 
     def _list_table_backend(self) -> List[str]:
-        response = self._request(
-            "GET", f"/api/firewall/alias_util/list/{self.alias_name}"
-        )
+        try:
+            response = self._request(
+                "GET", f"/api/firewall/alias_util/list/{self.alias_name}"
+            )
+        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
+            if exc.response.status_code == 404:
+                self._ensure_alias_exists()
+                response = self._request(
+                    "GET", f"/api/firewall/alias_util/list/{self.alias_name}"
+                )
+            else:
+                raise
         data = response.json()
         if isinstance(data, dict) and "items" in data:
             return [entry.get("address", "") for entry in data.get("items", [])]
         if isinstance(data, list):
             return data
         return []
+
+    def _ensure_alias_exists(self) -> None:
+        try:
+            self._request("GET", f"/api/firewall/alias_util/list/{self.alias_name}")
+            return
+        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
+            if exc.response.status_code != 404:
+                raise
+
+        payload = {
+            "enabled": "1",
+            "name": self.alias_name,
+            "type": "network",
+            "content": "",
+            "description": "Mimosa blocklist",
+        }
+        self._request("POST", "/api/firewall/alias/addItem", json=payload)
 
     @property
     def _status_endpoint(self) -> str:
@@ -208,7 +244,14 @@ class PFSenseClient(_BaseSenseClient):
         )
 
     def _list_table_backend(self) -> List[str]:
-        response = self._request("GET", f"/api/v1/firewall/alias/{self.alias_name}")
+        try:
+            response = self._request("GET", f"/api/v1/firewall/alias/{self.alias_name}")
+        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
+            if exc.response.status_code == 404:
+                self._ensure_alias_exists()
+                response = self._request("GET", f"/api/v1/firewall/alias/{self.alias_name}")
+            else:
+                raise
         data = response.json()
         if isinstance(data, dict):
             for key in ("addresses", "items", "data"):
@@ -217,6 +260,22 @@ class PFSenseClient(_BaseSenseClient):
         if isinstance(data, list):
             return [item.get("address", item) if isinstance(item, dict) else item for item in data]
         return []
+
+    def _ensure_alias_exists(self) -> None:
+        try:
+            self._request("GET", f"/api/v1/firewall/alias/{self.alias_name}")
+            return
+        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
+            if exc.response.status_code != 404:
+                raise
+
+        payload = {
+            "name": self.alias_name,
+            "type": "host",
+            "descr": "Mimosa blocklist",
+            "addresses": [],
+        }
+        self._request("POST", "/api/v1/firewall/alias", json=payload)
 
     @property
     def _status_endpoint(self) -> str:

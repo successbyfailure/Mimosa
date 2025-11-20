@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Literal
 
 from fastapi import FastAPI, HTTPException, Request
+import httpx
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -119,6 +120,18 @@ def create_app(
         config = FirewallConfig.new(**payload.model_dump())
         return config_store.add(config)
 
+    @app.put("/api/firewalls/{config_id}")
+    def update_firewall(config_id: str, payload: FirewallInput) -> FirewallConfig:
+        if not config_store.get(config_id):
+            raise HTTPException(status_code=404, detail="Firewall no encontrado")
+        updated = FirewallConfig(
+            id=config_id,
+            **payload.model_dump(),
+        )
+        config_store.update(config_id, updated)
+        gateway_cache.pop(config_id, None)
+        return updated
+
     @app.delete("/api/firewalls/{config_id}", status_code=204)
     def delete_firewall(config_id: str) -> None:
         if not config_store.get(config_id):
@@ -141,16 +154,25 @@ def create_app(
     @app.get("/api/firewalls/{config_id}/blocks")
     def list_firewall_blocks(config_id: str) -> Dict[str, object]:
         config, gateway = _get_firewall(config_id)
-        return {"alias": config.alias_name, "items": gateway.list_blocks()}
+        try:
+            gateway.ensure_ready()
+            items = gateway.list_blocks()
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"alias": config.alias_name, "items": items}
 
     @app.post("/api/firewalls/{config_id}/blocks", status_code=201)
     def add_firewall_block(config_id: str, payload: BlockInput) -> Dict[str, object]:
         config, gateway = _get_firewall(config_id)
-        gateway.block_ip(
-            payload.ip,
-            payload.reason or "",
-            duration_minutes=payload.duration_minutes,
-        )
+        try:
+            gateway.ensure_ready()
+            gateway.block_ip(
+                payload.ip,
+                payload.reason or "",
+                duration_minutes=payload.duration_minutes,
+            )
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
         block_manager.add(
             payload.ip,
             payload.reason or "Añadido manualmente",
@@ -166,8 +188,24 @@ def create_app(
     @app.delete("/api/firewalls/{config_id}/blocks/{ip}", status_code=204)
     def delete_firewall_block(config_id: str, ip: str) -> None:
         _, gateway = _get_firewall(config_id)
-        gateway.unblock_ip(ip)
+        try:
+            gateway.ensure_ready()
+            gateway.unblock_ip(ip)
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
         block_manager.remove(ip)
+
+    @app.post("/api/firewalls/{config_id}/setup")
+    def setup_firewall(config_id: str) -> Dict[str, str]:
+        config, gateway = _get_firewall(config_id)
+        try:
+            gateway.ensure_ready()
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        except Exception as exc:  # pragma: no cover - errores específicos del cliente
+            raise HTTPException(status_code=400, detail=str(exc))
+        gateway_cache.pop(config.id, None)
+        return {"status": "ok", "message": f"Alias {config.alias_name} preparado"}
 
     return app
 

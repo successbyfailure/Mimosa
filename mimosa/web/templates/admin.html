@@ -62,7 +62,7 @@
         <th>Tipo</th>
         <th>Alias</th>
         <th>Verificación SSL</th>
-        <th></th>
+        <th>Acciones</th>
       </tr>
     </thead>
     <tbody id="fw-table">
@@ -127,9 +127,84 @@
   </div>
 </section>
 
+<div id="edit-modal" class="modal">
+  <div class="panel">
+    <div class="flex space" style="justify-content: space-between;">
+      <h3 style="margin:0">Editar firewall</h3>
+      <button type="button" class="secondary" onclick="closeEditModal()">Cerrar</button>
+    </div>
+    <form id="edit-form" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
+      <div>
+        <label>Nombre</label>
+        <input name="name" required />
+      </div>
+      <div>
+        <label>Tipo</label>
+        <select name="type">
+          <option value="pfsense">pfSense (pfRest)</option>
+          <option value="opnsense">OPNsense</option>
+          <option value="dummy">Dummy</option>
+        </select>
+      </div>
+      <div>
+        <label>Base URL</label>
+        <input name="base_url" placeholder="https://firewall.local" />
+      </div>
+      <div>
+        <label>Alias</label>
+        <input name="alias_name" />
+      </div>
+      <div>
+        <label>API key</label>
+        <input name="api_key" />
+      </div>
+      <div>
+        <label>API secret</label>
+        <input name="api_secret" />
+      </div>
+      <div>
+        <label>Timeout (s)</label>
+        <input name="timeout" type="number" step="0.5" />
+      </div>
+      <div style="display:flex; align-items:flex-end; gap:10px; flex-wrap: wrap;">
+        <label style="display:flex; gap:8px; align-items:center;">
+          <input type="checkbox" name="verify_ssl" style="width:auto;" />
+          Verificar SSL
+        </label>
+        <button type="submit">Guardar cambios</button>
+        <button type="button" class="secondary" onclick="setupFirewall(event)">Setup Mimosa</button>
+      </div>
+    </form>
+    <div id="edit-message" class="muted" style="margin-top:10px;"></div>
+  </div>
+</div>
+
 <script>
 let firewallsCache = [];
 let selectedFirewallId = null;
+let editingFirewallId = null;
+const editModal = document.getElementById('edit-modal');
+const editForm = document.getElementById('edit-form');
+
+function closeEditModal() {
+  editingFirewallId = null;
+  editModal.classList.remove('open');
+  editForm.reset();
+  const message = document.getElementById('edit-message');
+  message.textContent = '';
+  message.style.color = '';
+}
+
+function openEditModal(id) {
+  const cfg = firewallsCache.find(item => item.id === id);
+  if (!cfg) return;
+  editingFirewallId = id;
+  setFormValues(editForm, cfg);
+  const message = document.getElementById('edit-message');
+  message.textContent = '';
+  message.style.color = '';
+  editModal.classList.add('open');
+}
 
 async function loadFirewalls() {
   const res = await fetch('/api/firewalls');
@@ -149,16 +224,26 @@ async function loadFirewalls() {
       <td>${cfg.type}</td>
       <td>${cfg.alias_name}</td>
       <td>${cfg.verify_ssl ? 'Sí' : 'No'}</td>
-      <td style="text-align:right;"><button class="secondary" onclick="deleteFirewall('${cfg.id}')">Eliminar</button></td>
+      <td style="text-align:right; display:flex; gap:8px; justify-content:flex-end;">
+        <button class="secondary" onclick="openEditModal('${cfg.id}')">Editar</button>
+        <button class="secondary" onclick="deleteFirewall('${cfg.id}')">Eliminar</button>
+      </td>
     `;
     tbody.appendChild(row);
   });
+
+  if (editingFirewallId && !data.find(cfg => cfg.id === editingFirewallId)) {
+    closeEditModal();
+  }
 
   renderBlockSelector();
 }
 
 async function deleteFirewall(id) {
   await fetch(`/api/firewalls/${id}`, { method: 'DELETE' });
+  if (editingFirewallId === id) {
+    closeEditModal();
+  }
   loadFirewalls();
 }
 
@@ -193,6 +278,17 @@ function buildPayload(form) {
   return payload;
 }
 
+function setFormValues(form, cfg) {
+  form.name.value = cfg.name || '';
+  form.type.value = cfg.type || 'pfsense';
+  form.base_url.value = cfg.base_url || '';
+  form.alias_name.value = cfg.alias_name || '';
+  form.api_key.value = cfg.api_key || '';
+  form.api_secret.value = cfg.api_secret || '';
+  form.timeout.value = cfg.timeout ?? 5;
+  form.verify_ssl.checked = Boolean(cfg.verify_ssl);
+}
+
 async function testConnection(event) {
   const form = event.target.form;
   const payload = buildPayload(form);
@@ -215,6 +311,56 @@ async function testConnection(event) {
     }
   } catch (error) {
     message.textContent = 'Error al probar la conexión';
+    message.style.color = '#fca5a5';
+  }
+}
+
+async function submitEdit(event) {
+  event.preventDefault();
+  if (!editingFirewallId) return;
+  const payload = buildPayload(event.target);
+  const message = document.getElementById('edit-message');
+  message.textContent = 'Guardando...';
+  message.style.color = '';
+  try {
+    const res = await fetch(`/api/firewalls/${editingFirewallId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      message.textContent = 'Firewall actualizado correctamente';
+      message.style.color = '#67e8f9';
+      await loadFirewalls();
+    } else {
+      message.textContent = data.detail || 'No se pudo actualizar';
+      message.style.color = '#fca5a5';
+    }
+  } catch (error) {
+    message.textContent = 'Error al actualizar el firewall';
+    message.style.color = '#fca5a5';
+  }
+}
+
+async function setupFirewall(event) {
+  if (event) event.preventDefault();
+  if (!editingFirewallId) return;
+  const message = document.getElementById('edit-message');
+  message.textContent = 'Preparando alias y listas...';
+  message.style.color = '';
+  try {
+    const res = await fetch(`/api/firewalls/${editingFirewallId}/setup`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      message.textContent = data.message || 'Setup completado';
+      message.style.color = '#67e8f9';
+    } else {
+      message.textContent = data.detail || 'No se pudo preparar el firewall';
+      message.style.color = '#fca5a5';
+    }
+  } catch (error) {
+    message.textContent = 'Error durante el setup';
     message.style.color = '#fca5a5';
   }
 }
@@ -327,6 +473,12 @@ async function removeBlock(ip) {
 document.getElementById('block-form').addEventListener('submit', addBlock);
 
 document.getElementById('firewall-form').addEventListener('submit', submitForm);
+editForm.addEventListener('submit', submitEdit);
+editModal.addEventListener('click', (event) => {
+  if (event.target === editModal) {
+    closeEditModal();
+  }
+});
 loadFirewalls();
 </script>
 {% endblock %}

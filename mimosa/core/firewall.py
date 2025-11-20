@@ -28,3 +28,8 @@ class DummyFirewall(FirewallGateway):
         """Dummy siempre responde como disponible."""
 
         return None
+
+    def ensure_ready(self) -> None:
+        """No requiere preparación adicional en el modo dummy."""
+
+        return None
