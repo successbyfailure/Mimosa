@@ -62,5 +62,6 @@ Mimosa incluye una pequeña aplicación FastAPI para consultar métricas y gesti
    ```
 
 La comprobación de conectividad para pfSense se realiza contra el endpoint
-documentado de estado de pfRest (`/api/v1/system/status`) y devuelve un error
-claro si las credenciales no son válidas o carecen de permisos.
+documentado de estado de pfRest (`/api/v1/status/system`). Si este punto responde
+con un 401/403, Mimosa devolverá un error claro indicando que las credenciales
+no son válidas o carecen de permisos.
