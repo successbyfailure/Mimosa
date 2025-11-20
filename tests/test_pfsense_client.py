@@ -15,7 +15,7 @@ class PFSenseClientTests(unittest.TestCase):
 
         def handler(request: httpx.Request) -> httpx.Response:
             path = request.url.path
-            if path == "/api/v1/system/status":
+            if path == "/api/v1/status/system":
                 response = httpx.Response(200, json={"status": "ok"})
                 self.requests.append((request.method, path, response.status_code))
                 return response
@@ -84,11 +84,11 @@ class PFSenseClientTests(unittest.TestCase):
     def test_check_connection_uses_status_endpoint(self) -> None:
         self.firewall.check_connection()
 
-        self.assertIn(("GET", "/api/v1/system/status", 200), self.requests)
+        self.assertIn(("GET", "/api/v1/status/system", 200), self.requests)
 
     def test_check_connection_raises_permission_error_on_unauthorized(self) -> None:
         def unauthorized_handler(request: httpx.Request) -> httpx.Response:
-            if request.url.path == "/api/v1/system/status":
+            if request.url.path == "/api/v1/status/system":
                 response = httpx.Response(401, json={"error": "unauthorized"})
                 self.requests.append((request.method, request.url.path, response.status_code))
                 return response

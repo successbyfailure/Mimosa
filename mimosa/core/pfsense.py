@@ -320,7 +320,7 @@ class PFSenseClient(_BaseSenseClient):
 
     @property
     def _status_endpoint(self) -> str:
-        return "/api/v1/system/status"
+        return "/api/v1/status/system"
 
     @property
     def _apply_endpoint(self) -> str:
