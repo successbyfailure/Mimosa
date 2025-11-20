@@ -14,33 +14,12 @@ import httpx
 from mimosa.core.api import FirewallGateway
 
 
-class PFSenseClient(FirewallGateway):
-    """Cliente HTTP contra la API de pfSense/OPNsense.
+class _BaseSenseClient(FirewallGateway):
+    """Base compartida para clientes de pfSense y OPNsense.
 
-    El cliente asume la existencia de un alias (tabla) en el firewall y
-    utiliza las rutas REST estándar de OPNsense/pfSense para gestión de
-    alias (`/api/firewall/alias_util`). El API key y secret se usan como
-    autenticación básica, tal y como documenta OPNsense.
-
-    Parameters
-    ----------
-    base_url:
-        URL base de la API (por ejemplo, ``https://firewall.local``). No
-        debe incluir el sufijo ``/api``.
-    api_key:
-        Token de API (usuario) proporcionado por pfSense/OPNsense.
-    api_secret:
-        Secreto asociado al API key.
-    alias_name:
-        Nombre del alias/tabla que se actualizará (por defecto
-        ``mimosa_blocklist``).
-    verify_ssl:
-        Si se debe verificar el certificado TLS del firewall.
-    timeout:
-        Timeout para cada petición HTTP, en segundos.
-    client:
-        Instancia de ``httpx.Client`` ya configurada. Si se omite se crea
-        una por defecto.
+    Gestiona la autenticación HTTP básica, el temporizador de expiración
+    opcional y delega en cada implementación concreta los endpoints a
+    invocar.
     """
 
     def __init__(
@@ -57,11 +36,8 @@ class PFSenseClient(FirewallGateway):
         sanitized_url = base_url.rstrip("/")
         self.base_url = sanitized_url
         self.alias_name = alias_name
-        self._client = client or httpx.Client(
-            base_url=sanitized_url,
-            auth=(api_key, api_secret),
-            verify=verify_ssl,
-            timeout=timeout,
+        self._client = client or self._build_client(
+            sanitized_url, api_key, api_secret, verify_ssl, timeout
         )
         self._lock = threading.Lock()
         self._timers: Dict[str, threading.Timer] = {}
@@ -76,18 +52,14 @@ class PFSenseClient(FirewallGateway):
         usando :func:`unblock_ip`.
         """
 
-        self._request(
-            "POST",
-            f"/api/firewall/alias_util/add/{self.alias_name}/{ip}",
-            json={"description": reason} if reason else None,
-        )
+        self._block_ip_backend(ip, reason)
         if duration_minutes and duration_minutes > 0:
             self._schedule_unblock(ip, minutes=duration_minutes)
 
     def unblock_ip(self, ip: str) -> None:
         """Elimina una IP del alias configurado."""
 
-        self._request("POST", f"/api/firewall/alias_util/remove/{self.alias_name}/{ip}")
+        self._unblock_ip_backend(ip)
         with self._lock:
             timer = self._timers.pop(ip, None)
         if timer:
@@ -96,15 +68,7 @@ class PFSenseClient(FirewallGateway):
     def list_table(self) -> List[str]:
         """Devuelve el contenido actual del alias configurado."""
 
-        response = self._request(
-            "GET", f"/api/firewall/alias_util/list/{self.alias_name}"
-        )
-        data = response.json()
-        if isinstance(data, dict) and "items" in data:
-            return [entry.get("address", "") for entry in data.get("items", [])]
-        if isinstance(data, list):
-            return data
-        return []
+        return self._list_table_backend()
 
     def list_blocks(self) -> List[str]:
         """Compatibilidad con la interfaz :class:`FirewallGateway`."""
@@ -127,3 +91,114 @@ class PFSenseClient(FirewallGateway):
         response = self._client.request(method, url, **kwargs)
         response.raise_for_status()
         return response
+
+    def _build_client(
+        self,
+        base_url: str,
+        api_key: str,
+        api_secret: str,
+        verify_ssl: bool,
+        timeout: float,
+    ) -> httpx.Client:
+        raise NotImplementedError
+
+    def _block_ip_backend(self, ip: str, reason: str) -> None:
+        raise NotImplementedError
+
+    def _unblock_ip_backend(self, ip: str) -> None:
+        raise NotImplementedError
+
+    def _list_table_backend(self) -> List[str]:
+        raise NotImplementedError
+
+
+class OPNsenseClient(_BaseSenseClient):
+    """Cliente HTTP para OPNsense.
+
+    Utiliza los endpoints documentados en
+    https://docs.opnsense.org/development/api.html bajo
+    ``/api/firewall/alias_util`` y autenticación básica con el API key y
+    secret proporcionados por OPNsense.
+    """
+
+    def _build_client(
+        self,
+        base_url: str,
+        api_key: str,
+        api_secret: str,
+        verify_ssl: bool,
+        timeout: float,
+    ) -> httpx.Client:
+        return httpx.Client(
+            base_url=base_url,
+            auth=(api_key, api_secret),
+            verify=verify_ssl,
+            timeout=timeout,
+        )
+
+    def _block_ip_backend(self, ip: str, reason: str) -> None:
+        self._request(
+            "POST",
+            f"/api/firewall/alias_util/add/{self.alias_name}/{ip}",
+            json={"description": reason} if reason else None,
+        )
+
+    def _unblock_ip_backend(self, ip: str) -> None:
+        self._request("POST", f"/api/firewall/alias_util/remove/{self.alias_name}/{ip}")
+
+    def _list_table_backend(self) -> List[str]:
+        response = self._request(
+            "GET", f"/api/firewall/alias_util/list/{self.alias_name}"
+        )
+        data = response.json()
+        if isinstance(data, dict) and "items" in data:
+            return [entry.get("address", "") for entry in data.get("items", [])]
+        if isinstance(data, list):
+            return data
+        return []
+
+
+class PFSenseClient(_BaseSenseClient):
+    """Cliente HTTP para pfSense usando la API pfRest.
+
+    pfRest expone endpoints bajo ``/api/v1`` para gestionar alias.
+    Requiere un API key y secret configurados en el paquete pfRest,
+    enviados como cabeceras ``X-API-KEY`` y ``X-API-SECRET``.
+    """
+
+    def _build_client(
+        self,
+        base_url: str,
+        api_key: str,
+        api_secret: str,
+        verify_ssl: bool,
+        timeout: float,
+    ) -> httpx.Client:
+        return httpx.Client(
+            base_url=base_url,
+            headers={"X-API-KEY": api_key, "X-API-SECRET": api_secret},
+            verify=verify_ssl,
+            timeout=timeout,
+        )
+
+    def _block_ip_backend(self, ip: str, reason: str) -> None:
+        payload = {"address": ip, "descr": reason or ""}
+        self._request(
+            "POST", f"/api/v1/firewall/alias/{self.alias_name}/address", json=payload
+        )
+
+    def _unblock_ip_backend(self, ip: str) -> None:
+        self._request(
+            "DELETE", f"/api/v1/firewall/alias/{self.alias_name}/address/{ip}"
+        )
+
+    def _list_table_backend(self) -> List[str]:
+        response = self._request("GET", f"/api/v1/firewall/alias/{self.alias_name}")
+        data = response.json()
+        if isinstance(data, dict):
+            for key in ("addresses", "items", "data"):
+                if key in data and isinstance(data[key], list):
+                    return [entry.get("address", entry) for entry in data[key]]
+        if isinstance(data, list):
+            return [item.get("address", item) if isinstance(item, dict) else item for item in data]
+        return []

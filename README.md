@@ -27,9 +27,18 @@ En la ruta /control hay un interfaz de gestion y configuracion que permite gesti
    ```python
    from mimosa.core.api import CoreAPI
    from mimosa.core.blocking import BlockManager
-   from mimosa.core.pfsense import PFSenseClient
+   from mimosa.core.pfsense import OPNsenseClient, PFSenseClient
 
+   # Para pfSense (pfRest)
    firewall = PFSenseClient(
+       base_url="https://firewall.local",
+       api_key="API_KEY",
+       api_secret="API_SECRET",
+       alias_name="mimosa_blocklist",
+   )
+
+   # O bien para OPNsense
+   firewall = OPNsenseClient(
        base_url="https://firewall.local",
        api_key="API_KEY",
        api_secret="API_SECRET",
