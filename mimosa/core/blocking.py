@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+from collections import defaultdict
 
 
 @dataclass
@@ -59,3 +60,27 @@ class BlockManager:
         """Devuelve el historial completo de bloqueos (incluidos expirados)."""
 
         return sorted(self._history, key=lambda entry: entry.created_at, reverse=True)
+
+    def timeline(self, window: timedelta, *, bucket: str = "hour") -> List[Dict[str, str | int]]:
+        """Devuelve recuentos de bloqueos agrupados por intervalo temporal."""
+
+        cutoff = datetime.utcnow() - window
+        format_map = {
+            "day": "%Y-%m-%d",
+            "hour": "%Y-%m-%d %H:00",
+            "minute": "%Y-%m-%d %H:%M",
+        }
+        if bucket not in format_map:
+            raise ValueError(f"Bucket desconocido: {bucket}")
+
+        pattern = format_map[bucket]
+        grouped: Dict[str, int] = defaultdict(int)
+        for entry in self._history:
+            if entry.created_at < cutoff:
+                continue
+            grouped[entry.created_at.strftime(pattern)] += 1
+
+        return [
+            {"bucket": bucket_label, "count": count}
+            for bucket_label, count in sorted(grouped.items())
+        ]

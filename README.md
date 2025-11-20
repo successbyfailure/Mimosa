@@ -19,6 +19,12 @@ Mimosa tiene un servidor web para servir un dashboard con estadisticas de ofensa
 ## Backend de gestión
 En la ruta /control hay un interfaz de gestion y configuracion que permite gestionar las reglar por las que las ofensas generan un bloqueo.
 
+## Servidor web de dashboard y administración
+Mimosa incluye una pequeña aplicación FastAPI para consultar métricas y gestionar firewalls.
+
+1. Instala las dependencias actualizadas: `pip install -r requirements.txt`.
+2. Lanza el servidor: `uvicorn mimosa.web.app:app --reload`.
+3. Abre en el navegador `http://localhost:8000` para ver el dashboard y `http://localhost:8000/admin` para gestionar los firewalls configurados (persisten en `data/firewalls.json`).
 
 ## Uso rápido
 1. Instala las dependencias: `pip install -r requirements.txt`.

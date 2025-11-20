@@ -1,2 +1,5 @@
 httpx
 pydantic
+fastapi
+uvicorn
+jinja2

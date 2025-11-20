@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card space">
+  <h2 style="margin:0 0 12px">Agregar firewall</h2>
+  <form id="firewall-form" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
+    <div>
+      <label>Nombre</label>
+      <input name="name" required placeholder="pfSense homelab" />
+    </div>
+    <div>
+      <label>Tipo</label>
+      <select name="type">
+        <option value="pfsense">pfSense (pfRest)</option>
+        <option value="opnsense">OPNsense</option>
+        <option value="dummy">Dummy</option>
+      </select>
+    </div>
+    <div>
+      <label>Base URL</label>
+      <input name="base_url" placeholder="https://firewall.local" />
+    </div>
+    <div>
+      <label>Alias</label>
+      <input name="alias_name" value="mimosa_blocklist" />
+    </div>
+    <div>
+      <label>API key</label>
+      <input name="api_key" />
+    </div>
+    <div>
+      <label>API secret</label>
+      <input name="api_secret" />
+    </div>
+    <div>
+      <label>Timeout (s)</label>
+      <input name="timeout" type="number" step="0.5" value="5" />
+    </div>
+    <div style="display:flex; align-items:flex-end; gap:10px;">
+      <label style="display:flex; gap:8px; align-items:center;">
+        <input type="checkbox" name="verify_ssl" checked style="width:auto;" />
+        Verificar SSL
+      </label>
+      <button type="submit">Guardar</button>
+    </div>
+  </form>
+  <div id="form-message" class="muted" style="margin-top:10px;"></div>
+</section>
+
+<section class="card">
+  <div class="flex space">
+    <div>
+      <h2 style="margin:0">Firewalls configurados</h2>
+      <div class="muted">Se almacenan en <code>data/firewalls.json</code></div>
+    </div>
+    <button class="secondary" onclick="loadFirewalls()">Actualizar</button>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Nombre</th>
+        <th>Tipo</th>
+        <th>Alias</th>
+        <th>Verificación SSL</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="fw-table">
+      <tr><td colspan="5" class="muted">Cargando...</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<script>
+async function loadFirewalls() {
+  const res = await fetch('/api/firewalls');
+  const data = await res.json();
+  const tbody = document.getElementById('fw-table');
+  tbody.innerHTML = '';
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="muted">No hay firewalls configurados.</td></tr>';
+    return;
+  }
+  data.forEach(cfg => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${cfg.name}</td>
+      <td>${cfg.type}</td>
+      <td>${cfg.alias_name}</td>
+      <td>${cfg.verify_ssl ? 'Sí' : 'No'}</td>
+      <td style="text-align:right;"><button class="secondary" onclick="deleteFirewall('${cfg.id}')">Eliminar</button></td>
+    `;
+    tbody.appendChild(row);
+  });
+}
+
+async function deleteFirewall(id) {
+  await fetch(`/api/firewalls/${id}`, { method: 'DELETE' });
+  loadFirewalls();
+}
+
+async function submitForm(event) {
+  event.preventDefault();
+  const form = event.target;
+  const payload = Object.fromEntries(new FormData(form));
+  payload.verify_ssl = form.verify_ssl.checked;
+  payload.timeout = parseFloat(payload.timeout || '5');
+  const res = await fetch('/api/firewalls', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const message = document.getElementById('form-message');
+  if (res.ok) {
+    message.textContent = 'Guardado correctamente';
+    message.style.color = '#67e8f9';
+    form.reset();
+    form.alias_name.value = 'mimosa_blocklist';
+    form.timeout.value = '5';
+    form.verify_ssl.checked = true;
+    loadFirewalls();
+  } else {
+    message.textContent = 'Error al guardar';
+    message.style.color = '#fca5a5';
+  }
+}
+
+document.getElementById('firewall-form').addEventListener('submit', submitForm);
+loadFirewalls();
+</script>
+{% endblock %}

@@ -11,7 +11,7 @@ import json
 import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
@@ -179,4 +179,53 @@ class OffenseStore:
             )
 
         return offenses
+
+    def count_all(self) -> int:
+        """Devuelve el número total de ofensas almacenadas."""
+
+        with self._connection() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM offenses;").fetchone()
+        return int(row[0]) if row else 0
+
+    def count_since(self, since: datetime) -> int:
+        """Cuenta ofensas registradas desde un momento concreto."""
+
+        with self._connection() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM offenses
+                WHERE datetime(created_at) >= datetime(?);
+                """,
+                (since.isoformat(),),
+            ).fetchone()
+
+        return int(row[0]) if row else 0
+
+    def timeline(self, window: timedelta, *, bucket: str = "hour") -> List[Dict[str, str | int]]:
+        """Devuelve recuentos agregados por intervalo para un periodo."""
+
+        cutoff = datetime.utcnow() - window
+        format_map = {
+            "day": "%Y-%m-%d",
+            "hour": "%Y-%m-%d %H:00",
+            "minute": "%Y-%m-%d %H:%M",
+        }
+        if bucket not in format_map:
+            raise ValueError(f"Bucket desconocido: {bucket}")
+
+        strftime_pattern = format_map[bucket]
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT strftime(?, created_at) AS bucket, COUNT(*)
+                FROM offenses
+                WHERE datetime(created_at) >= datetime(?)
+                GROUP BY bucket
+                ORDER BY bucket ASC;
+                """,
+                (strftime_pattern, cutoff.isoformat()),
+            ).fetchall()
+
+        return [{"bucket": row[0], "count": int(row[1])} for row in rows]
 
