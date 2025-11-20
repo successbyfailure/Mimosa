@@ -11,11 +11,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
+from mimosa.core.api import FirewallGateway
 from mimosa.core.blocking import BlockManager
 from mimosa.core.offenses import OffenseStore
 from mimosa.web.config import (
     FirewallConfig,
     FirewallConfigStore,
+    build_firewall_gateway,
     check_firewall_status,
 )
 
@@ -31,6 +33,14 @@ class FirewallInput(BaseModel):
     alias_name: str = "mimosa_blocklist"
     verify_ssl: bool = True
     timeout: float = 5.0
+
+
+class BlockInput(BaseModel):
+    """Payload para crear o eliminar entradas de bloqueo manual."""
+
+    ip: str
+    reason: str | None = None
+    duration_minutes: int | None = None
 
 
 def create_app(
@@ -51,6 +61,17 @@ def create_app(
     offense_store = offense_store or OffenseStore()
     block_manager = block_manager or BlockManager()
     config_store = config_store or FirewallConfigStore()
+    gateway_cache: Dict[str, FirewallGateway] = {}
+
+    def _get_firewall(config_id: str) -> tuple[FirewallConfig, FirewallGateway]:
+        config = config_store.get(config_id)
+        if not config:
+            raise HTTPException(status_code=404, detail="Firewall no encontrado")
+        gateway = gateway_cache.get(config.id)
+        if not gateway:
+            gateway = build_firewall_gateway(config)
+            gateway_cache[config.id] = gateway
+        return config, gateway
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
@@ -103,6 +124,7 @@ def create_app(
         if not config_store.get(config_id):
             raise HTTPException(status_code=404, detail="Firewall no encontrado")
         config_store.delete(config_id)
+        gateway_cache.pop(config_id, None)
 
     @app.get("/api/firewalls/status")
     def firewall_status() -> List[Dict[str, str | bool]]:
@@ -115,6 +137,37 @@ def create_app(
     def test_firewall(payload: FirewallInput) -> Dict[str, str | bool]:
         temporary_config = FirewallConfig.new(**payload.model_dump())
         return check_firewall_status(temporary_config)
+
+    @app.get("/api/firewalls/{config_id}/blocks")
+    def list_firewall_blocks(config_id: str) -> Dict[str, object]:
+        config, gateway = _get_firewall(config_id)
+        return {"alias": config.alias_name, "items": gateway.list_blocks()}
+
+    @app.post("/api/firewalls/{config_id}/blocks", status_code=201)
+    def add_firewall_block(config_id: str, payload: BlockInput) -> Dict[str, object]:
+        config, gateway = _get_firewall(config_id)
+        gateway.block_ip(
+            payload.ip,
+            payload.reason or "",
+            duration_minutes=payload.duration_minutes,
+        )
+        block_manager.add(
+            payload.ip,
+            payload.reason or "Añadido manualmente",
+            payload.duration_minutes,
+        )
+        return {
+            "alias": config.alias_name,
+            "ip": payload.ip,
+            "reason": payload.reason or "",
+            "duration_minutes": payload.duration_minutes,
+        }
+
+    @app.delete("/api/firewalls/{config_id}/blocks/{ip}", status_code=204)
+    def delete_firewall_block(config_id: str, ip: str) -> None:
+        _, gateway = _get_firewall(config_id)
+        gateway.unblock_ip(ip)
+        block_manager.remove(ip)
 
     return app
 

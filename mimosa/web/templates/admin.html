@@ -71,14 +71,75 @@
   </table>
 </section>
 
+<section class="card">
+  <div class="flex space">
+    <div>
+      <h2 style="margin:0">Gestor de bloqueos</h2>
+      <div class="muted">Consulta y modifica las listas de bloqueo en el firewall seleccionado.</div>
+    </div>
+    <div class="flex" style="margin-left:auto; gap:8px;">
+      <select id="block-fw-select" onchange="handleFirewallChange(event)" style="min-width:220px"></select>
+      <button class="secondary" onclick="refreshBlocks()">Actualizar</button>
+    </div>
+  </div>
+
+  <div id="block-manager" class="grid" style="grid-template-columns: 2fr 1.4fr; gap: 18px; margin-top:14px;">
+    <div>
+      <div class="flex space" style="margin-bottom:8px;">
+        <div>
+          <h3 style="margin:0">Entradas en alias <span id="alias-label" class="muted"></span></h3>
+          <div id="block-message" class="muted"></div>
+        </div>
+      </div>
+      <div style="max-height:260px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>IP / Red</th>
+              <th style="width:110px;"></th>
+            </tr>
+          </thead>
+          <tbody id="block-table">
+            <tr><td colspan="2" class="muted">Selecciona un firewall para listar las entradas.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+      <h3 style="margin-top:0">Añadir entrada</h3>
+      <form id="block-form" class="grid" style="grid-template-columns: 1fr; gap: 10px;">
+        <div>
+          <label>IP o red</label>
+          <input name="ip" required placeholder="203.0.113.10" />
+        </div>
+        <div>
+          <label>Motivo</label>
+          <input name="reason" placeholder="Añadido manual" />
+        </div>
+        <div>
+          <label>Duración (min, opcional)</label>
+          <input name="duration_minutes" type="number" min="0" placeholder="60" />
+        </div>
+        <button type="submit">Añadir a la lista</button>
+      </form>
+    </div>
+  </div>
+</section>
+
 <script>
+let firewallsCache = [];
+let selectedFirewallId = null;
+
 async function loadFirewalls() {
   const res = await fetch('/api/firewalls');
   const data = await res.json();
+  firewallsCache = data;
   const tbody = document.getElementById('fw-table');
   tbody.innerHTML = '';
   if (!data.length) {
     tbody.innerHTML = '<tr><td colspan="5" class="muted">No hay firewalls configurados.</td></tr>';
+    renderBlockSelector();
     return;
   }
   data.forEach(cfg => {
@@ -92,6 +153,8 @@ async function loadFirewalls() {
     `;
     tbody.appendChild(row);
   });
+
+  renderBlockSelector();
 }
 
 async function deleteFirewall(id) {
@@ -155,6 +218,113 @@ async function testConnection(event) {
     message.style.color = '#fca5a5';
   }
 }
+
+function renderBlockSelector() {
+  const select = document.getElementById('block-fw-select');
+  select.innerHTML = '';
+  if (!firewallsCache.length) {
+    select.innerHTML = '<option value="" disabled selected>Configura un firewall primero</option>';
+    updateBlockTableMessage('Añade un firewall para gestionar bloqueos.');
+    selectedFirewallId = null;
+    return;
+  }
+  firewallsCache.forEach(cfg => {
+    const opt = document.createElement('option');
+    opt.value = cfg.id;
+    opt.textContent = `${cfg.name} (${cfg.type})`;
+    select.appendChild(opt);
+  });
+  if (!selectedFirewallId) {
+    selectedFirewallId = firewallsCache[0].id;
+  }
+  select.value = selectedFirewallId;
+  refreshBlocks();
+}
+
+function updateBlockTableMessage(message) {
+  const tbody = document.getElementById('block-table');
+  tbody.innerHTML = `<tr><td colspan="2" class="muted">${message}</td></tr>`;
+}
+
+async function refreshBlocks() {
+  if (!selectedFirewallId) {
+    updateBlockTableMessage('Configura un firewall para ver las listas.');
+    return;
+  }
+  updateBlockTableMessage('Cargando entradas...');
+  const messageEl = document.getElementById('block-message');
+  messageEl.textContent = '';
+  try {
+    const res = await fetch(`/api/firewalls/${selectedFirewallId}/blocks`);
+    if (!res.ok) {
+      updateBlockTableMessage('No se pudo obtener la lista.');
+      return;
+    }
+    const data = await res.json();
+    document.getElementById('alias-label').textContent = data.alias ? `(${data.alias})` : '';
+    const tbody = document.getElementById('block-table');
+    tbody.innerHTML = '';
+    if (!data.items || !data.items.length) {
+      updateBlockTableMessage('No hay entradas en la lista.');
+      return;
+    }
+    data.items.forEach(ip => {
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td>${ip}</td>
+        <td style="text-align:right"><button class="secondary" onclick="removeBlock('${ip}')">Eliminar</button></td>
+      `;
+      tbody.appendChild(row);
+    });
+  } catch (error) {
+    updateBlockTableMessage('Error al cargar las entradas.');
+  }
+}
+
+function handleFirewallChange(event) {
+  selectedFirewallId = event.target.value;
+  refreshBlocks();
+}
+
+async function addBlock(event) {
+  event.preventDefault();
+  if (!selectedFirewallId) return;
+  const form = event.target;
+  const payload = Object.fromEntries(new FormData(form));
+  if (payload.duration_minutes === '') {
+    delete payload.duration_minutes;
+  } else {
+    payload.duration_minutes = Number(payload.duration_minutes);
+  }
+  try {
+    const res = await fetch(`/api/firewalls/${selectedFirewallId}/blocks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      form.reset();
+      document.getElementById('block-message').textContent = 'Entrada añadida correctamente.';
+      refreshBlocks();
+    } else {
+      document.getElementById('block-message').textContent = 'No se pudo añadir la entrada.';
+    }
+  } catch (error) {
+    document.getElementById('block-message').textContent = 'Error al añadir la entrada.';
+  }
+}
+
+async function removeBlock(ip) {
+  if (!selectedFirewallId) return;
+  const res = await fetch(`/api/firewalls/${selectedFirewallId}/blocks/${encodeURIComponent(ip)}`, { method: 'DELETE' });
+  if (res.ok) {
+    refreshBlocks();
+  } else {
+    document.getElementById('block-message').textContent = 'No se pudo eliminar la entrada.';
+  }
+}
+
+document.getElementById('block-form').addEventListener('submit', addBlock);
 
 document.getElementById('firewall-form').addEventListener('submit', submitForm);
 loadFirewalls();

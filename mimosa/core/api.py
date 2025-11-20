@@ -84,3 +84,14 @@ class FirewallGateway:
 
     def unblock_ip(self, ip: str) -> None:
         raise NotImplementedError
+
+    def check_connection(self) -> None:
+        """Verifica conectividad con el firewall remoto.
+
+        La implementación por defecto reutiliza ``list_blocks`` para evitar
+        duplicar llamadas en clientes sencillos. Integraciones concretas
+        pueden sobrescribir este método para usar un endpoint de healthcheck
+        que no dependa de que el alias de bloqueos exista previamente.
+        """
+
+        self.list_blocks()

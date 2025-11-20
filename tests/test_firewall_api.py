@@ -62,6 +62,31 @@ class FirewallApiTests(unittest.TestCase):
         payload = response.json()
         self.assertTrue(payload["online"])
 
+    def test_block_manager_endpoints_allow_add_and_remove(self) -> None:
+        created = self.client.post("/api/firewalls", json=self._dummy_payload()).json()
+        config_id = created["id"]
+
+        listing = self.client.get(f"/api/firewalls/{config_id}/blocks")
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(listing.json()["items"], [])
+
+        add_resp = self.client.post(
+            f"/api/firewalls/{config_id}/blocks",
+            json={"ip": "203.0.113.10", "reason": "manual"},
+        )
+        self.assertEqual(add_resp.status_code, 201)
+
+        refreshed = self.client.get(f"/api/firewalls/{config_id}/blocks")
+        self.assertIn("203.0.113.10", refreshed.json()["items"])
+
+        delete_resp = self.client.delete(
+            f"/api/firewalls/{config_id}/blocks/203.0.113.10"
+        )
+        self.assertEqual(delete_resp.status_code, 204)
+
+        final_listing = self.client.get(f"/api/firewalls/{config_id}/blocks")
+        self.assertEqual(final_listing.json()["items"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -23,3 +23,8 @@ class DummyFirewall(FirewallGateway):
         if ip in self._blocked:
             self._blocked.remove(ip)
         print(f"[FIREWALL] Desbloqueando {ip}")
+
+    def check_connection(self) -> None:
+        """Dummy siempre responde como disponible."""
+
+        return None
