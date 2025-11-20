@@ -74,4 +74,3 @@ services:
 networks:
   mimosa-internal:
     driver: bridge
-    internal: true
