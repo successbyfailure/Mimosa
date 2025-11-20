@@ -4,3 +4,4 @@ httpx
 python-telegram-bot
 paramiko
 pydantic
+python-multipart
