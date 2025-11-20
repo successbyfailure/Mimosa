@@ -1,9 +1,11 @@
 """Dashboard de Mimosa basado en FastAPI y HTMX/Alpine.js."""
+import os
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Form
 from fastapi.responses import HTMLResponse
 
 from mimosa.proxy_trap.endpoint import forbidden_interface_attempts, router as proxy_router
@@ -11,6 +13,81 @@ from mimosa.proxy_trap.endpoint import forbidden_interface_attempts, router as p
 app = FastAPI(title="Mimosa Dashboard")
 
 dashboard_router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+admin_router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+@dataclass
+class AlertRule:
+    """Describe una regla que generará alertas de seguridad."""
+
+    rule_id: str
+    condition: str
+    target: str
+    severity: str
+
+
+@dataclass
+class BlockingPolicy:
+    """Configura cuándo una serie de alertas deriva en bloqueo."""
+
+    threshold: int
+    window_minutes: int
+    block_minutes: int
+
+
+class AdminState:
+    """Mantiene la configuración editable desde el panel de administración."""
+
+    def __init__(self) -> None:
+        self.blocklist: List[Dict[str, str]] = []
+        self.alert_rules: List[AlertRule] = [
+            AlertRule(
+                rule_id="ports-default",
+                condition="Acceso a rango de puertos prohibido",
+                target="0-1023",
+                severity="alto",
+            ),
+            AlertRule(
+                rule_id="domain-default",
+                condition="Acceso a dominio restringido",
+                target="intranet.corp",
+                severity="medio",
+            ),
+        ]
+        self.blocking_policy = BlockingPolicy(
+            threshold=int(os.getenv("ALERT_BLOCK_THRESHOLD", "5")),
+            window_minutes=int(os.getenv("ALERT_WINDOW_MINUTES", "15")),
+            block_minutes=int(os.getenv("BLOCK_DURATION_MINUTES", "60")),
+        )
+
+    def add_block(self, ip: str, reason: str) -> None:
+        self.blocklist = [entry for entry in self.blocklist if entry["ip"] != ip]
+        self.blocklist.append(
+            {"ip": ip, "reason": reason or "Bloqueo manual", "created_at": datetime.utcnow()}
+        )
+        self.blocklist.sort(key=lambda entry: entry["created_at"], reverse=True)
+
+    def remove_block(self, ip: str) -> None:
+        self.blocklist = [entry for entry in self.blocklist if entry["ip"] != ip]
+
+    def add_alert_rule(self, condition: str, target: str, severity: str) -> None:
+        rule_id = f"rule-{int(datetime.utcnow().timestamp() * 1000)}"
+        self.alert_rules.append(
+            AlertRule(rule_id=rule_id, condition=condition, target=target, severity=severity)
+        )
+
+    def remove_alert_rule(self, rule_id: str) -> None:
+        self.alert_rules = [rule for rule in self.alert_rules if rule.rule_id != rule_id]
+
+    def update_blocking_policy(self, threshold: int, window_minutes: int, block_minutes: int) -> None:
+        self.blocking_policy = BlockingPolicy(
+            threshold=threshold,
+            window_minutes=window_minutes,
+            block_minutes=block_minutes,
+        )
+
+
+admin_state = AdminState()
 
 
 def _demo_tasks() -> List[Dict[str, str]]:
@@ -96,6 +173,107 @@ def _recent_incidents() -> List[Dict[str, str]]:
         ]
 
     return incidents
+
+
+def _render_blocklist_rows() -> str:
+    """Pinta las filas de la tabla de bloqueos manuales."""
+
+    if not admin_state.blocklist:
+        return """
+        <tr><td class=\"py-3 px-3 text-sm text-slate-500\" colspan=\"4\">No hay bloqueos activos.</td></tr>
+        """
+
+    rows = []
+    for entry in admin_state.blocklist:
+        rows.append(
+            f"""
+            <tr class=\"border-b border-slate-100 last:border-none\">
+                <td class=\"py-2 px-3 text-sm font-semibold\">{entry['ip']}</td>
+                <td class=\"py-2 px-3 text-sm text-slate-700\">{entry['reason']}</td>
+                <td class=\"py-2 px-3 text-xs text-slate-500\">{entry['created_at'].isoformat(timespec='seconds')}</td>
+                <td class=\"py-2 px-3\">
+                    <button
+                        hx-post=\"/api/admin/blocklist/{entry['ip']}/remove\"
+                        hx-target=\"#blocklist\"
+                        hx-swap=\"innerHTML\"
+                        class=\"text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 rounded px-3 py-1 transition\"
+                    >
+                        Quitar
+                    </button>
+                </td>
+            </tr>
+            """
+        )
+    return "".join(rows)
+
+
+def _render_alert_rules() -> str:
+    """Devuelve la lista de reglas de alerta configuradas."""
+
+    if not admin_state.alert_rules:
+        return """
+        <tr><td class=\"py-3 px-3 text-sm text-slate-500\" colspan=\"4\">Sin reglas configuradas.</td></tr>
+        """
+
+    rows = []
+    for rule in admin_state.alert_rules:
+        rows.append(
+            f"""
+            <tr class=\"border-b border-slate-100 last:border-none\">
+                <td class=\"py-2 px-3 text-sm font-semibold\">{rule.condition}</td>
+                <td class=\"py-2 px-3 text-sm text-slate-700\">{rule.target}</td>
+                <td class=\"py-2 px-3 text-xs font-semibold\">
+                    <span class=\"inline-flex items-center gap-2 rounded-full px-2 py-1 { 'bg-red-50 text-red-700' if rule.severity == 'alto' else 'bg-amber-50 text-amber-700' if rule.severity == 'medio' else 'bg-slate-100 text-slate-700' }\">{rule.severity.title()}</span>
+                </td>
+                <td class=\"py-2 px-3\">
+                    <button
+                        hx-post=\"/api/admin/alert-rules/{rule.rule_id}/remove\"
+                        hx-target=\"#alert-rules\"
+                        hx-swap=\"innerHTML\"
+                        class=\"text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 rounded px-3 py-1 transition\"
+                    >
+                        Eliminar
+                    </button>
+                </td>
+            </tr>
+            """
+        )
+    return "".join(rows)
+
+
+def _render_blocking_policy() -> str:
+    """Renderiza la política actual de escalado de alertas a bloqueo."""
+
+    policy = admin_state.blocking_policy
+    return f"""
+    <div id=\"blocking-policy\" class=\"glass rounded-2xl shadow-sm border border-slate-100 p-6 space-y-3\">
+        <div class=\"flex items-center justify-between\">
+            <div>
+                <p class=\"text-xs font-semibold text-emerald-600\">Escalado automático</p>
+                <h2 class=\"text-xl font-bold\">Condiciones de bloqueo</h2>
+            </div>
+            <button class=\"text-xs text-emerald-700\" hx-get=\"/api/admin/blocking-policy\" hx-target=\"#blocking-policy\" hx-swap=\"outerHTML\">Refrescar</button>
+        </div>
+        <form class=\"grid md:grid-cols-3 gap-4 text-sm\" hx-post=\"/api/admin/blocking-policy\" hx-target=\"#blocking-policy\" hx-swap=\"outerHTML\">
+            <label class=\"space-y-2\">
+                <span class=\"text-xs font-semibold text-slate-600\">Alertas totales por IP</span>
+                <input name=\"threshold\" type=\"number\" min=\"1\" value=\"{policy.threshold}\" class=\"w-full border border-slate-200 rounded-lg px-3 py-2\" />
+            </label>
+            <label class=\"space-y-2\">
+                <span class=\"text-xs font-semibold text-slate-600\">Ventana (minutos)</span>
+                <input name=\"window_minutes\" type=\"number\" min=\"1\" value=\"{policy.window_minutes}\" class=\"w-full border border-slate-200 rounded-lg px-3 py-2\" />
+            </label>
+            <label class=\"space-y-2\">
+                <span class=\"text-xs font-semibold text-slate-600\">Tiempo de bloqueo (minutos)</span>
+                <input name=\"block_minutes\" type=\"number\" min=\"1\" value=\"{policy.block_minutes}\" class=\"w-full border border-slate-200 rounded-lg px-3 py-2\" />
+            </label>
+            <div class=\"md:col-span-3 flex justify-end\">
+                <button type=\"submit\" class=\"text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded px-4 py-2 transition\">Guardar cambios</button>
+            </div>
+        </form>
+        <p class=\"text-xs text-slate-500\">Se bloqueará una IP que supere el umbral de alertas en la ventana indicada por el tiempo configurado.</p>
+    </div>
+    """
 
 
 @dashboard_router.get("/blocked-ips", response_class=HTMLResponse)
@@ -214,7 +392,77 @@ async def toggle_task(task_name: str) -> str:
     """
 
 
+@admin_router.get("/blocklist", response_class=HTMLResponse)
+async def blocklist_partial() -> str:
+    """Devuelve el listado de bloqueos en formato HTML para HTMX."""
+
+    return _render_blocklist_rows()
+
+
+@admin_router.post("/blocklist", response_class=HTMLResponse)
+async def add_block(ip: str = Form(...), reason: str = Form("Bloqueo manual")) -> str:
+    """Registra un bloqueo manual desde el panel."""
+
+    admin_state.add_block(ip.strip(), reason.strip())
+    return _render_blocklist_rows()
+
+
+@admin_router.post("/blocklist/{ip}/remove", response_class=HTMLResponse)
+async def remove_block(ip: str) -> str:
+    """Elimina una IP bloqueada manualmente."""
+
+    admin_state.remove_block(ip)
+    return _render_blocklist_rows()
+
+
+@admin_router.get("/alert-rules", response_class=HTMLResponse)
+async def alert_rules_partial() -> str:
+    """Lista las reglas que generan alertas."""
+
+    return _render_alert_rules()
+
+
+@admin_router.post("/alert-rules", response_class=HTMLResponse)
+async def add_alert_rule(
+    condition: str = Form(...),
+    target: str = Form(...),
+    severity: str = Form("medio"),
+) -> str:
+    """Añade una nueva condición de alerta configurable."""
+
+    admin_state.add_alert_rule(condition.strip(), target.strip(), severity.strip() or "medio")
+    return _render_alert_rules()
+
+
+@admin_router.post("/alert-rules/{rule_id}/remove", response_class=HTMLResponse)
+async def remove_alert_rule(rule_id: str) -> str:
+    """Elimina una regla de alerta."""
+
+    admin_state.remove_alert_rule(rule_id)
+    return _render_alert_rules()
+
+
+@admin_router.get("/blocking-policy", response_class=HTMLResponse)
+async def blocking_policy_partial() -> str:
+    """Muestra la política de escalado de alertas a bloqueo."""
+
+    return _render_blocking_policy()
+
+
+@admin_router.post("/blocking-policy", response_class=HTMLResponse)
+async def update_blocking_policy(
+    threshold: int = Form(...),
+    window_minutes: int = Form(...),
+    block_minutes: int = Form(...),
+) -> str:
+    """Actualiza los parámetros que convierten alertas en bloqueos."""
+
+    admin_state.update_blocking_policy(threshold, window_minutes, block_minutes)
+    return _render_blocking_policy()
+
+
 app.include_router(dashboard_router)
+app.include_router(admin_router, prefix="/api")
 app.include_router(proxy_router, prefix="/api")
 
 
@@ -295,6 +543,80 @@ async def index() -> str:
                                     <tr><td class="py-3 px-3 text-sm text-slate-500" colspan="5">Cargando incidentes...</td></tr>
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                </section>
+                <section class="grid md:grid-cols-2 gap-6">
+                    <div class="glass rounded-2xl shadow-sm border border-slate-100 p-6 space-y-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-xs font-semibold text-emerald-600">Administración</p>
+                                <h2 class="text-xl font-bold">Lista de bloqueo manual</h2>
+                            </div>
+                            <button class="text-xs text-emerald-700" hx-get="/api/admin/blocklist" hx-target="#blocklist" hx-swap="innerHTML">Refrescar</button>
+                        </div>
+                        <form class="grid md:grid-cols-3 gap-3 text-sm" hx-post="/api/admin/blocklist" hx-target="#blocklist" hx-swap="innerHTML">
+                            <input name="ip" type="text" required placeholder="IP a bloquear" class="md:col-span-1 border border-slate-200 rounded-lg px-3 py-2" />
+                            <input name="reason" type="text" placeholder="Motivo" class="md:col-span-1 border border-slate-200 rounded-lg px-3 py-2" />
+                            <button type="submit" class="md:col-span-1 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded px-4 py-2 transition">Añadir bloqueo</button>
+                        </form>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left">
+                                <thead>
+                                    <tr class="text-xs uppercase text-slate-500">
+                                        <th class="py-2 px-3">IP</th>
+                                        <th class="py-2 px-3">Motivo</th>
+                                        <th class="py-2 px-3">Creado</th>
+                                        <th class="py-2 px-3">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="blocklist" hx-get="/api/admin/blocklist" hx-trigger="load" hx-swap="innerHTML">
+                                    <tr><td class="py-3 px-3 text-sm text-slate-500" colspan="4">Cargando bloqueos...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="glass rounded-2xl shadow-sm border border-slate-100 p-6 space-y-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-xs font-semibold text-emerald-600">Alertas</p>
+                                <h2 class="text-xl font-bold">Condiciones configurables</h2>
+                            </div>
+                            <button class="text-xs text-emerald-700" hx-get="/api/admin/alert-rules" hx-target="#alert-rules" hx-swap="innerHTML">Refrescar</button>
+                        </div>
+                        <form class="grid md:grid-cols-3 gap-3 text-sm" hx-post="/api/admin/alert-rules" hx-target="#alert-rules" hx-swap="innerHTML">
+                            <input name="condition" type="text" required placeholder="Condición (p.ej. Puerto prohibido)" class="md:col-span-1 border border-slate-200 rounded-lg px-3 py-2" />
+                            <input name="target" type="text" required placeholder="Destino o rango (p.ej. 0-1023)" class="md:col-span-1 border border-slate-200 rounded-lg px-3 py-2" />
+                            <select name="severity" class="md:col-span-1 border border-slate-200 rounded-lg px-3 py-2">
+                                <option value="alto">Severidad alta</option>
+                                <option value="medio" selected>Severidad media</option>
+                                <option value="bajo">Severidad baja</option>
+                            </select>
+                            <div class="md:col-span-3 flex justify-end">
+                                <button type="submit" class="text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded px-4 py-2 transition">Guardar regla</button>
+                            </div>
+                        </form>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left">
+                                <thead>
+                                    <tr class="text-xs uppercase text-slate-500">
+                                        <th class="py-2 px-3">Condición</th>
+                                        <th class="py-2 px-3">Objetivo</th>
+                                        <th class="py-2 px-3">Severidad</th>
+                                        <th class="py-2 px-3">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="alert-rules" hx-get="/api/admin/alert-rules" hx-trigger="load" hx-swap="innerHTML">
+                                    <tr><td class="py-3 px-3 text-sm text-slate-500" colspan="4">Cargando reglas...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+                <section hx-get="/api/admin/blocking-policy" hx-trigger="load" hx-target="#blocking-policy" hx-swap="outerHTML">
+                    <div id="blocking-policy">
+                        <div class="glass rounded-2xl shadow-sm border border-slate-100 p-6 space-y-4">
+                            <p class="text-sm text-slate-500">Cargando política de bloqueo...</p>
                         </div>
                     </div>
                 </section>
