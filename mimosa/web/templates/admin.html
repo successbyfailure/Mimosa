@@ -41,6 +41,7 @@
         Verificar SSL
       </label>
       <button type="submit">Guardar</button>
+      <button type="button" class="secondary" onclick="testConnection(event)">Probar conexión</button>
     </div>
   </form>
   <div id="form-message" class="muted" style="margin-top:10px;"></div>
@@ -101,9 +102,7 @@ async function deleteFirewall(id) {
 async function submitForm(event) {
   event.preventDefault();
   const form = event.target;
-  const payload = Object.fromEntries(new FormData(form));
-  payload.verify_ssl = form.verify_ssl.checked;
-  payload.timeout = parseFloat(payload.timeout || '5');
+  const payload = buildPayload(form);
   const res = await fetch('/api/firewalls', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -120,6 +119,39 @@ async function submitForm(event) {
     loadFirewalls();
   } else {
     message.textContent = 'Error al guardar';
+    message.style.color = '#fca5a5';
+  }
+}
+
+function buildPayload(form) {
+  const payload = Object.fromEntries(new FormData(form));
+  payload.verify_ssl = form.verify_ssl.checked;
+  payload.timeout = parseFloat(payload.timeout || '5');
+  return payload;
+}
+
+async function testConnection(event) {
+  const form = event.target.form;
+  const payload = buildPayload(form);
+  const message = document.getElementById('form-message');
+  message.textContent = 'Probando conexión...';
+  message.style.color = '';
+  try {
+    const res = await fetch('/api/firewalls/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (res.ok && data.online) {
+      message.textContent = `Conexión OK (${data.type})`;
+      message.style.color = '#67e8f9';
+    } else {
+      message.textContent = data.message || 'No se pudo establecer conexión';
+      message.style.color = '#fca5a5';
+    }
+  } catch (error) {
+    message.textContent = 'Error al probar la conexión';
     message.style.color = '#fca5a5';
   }
 }
