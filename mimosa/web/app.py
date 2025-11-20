@@ -20,6 +20,19 @@ from mimosa.web.config import (
 )
 
 
+class FirewallInput(BaseModel):
+    """Payload para crear y probar conexiones con firewalls."""
+
+    name: str
+    type: Literal["dummy", "pfsense", "opnsense"]
+    base_url: str | None = None
+    api_key: str | None = None
+    api_secret: str | None = None
+    alias_name: str = "mimosa_blocklist"
+    verify_ssl: bool = True
+    timeout: float = 5.0
+
+
 def create_app(
     *,
     offense_store: OffenseStore | None = None,
@@ -38,16 +51,6 @@ def create_app(
     offense_store = offense_store or OffenseStore()
     block_manager = block_manager or BlockManager()
     config_store = config_store or FirewallConfigStore()
-
-    class FirewallInput(BaseModel):
-        name: str
-        type: Literal["dummy", "pfsense", "opnsense"]
-        base_url: str | None = None
-        api_key: str | None = None
-        api_secret: str | None = None
-        alias_name: str = "mimosa_blocklist"
-        verify_ssl: bool = True
-        timeout: float = 5.0
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
@@ -92,7 +95,7 @@ def create_app(
 
     @app.post("/api/firewalls", status_code=201)
     def create_firewall(payload: FirewallInput) -> FirewallConfig:
-        config = FirewallConfig.new(**payload.dict())
+        config = FirewallConfig.new(**payload.model_dump())
         return config_store.add(config)
 
     @app.delete("/api/firewalls/{config_id}", status_code=204)
@@ -110,7 +113,7 @@ def create_app(
 
     @app.post("/api/firewalls/test")
     def test_firewall(payload: FirewallInput) -> Dict[str, str | bool]:
-        temporary_config = FirewallConfig.new(**payload.dict())
+        temporary_config = FirewallConfig.new(**payload.model_dump())
         return check_firewall_status(temporary_config)
 
     return app
