@@ -288,4 +288,16 @@ class PFSenseClient(_BaseSenseClient):
 
     @property
     def _status_endpoint(self) -> str:
-        return "/api/v1/firewall/alias"
+        return "/api/v1/system/status"
+
+    def check_connection(self) -> None:
+        """Comprueba conectividad y detecta credenciales inválidas."""
+
+        try:
+            super().check_connection()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (401, 403):
+                raise PermissionError(
+                    "Las credenciales de pfRest no son válidas o carecen de permisos"
+                ) from exc
+            raise
