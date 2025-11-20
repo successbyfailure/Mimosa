@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 
-DEFAULT_DB_PATH = Path(os.getenv("MIMOSA_DB_PATH", "volumes/web/mimosa.db"))
+DEFAULT_DB_PATH = Path(os.getenv("MIMOSA_DB_PATH", "data/mimosa.db"))
 
 
 @dataclass
