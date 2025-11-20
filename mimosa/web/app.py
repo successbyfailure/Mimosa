@@ -34,6 +34,7 @@ class FirewallInput(BaseModel):
     alias_name: str = "mimosa_blocklist"
     verify_ssl: bool = True
     timeout: float = 5.0
+    apply_changes: bool = True
 
 
 class BlockInput(BaseModel):

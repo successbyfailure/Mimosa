@@ -37,6 +37,19 @@ class OPNsenseClientTests(unittest.TestCase):
                 self.requests.append((request.method, request.url.path, response.status_code))
                 return response
 
+            if request.url.path.startswith(
+                f"/api/firewall/alias_util/remove/{self.alias_name}/"
+            ):
+                ip = request.url.path.rsplit("/", maxsplit=1)[-1]
+                response = httpx.Response(200, json={"removed": ip})
+                self.requests.append((request.method, request.url.path, response.status_code))
+                return response
+
+            if request.url.path == "/api/firewall/filter/apply":
+                response = httpx.Response(200, json={"status": "ok"})
+                self.requests.append((request.method, request.url.path, response.status_code))
+                return response
+
             response = httpx.Response(500, json={"error": "unexpected"})
             self.requests.append((request.method, request.url.path, response.status_code))
             return response
@@ -77,6 +90,36 @@ class OPNsenseClientTests(unittest.TestCase):
             ("POST", "/api/firewall/alias_util/add", 200),
             self.requests,
         )
+
+    def test_block_and_unblock_trigger_reload(self) -> None:
+        self.firewall.block_ip("203.0.113.10", reason="prueba")
+        self.firewall.unblock_ip("203.0.113.10")
+
+        apply_calls = [req for req in self.requests if req[1] == "/api/firewall/filter/apply"]
+        self.assertEqual(len(apply_calls), 2)
+
+    def test_ensure_ready_applies_when_creating_alias(self) -> None:
+        self.firewall.ensure_ready()
+
+        apply_calls = [req for req in self.requests if req[1] == "/api/firewall/filter/apply"]
+        self.assertEqual(len(apply_calls), 1)
+        self.assertTrue(self.alias_created)
+
+    def test_can_disable_apply_calls_for_tests(self) -> None:
+        firewall = OPNsenseClient(
+            base_url="http://fw",
+            api_key="apikey",
+            api_secret="apisecret",
+            alias_name=self.alias_name,
+            client=self.client,
+            apply_changes=False,
+        )
+
+        firewall.block_ip("203.0.113.10")
+        firewall.unblock_ip("203.0.113.10")
+
+        apply_calls = [req for req in self.requests if req[1] == "/api/firewall/filter/apply"]
+        self.assertEqual(len(apply_calls), 0)
 
 
 if __name__ == "__main__":
