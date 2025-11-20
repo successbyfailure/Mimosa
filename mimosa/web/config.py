@@ -91,6 +91,14 @@ class FirewallConfigStore:
             self._configs.pop(config_id)
             self._save()
 
+    def update(self, config_id: str, payload: FirewallConfig) -> FirewallConfig:
+        if config_id not in self._configs:
+            raise KeyError(config_id)
+        payload.id = config_id
+        self._configs[config_id] = payload
+        self._save()
+        return payload
+
 
 def build_firewall_gateway(config: FirewallConfig) -> FirewallGateway:
     """Construye el cliente correcto según el tipo configurado."""

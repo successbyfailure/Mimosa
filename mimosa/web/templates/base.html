@@ -39,6 +39,9 @@
       .pill.error { background: rgba(248,113,113,.15); color: #fca5a5; }
       .flex { display: flex; gap: 12px; align-items: center; }
       .space { margin-bottom: 18px; }
+      .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; padding: 20px; z-index: 50; }
+      .modal.open { display: flex; }
+      .modal .panel { width: min(760px, 100%); background: var(--card); border-radius: 16px; border: 1px solid rgba(255,255,255,.08); box-shadow: 0 20px 80px rgba(0,0,0,.45); padding: 20px; }
       @media (max-width: 640px) { header { flex-wrap: wrap; } nav { width: 100%; } }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>

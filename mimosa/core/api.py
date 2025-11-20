@@ -85,6 +85,16 @@ class FirewallGateway:
     def unblock_ip(self, ip: str) -> None:
         raise NotImplementedError
 
+    def ensure_ready(self) -> None:
+        """Prepara los recursos necesarios para operar (alias, tablas, etc.).
+
+        La implementación por defecto sólo verifica conectividad. Las
+        integraciones concretas pueden sobreescribir este método para crear
+        automáticamente la infraestructura necesaria.
+        """
+
+        self.check_connection()
+
     def check_connection(self) -> None:
         """Verifica conectividad con el firewall remoto.
 
