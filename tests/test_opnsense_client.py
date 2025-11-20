@@ -11,6 +11,7 @@ class OPNsenseClientTests(unittest.TestCase):
         self.alias_created = False
         self.alias_name = "mimosa_blocklist"
         self.requests: list[tuple[str, str, int]] = []
+        self.fallback_after_additem_404 = False
 
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == f"/api/firewall/alias_util/list/{self.alias_name}":
@@ -18,6 +19,17 @@ class OPNsenseClientTests(unittest.TestCase):
                     response = httpx.Response(200, json={"items": []})
                 else:
                     response = httpx.Response(404, json={"error": "alias missing"})
+                self.requests.append((request.method, request.url.path, response.status_code))
+                return response
+
+            if request.url.path == "/api/firewall/alias/addItem":
+                if self.fallback_after_additem_404:
+                    response = httpx.Response(404, json={"error": "missing endpoint"})
+                else:
+                    payload = json.loads(request.content or b"{}")
+                    alias = payload.get("alias", {})
+                    self.alias_created = alias.get("name") == self.alias_name
+                    response = httpx.Response(200, json={"uuid": "alias-uuid"})
                 self.requests.append((request.method, request.url.path, response.status_code))
                 return response
 
@@ -72,7 +84,7 @@ class OPNsenseClientTests(unittest.TestCase):
 
         self.assertTrue(self.alias_created)
         self.assertIn(
-            ("POST", "/api/firewall/alias_util/add", 200),
+            ("POST", "/api/firewall/alias/addItem", 200),
             self.requests,
         )
 
@@ -86,6 +98,22 @@ class OPNsenseClientTests(unittest.TestCase):
 
         self.assertTrue(self.alias_created)
         self.assertEqual(blocks, [])
+        self.assertIn(
+            ("POST", "/api/firewall/alias/addItem", 200),
+            self.requests,
+        )
+
+    def test_falls_back_to_legacy_alias_util_creation(self) -> None:
+        self.fallback_after_additem_404 = True
+
+        blocks = self.firewall.list_blocks()
+
+        self.assertTrue(self.alias_created)
+        self.assertEqual(blocks, [])
+        self.assertIn(
+            ("POST", "/api/firewall/alias/addItem", 404),
+            self.requests,
+        )
         self.assertIn(
             ("POST", "/api/firewall/alias_util/add", 200),
             self.requests,
