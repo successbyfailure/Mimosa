@@ -10,10 +10,11 @@ class DummyFirewall(FirewallGateway):
     def __init__(self) -> None:
         self._blocked: List[str] = []
 
-    def block_ip(self, ip: str, reason: str) -> None:
+    def block_ip(self, ip: str, reason: str, duration_minutes: int | None = None) -> None:
         if ip not in self._blocked:
             self._blocked.append(ip)
-        print(f"[FIREWALL] Bloqueando {ip}: {reason}")
+        suffix = f" por {duration_minutes}m" if duration_minutes else ""
+        print(f"[FIREWALL] Bloqueando {ip}: {reason}{suffix}")
 
     def list_blocks(self) -> List[str]:
         return list(self._blocked)
