@@ -26,6 +26,11 @@ Mimosa incluye una pequeña aplicación FastAPI para consultar métricas y gesti
 2. Lanza el servidor: `uvicorn mimosa.web.app:app --reload`.
 3. Abre en el navegador `http://localhost:8000` para ver el dashboard y `http://localhost:8000/admin` para gestionar los firewalls configurados (persisten en `data/firewalls.json`).
 
+## Despliegue con Docker Compose
+1. Crea un fichero `.env` a partir de `env.example` con tus credenciales de firewall y la ruta de base de datos deseada.
+2. Levanta el servicio con Docker Compose: `docker compose up --build -d`.
+3. El servicio quedará accesible en `http://localhost:8000` y persistirá los datos en el volumen local `./data`.
+
 ## Uso rápido
 1. Instala las dependencias: `pip install -r requirements.txt`.
 2. Configura tus credenciales del firewall y la ruta de base de datos mediante variables de entorno (ver `env.example`).
