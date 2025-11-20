@@ -130,7 +130,7 @@ def check_firewall_status(config: FirewallConfig) -> Dict[str, str | bool]:
         "message": "",
     }
     try:
-        gateway.list_blocks()
+        gateway.check_connection()
         status["online"] = True
         status["message"] = "Conexión OK"
     except Exception as exc:  # pragma: no cover - logging superficial

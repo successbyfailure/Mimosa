@@ -75,6 +75,17 @@ class _BaseSenseClient(FirewallGateway):
 
         return self.list_table()
 
+    @property
+    def _status_endpoint(self) -> str:
+        """Endpoint usado para validar la conectividad del cliente."""
+
+        raise NotImplementedError
+
+    def check_connection(self) -> None:
+        """Comprueba conectividad sin depender de un alias existente."""
+
+        self._request("GET", self._status_endpoint)
+
     def _schedule_unblock(self, ip: str, *, minutes: int) -> None:
         delay = timedelta(minutes=minutes).total_seconds()
         timer = threading.Timer(delay, lambda: self.unblock_ip(ip))
@@ -157,6 +168,10 @@ class OPNsenseClient(_BaseSenseClient):
             return data
         return []
 
+    @property
+    def _status_endpoint(self) -> str:
+        return "/api/core/firmware/info"
+
 
 class PFSenseClient(_BaseSenseClient):
     """Cliente HTTP para pfSense usando la API pfRest.
@@ -202,3 +217,7 @@ class PFSenseClient(_BaseSenseClient):
         if isinstance(data, list):
             return [item.get("address", item) if isinstance(item, dict) else item for item in data]
         return []
+
+    @property
+    def _status_endpoint(self) -> str:
+        return "/api/v1/firewall/alias"
