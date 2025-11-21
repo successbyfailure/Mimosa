@@ -110,6 +110,9 @@ class FirewallConfigStore:
         return payload
 
     def _maybe_seed_from_env(self) -> Optional[FirewallConfig]:
+        if self._configs:
+            return None
+
         env = os.environ
         name = env.get("INITIAL_FIREWALL_NAME")
         if not name:
@@ -132,13 +135,8 @@ class FirewallConfigStore:
             api_key=env.get("INITIAL_FIREWALL_API_KEY"),
             api_secret=env.get("INITIAL_FIREWALL_API_SECRET"),
             alias_name=alias,
-            verify_ssl=_as_bool(
-                env.get("INITIAL_FIREWALL_VERIFY_SSL"),
-                _as_bool(env.get("VERIFY_FIREWALL_SSL"), True),
-            ),
-            timeout=float(
-                env.get("INITIAL_FIREWALL_TIMEOUT") or env.get("REQUEST_TIMEOUT", 5)
-            ),
+            verify_ssl=_as_bool(env.get("INITIAL_FIREWALL_VERIFY_SSL"), True),
+            timeout=float(env.get("INITIAL_FIREWALL_TIMEOUT") or 15),
             apply_changes=_as_bool(
                 env.get("INITIAL_FIREWALL_APPLY_CHANGES"), True
             ),
