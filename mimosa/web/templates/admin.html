@@ -1,104 +1,231 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="card space">
-  <h2 style="margin:0 0 12px">Agregar firewall</h2>
-  <form id="firewall-form" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
-    <div>
-      <label>Nombre</label>
-      <input name="name" required placeholder="pfSense homelab" />
+<style>
+  .tabs { display:flex; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
+  .tab-btn { background: rgba(255,255,255,.05); color: var(--text); border: 1px solid rgba(255,255,255,.08); padding: 10px 14px; border-radius: 12px; cursor:pointer; font-weight:700; }
+  .tab-btn.active { background: linear-gradient(120deg, #38bdf8, #6366f1); color:white; box-shadow: 0 10px 30px rgba(99,102,241,.35); }
+  .tab-panel { display:none; }
+  .tab-panel.active { display:block; }
+  .pill.warn { background: rgba(251,191,36,.15); color:#fbbf24; }
+</style>
+
+<div class="tabs">
+  <button class="tab-btn active" data-tab="config" onclick="switchTab('config')">Configuración</button>
+  <button class="tab-btn" data-tab="offenses" onclick="switchTab('offenses')">Ofensas</button>
+  <button class="tab-btn" data-tab="blocks" onclick="switchTab('blocks')">Bloqueos</button>
+  <button class="tab-btn" data-tab="ips" onclick="switchTab('ips')">IP inspector</button>
+  <button class="tab-btn" data-tab="whitelist" onclick="switchTab('whitelist')">Whitelist</button>
+</div>
+
+<section id="tab-config" class="tab-panel active">
+  <section class="card space">
+    <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
+      <div>
+        <h2 style="margin:0 0 12px">Gestor de bloqueos</h2>
+        <div class="muted">Configura la duración por defecto y la frecuencia de sincronización con el firewall.</div>
+      </div>
+      <span class="pill warn">Revisa que el firewall no caduca los bloqueos automáticamente</span>
     </div>
-    <div>
-      <label>Tipo</label>
-      <select name="type">
-        <option value="pfsense">pfSense (pfRest)</option>
-        <option value="opnsense">OPNsense</option>
-        <option value="dummy">Dummy</option>
-      </select>
+    <form id="blocking-settings" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
+      <div>
+        <label>Duración por defecto (min)</label>
+        <input name="default_duration_minutes" type="number" min="1" value="60" />
+      </div>
+      <div>
+        <label>Intervalo de comprobación (s)</label>
+        <input name="sync_interval_seconds" type="number" min="60" value="300" />
+      </div>
+      <div style="display:flex; align-items:flex-end; gap:10px;">
+        <button type="submit">Guardar</button>
+        <div id="blocking-settings-message" class="muted"></div>
+      </div>
+    </form>
+  </section>
+
+  <section class="card space">
+    <h2 style="margin:0 0 12px">Agregar firewall</h2>
+    <form id="firewall-form" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
+      <div>
+        <label>Nombre</label>
+        <input name="name" required placeholder="pfSense homelab" />
+      </div>
+      <div>
+        <label>Tipo</label>
+        <select name="type">
+          <option value="pfsense">pfSense (pfRest)</option>
+          <option value="opnsense">OPNsense</option>
+          <option value="dummy">Dummy</option>
+        </select>
+      </div>
+      <div>
+        <label>Base URL</label>
+        <input name="base_url" placeholder="https://firewall.local" />
+      </div>
+      <div>
+        <label>Alias</label>
+        <input name="alias_name" value="mimosa_blocklist" />
+      </div>
+      <div>
+        <label>API key</label>
+        <input name="api_key" />
+      </div>
+      <div>
+        <label>API secret</label>
+        <input name="api_secret" />
+      </div>
+      <div>
+        <label>Timeout (s)</label>
+        <input name="timeout" type="number" step="0.5" value="5" />
+      </div>
+      <div style="display:flex; align-items:flex-end; gap:10px; flex-wrap: wrap;">
+        <label style="display:flex; gap:8px; align-items:center;">
+          <input type="checkbox" name="verify_ssl" checked style="width:auto;" />
+          Verificar SSL
+        </label>
+        <label style="display:flex; gap:8px; align-items:center;">
+          <input type="checkbox" name="apply_changes" checked style="width:auto;" />
+          Recargar reglas tras cambios
+        </label>
+        <button type="submit">Guardar</button>
+        <button type="button" class="secondary" onclick="testConnection(event)">Probar conexión</button>
+      </div>
+    </form>
+    <div id="form-message" class="muted" style="margin-top:10px;"></div>
+  </section>
+
+  <p class="muted" style="margin-top:-6px; margin-bottom:18px;">
+    Cuando está activo <strong>Recargar reglas tras cambios</strong>, Mimosa invoca el endpoint de apply/reload del firewall
+    después de crear alias y modificar entradas. Desactívalo solo en entornos de prueba para evitar aplicar cambios reales.
+  </p>
+
+  <section class="card">
+    <div class="flex space">
+      <div>
+        <h2 style="margin:0">Firewalls configurados</h2>
+        <div class="muted">Se almacenan en <code>data/firewalls.json</code></div>
+      </div>
+      <button class="secondary" onclick="loadFirewalls()">Actualizar</button>
     </div>
-    <div>
-      <label>Base URL</label>
-      <input name="base_url" placeholder="https://firewall.local" />
-    </div>
-    <div>
-      <label>Alias</label>
-      <input name="alias_name" value="mimosa_blocklist" />
-    </div>
-    <div>
-      <label>API key</label>
-      <input name="api_key" />
-    </div>
-    <div>
-      <label>API secret</label>
-      <input name="api_secret" />
-    </div>
-    <div>
-      <label>Timeout (s)</label>
-      <input name="timeout" type="number" step="0.5" value="5" />
-    </div>
-    <div style="display:flex; align-items:flex-end; gap:10px; flex-wrap: wrap;">
-      <label style="display:flex; gap:8px; align-items:center;">
-        <input type="checkbox" name="verify_ssl" checked style="width:auto;" />
-        Verificar SSL
-      </label>
-      <label style="display:flex; gap:8px; align-items:center;">
-        <input type="checkbox" name="apply_changes" checked style="width:auto;" />
-        Recargar reglas tras cambios
-      </label>
-      <button type="submit">Guardar</button>
-      <button type="button" class="secondary" onclick="testConnection(event)">Probar conexión</button>
-    </div>
-  </form>
-  <div id="form-message" class="muted" style="margin-top:10px;"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>Nombre</th>
+          <th>Tipo</th>
+          <th>Alias</th>
+          <th>Verificación SSL</th>
+          <th>Apply/Reload</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody id="fw-table">
+        <tr><td colspan="6" class="muted">Cargando...</td></tr>
+      </tbody>
+    </table>
+  </section>
 </section>
 
-<p class="muted" style="margin-top:-6px; margin-bottom:18px;">
-  Cuando está activo <strong>Recargar reglas tras cambios</strong>, Mimosa invoca el endpoint de apply/reload del firewall
-  después de crear alias y modificar entradas. Desactívalo solo en entornos de prueba para evitar aplicar cambios reales.
-</p>
-
-<section class="card">
-  <div class="flex space">
-    <div>
-      <h2 style="margin:0">Firewalls configurados</h2>
-      <div class="muted">Se almacenan en <code>data/firewalls.json</code></div>
+<section id="tab-offenses" class="tab-panel">
+  <section class="card">
+    <div class="flex space" style="justify-content: space-between;">
+      <div>
+        <h2 style="margin:0">Ofensas reportadas</h2>
+        <div class="muted">Listado de eventos recientes generados por los plugins o añadidos manualmente.</div>
+      </div>
+      <button class="secondary" onclick="loadOffenses()">Actualizar</button>
     </div>
-    <button class="secondary" onclick="loadFirewalls()">Actualizar</button>
-  </div>
-  <table>
-    <thead>
-      <tr>
-        <th>Nombre</th>
-        <th>Tipo</th>
-        <th>Alias</th>
-        <th>Verificación SSL</th>
-        <th>Apply/Reload</th>
-        <th>Acciones</th>
-      </tr>
-    </thead>
-    <tbody id="fw-table">
-      <tr><td colspan="6" class="muted">Cargando...</td></tr>
-    </tbody>
-  </table>
+    <div class="grid" style="grid-template-columns: 1.1fr 2fr; gap: 18px;">
+      <form id="offense-form" class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+        <h3 style="margin-top:0">Crear ofensa manual</h3>
+        <label>IP origen</label>
+        <input name="source_ip" required placeholder="203.0.113.10" />
+        <label>Descripción</label>
+        <input name="description" required placeholder="Actividad sospechosa" />
+        <label>Severidad</label>
+        <select name="severity">
+          <option value="bajo">Bajo</option>
+          <option value="medio" selected>Medio</option>
+          <option value="alto">Alto</option>
+        </select>
+        <button type="submit" style="margin-top:12px;">Registrar</button>
+      </form>
+      <div style="overflow:auto; max-height:420px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>IP</th>
+              <th>Descripción</th>
+              <th>Severidad</th>
+            </tr>
+          </thead>
+          <tbody id="offense-table">
+            <tr><td colspan="4" class="muted">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
 </section>
 
-<section class="card">
-  <div class="flex space">
-    <div>
-      <h2 style="margin:0">Gestor de bloqueos</h2>
-      <div class="muted">Consulta y modifica las listas de bloqueo en el firewall seleccionado.</div>
+<section id="tab-blocks" class="tab-panel">
+  <section class="card">
+    <div class="flex space">
+      <div>
+        <h2 style="margin:0">Gestor de bloqueos</h2>
+        <div class="muted">Consulta y modifica las listas de bloqueo locales y en el firewall.</div>
+      </div>
+      <div class="flex" style="gap:8px;">
+        <select id="block-fw-select" onchange="handleFirewallChange(event)" style="min-width:220px"></select>
+        <button class="secondary" onclick="refreshBlocks()">Actualizar</button>
+      </div>
     </div>
-    <div class="flex" style="margin-left:auto; gap:8px;">
-      <select id="block-fw-select" onchange="handleFirewallChange(event)" style="min-width:220px"></select>
-      <button class="secondary" onclick="refreshBlocks()">Actualizar</button>
-    </div>
-  </div>
 
-  <div id="block-manager" class="grid" style="grid-template-columns: 2fr 1.4fr; gap: 18px; margin-top:14px;">
-    <div>
+    <div class="grid" style="grid-template-columns: 1.2fr 1fr; gap: 18px; margin-top:14px;">
+      <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+        <h3 style="margin-top:0">Bloqueos activos en la base de datos</h3>
+        <div class="muted" id="block-db-message"></div>
+        <div style="max-height:240px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
+          <table>
+            <thead>
+              <tr>
+                <th>IP</th>
+                <th>Motivo</th>
+                <th>Expira</th>
+              </tr>
+            </thead>
+            <tbody id="block-db-table">
+              <tr><td colspan="3" class="muted">Sin datos</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+        <h3 style="margin-top:0">Añadir entrada</h3>
+        <form id="block-form" class="grid" style="grid-template-columns: 1fr; gap: 10px;">
+          <div>
+            <label>IP o red</label>
+            <input name="ip" required placeholder="203.0.113.10" />
+          </div>
+          <div>
+            <label>Motivo</label>
+            <input name="reason" placeholder="Añadido manual" />
+          </div>
+          <div>
+            <label>Duración (min)</label>
+            <input name="duration_minutes" type="number" min="0" placeholder="60" />
+          </div>
+          <button type="submit">Añadir a la lista</button>
+          <div id="block-message" class="muted"></div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
       <div class="flex space" style="margin-bottom:8px;">
         <div>
           <h3 style="margin:0">Entradas en alias <span id="alias-label" class="muted"></span></h3>
-          <div id="block-message" class="muted"></div>
+          <div id="block-firewall-message" class="muted"></div>
         </div>
       </div>
       <div style="max-height:260px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
@@ -115,26 +242,80 @@
         </table>
       </div>
     </div>
+  </section>
+</section>
 
-    <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
-      <h3 style="margin-top:0">Añadir entrada</h3>
-      <form id="block-form" class="grid" style="grid-template-columns: 1fr; gap: 10px;">
-        <div>
-          <label>IP o red</label>
-          <input name="ip" required placeholder="203.0.113.10" />
-        </div>
-        <div>
-          <label>Motivo</label>
-          <input name="reason" placeholder="Añadido manual" />
-        </div>
-        <div>
-          <label>Duración (min, opcional)</label>
-          <input name="duration_minutes" type="number" min="0" placeholder="60" />
-        </div>
-        <button type="submit">Añadir a la lista</button>
-      </form>
+<section id="tab-ips" class="tab-panel">
+  <section class="card">
+    <div class="flex space">
+      <div>
+        <h2 style="margin:0">Inspector de IP</h2>
+        <div class="muted">Consulta los datos enriquecidos y el historial de ofensas/bloqueos.</div>
+      </div>
+      <button class="secondary" onclick="loadIps()">Actualizar</button>
     </div>
-  </div>
+    <div class="grid" style="grid-template-columns: 1.3fr 1fr; gap: 18px; margin-top:12px;">
+      <div style="max-height:420px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>IP</th>
+              <th>Reverse DNS</th>
+              <th>Ofensas</th>
+              <th>Bloqueos</th>
+              <th>Última vista</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="ip-table">
+            <tr><td colspan="6" class="muted">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08); min-height:260px;">
+        <h3 style="margin-top:0">Detalle</h3>
+        <div id="ip-detail" class="muted">Selecciona una IP para ver su historial.</div>
+      </div>
+    </div>
+  </section>
+</section>
+
+<section id="tab-whitelist" class="tab-panel">
+  <section class="card">
+    <div class="flex space">
+      <div>
+        <h2 style="margin:0">Whitelist</h2>
+        <div class="muted">IPs o rangos que generan ofensas pero nunca bloqueos.</div>
+      </div>
+      <button class="secondary" onclick="loadWhitelist()">Actualizar</button>
+    </div>
+    <div class="grid" style="grid-template-columns: 1fr 1.1fr; gap: 18px; margin-top:12px;">
+      <form id="whitelist-form" class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+        <h3 style="margin-top:0">Añadir a whitelist</h3>
+        <label>IP o CIDR</label>
+        <input name="cidr" required placeholder="198.51.100.0/24" />
+        <label>Nota</label>
+        <input name="note" placeholder="Proveedor de confianza" />
+        <button type="submit" style="margin-top:12px;">Guardar</button>
+        <div id="whitelist-message" class="muted"></div>
+      </form>
+      <div style="max-height:300px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Entrada</th>
+              <th>Nota</th>
+              <th>Alta</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="whitelist-table">
+            <tr><td colspan="4" class="muted">Sin entradas.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
 </section>
 
 <div id="edit-modal" class="modal">
@@ -200,6 +381,19 @@ let editingFirewallId = null;
 const editModal = document.getElementById('edit-modal');
 const editForm = document.getElementById('edit-form');
 
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
+  document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.toggle('active', panel.id === `tab-${tab}`));
+  if (tab === 'blocks') refreshBlocks();
+  if (tab === 'offenses') loadOffenses();
+  if (tab === 'ips') loadIps();
+  if (tab === 'whitelist') loadWhitelist();
+  if (tab === 'config') {
+    loadBlockingSettings();
+    loadFirewalls();
+  }
+}
+
 function closeEditModal() {
   editingFirewallId = null;
   editModal.classList.remove('open');
@@ -218,6 +412,35 @@ function openEditModal(id) {
   message.textContent = '';
   message.style.color = '';
   editModal.classList.add('open');
+}
+
+async function loadBlockingSettings() {
+  const res = await fetch('/api/settings/blocking');
+  const data = await res.json();
+  const form = document.getElementById('blocking-settings');
+  form.default_duration_minutes.value = data.default_duration_minutes ?? 60;
+  form.sync_interval_seconds.value = data.sync_interval_seconds ?? 300;
+}
+
+async function submitBlockingSettings(event) {
+  event.preventDefault();
+  const form = event.target;
+  const payload = Object.fromEntries(new FormData(form));
+  payload.default_duration_minutes = Number(payload.default_duration_minutes || 60);
+  payload.sync_interval_seconds = Number(payload.sync_interval_seconds || 300);
+  const res = await fetch('/api/settings/blocking', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const msg = document.getElementById('blocking-settings-message');
+  if (res.ok) {
+    msg.textContent = 'Configuración guardada';
+    msg.style.color = '#67e8f9';
+  } else {
+    msg.textContent = 'No se pudo guardar la configuración';
+    msg.style.color = '#fca5a5';
+  }
 }
 
 async function loadFirewalls() {
@@ -290,7 +513,7 @@ async function submitForm(event) {
 function buildPayload(form) {
   const payload = Object.fromEntries(new FormData(form));
   payload.verify_ssl = form.verify_ssl.checked;
-  payload.apply_changes = form.apply_changes.checked;
+  payload.apply_changes = form.apply_changes ? form.apply_changes.checked : true;
   payload.timeout = parseFloat(payload.timeout || '5');
   return payload;
 }
@@ -413,12 +636,13 @@ function updateBlockTableMessage(message) {
 }
 
 async function refreshBlocks() {
+  loadDatabaseBlocks();
   if (!selectedFirewallId) {
     updateBlockTableMessage('Configura un firewall para ver las listas.');
     return;
   }
   updateBlockTableMessage('Cargando entradas...');
-  const messageEl = document.getElementById('block-message');
+  const messageEl = document.getElementById('block-firewall-message');
   messageEl.textContent = '';
   try {
     const res = await fetch(`/api/firewalls/${selectedFirewallId}/blocks`);
@@ -444,6 +668,27 @@ async function refreshBlocks() {
     });
   } catch (error) {
     updateBlockTableMessage('Error al cargar las entradas.');
+  }
+}
+
+async function loadDatabaseBlocks() {
+  try {
+    const res = await fetch('/api/blocks');
+    const blocks = await res.json();
+    const tbody = document.getElementById('block-db-table');
+    tbody.innerHTML = '';
+    if (!blocks.length) {
+      tbody.innerHTML = '<tr><td colspan="3" class="muted">No hay bloqueos activos.</td></tr>';
+      return;
+    }
+    blocks.forEach(entry => {
+      const expires = entry.expires_at ? new Date(entry.expires_at).toLocaleString() : 'Sin caducidad';
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${entry.ip}</td><td>${entry.reason}</td><td>${expires}</td>`;
+      tbody.appendChild(row);
+    });
+  } catch (error) {
+    document.getElementById('block-db-table').innerHTML = '<tr><td colspan="3" class="muted">Error al cargar los bloqueos.</td></tr>';
   }
 }
 
@@ -486,19 +731,169 @@ async function removeBlock(ip) {
   if (res.ok) {
     refreshBlocks();
   } else {
-    document.getElementById('block-message').textContent = 'No se pudo eliminar la entrada.';
+    document.getElementById('block-firewall-message').textContent = 'No se pudo eliminar la entrada.';
   }
 }
 
-document.getElementById('block-form').addEventListener('submit', addBlock);
-
-document.getElementById('firewall-form').addEventListener('submit', submitForm);
-editForm.addEventListener('submit', submitEdit);
-editModal.addEventListener('click', (event) => {
-  if (event.target === editModal) {
-    closeEditModal();
+async function loadOffenses() {
+  const res = await fetch('/api/offenses?limit=100');
+  const data = await res.json();
+  const tbody = document.getElementById('offense-table');
+  tbody.innerHTML = '';
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="muted">No hay ofensas registradas.</td></tr>';
+    return;
   }
-});
+  data.forEach(item => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${new Date(item.created_at).toLocaleString()}</td>
+      <td>${item.source_ip}</td>
+      <td>${item.description}</td>
+      <td>${item.severity}</td>
+    `;
+    tbody.appendChild(row);
+  });
+}
+
+async function submitOffense(event) {
+  event.preventDefault();
+  const form = event.target;
+  const payload = Object.fromEntries(new FormData(form));
+  const res = await fetch('/api/offenses', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (res.ok) {
+    form.reset();
+    loadOffenses();
+  }
+}
+
+async function loadIps() {
+  const res = await fetch('/api/ips');
+  const data = await res.json();
+  const tbody = document.getElementById('ip-table');
+  tbody.innerHTML = '';
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="muted">No hay IPs registradas aún.</td></tr>';
+    return;
+  }
+  data.forEach(item => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${item.ip}</td>
+      <td>${item.reverse_dns || '-'}</td>
+      <td>${item.offenses}</td>
+      <td>${item.blocks}</td>
+      <td>${new Date(item.last_seen).toLocaleString()}</td>
+      <td style="text-align:right; display:flex; gap:8px; justify-content:flex-end;">
+        <button class="secondary" onclick="showIpDetail('${item.ip}')">Ver</button>
+        <button class="secondary" onclick="refreshIp('${item.ip}')">Refrescar</button>
+      </td>
+    `;
+    tbody.appendChild(row);
+  });
+}
+
+async function showIpDetail(ip) {
+  const res = await fetch(`/api/ips/${encodeURIComponent(ip)}`);
+  const data = await res.json();
+  if (!res.ok) return;
+  const detail = document.getElementById('ip-detail');
+  const profile = data.profile;
+  const offenses = data.offenses || [];
+  const blocks = data.blocks || [];
+  detail.innerHTML = `
+    <div><strong>${profile.ip}</strong></div>
+    <div class="muted">Reverse DNS: ${profile.reverse_dns || 'n/d'}</div>
+    <div class="muted">Geo: ${profile.geo || 'pendiente'} · Whois: ${profile.whois || 'pendiente'}</div>
+    <div class="muted">Primera vista: ${new Date(profile.first_seen).toLocaleString()}</div>
+    <div class="muted">Última vista: ${new Date(profile.last_seen).toLocaleString()}</div>
+    <h4>Ofensas</h4>
+    <ul style="max-height:120px; overflow:auto; padding-left:18px;">
+      ${offenses.map(o => `<li>${new Date(o.created_at).toLocaleString()} · ${o.description}</li>`).join('') || '<li class="muted">Sin ofensas registradas</li>'}
+    </ul>
+    <h4>Bloqueos</h4>
+    <ul style="max-height:120px; overflow:auto; padding-left:18px;">
+      ${blocks.map(b => `<li>${new Date(b.created_at).toLocaleString()} · ${b.reason}</li>`).join('') || '<li class="muted">Sin bloqueos</li>'}
+    </ul>
+  `;
+}
+
+async function refreshIp(ip) {
+  await fetch(`/api/ips/${encodeURIComponent(ip)}/refresh`, { method: 'POST' });
+  loadIps();
+  showIpDetail(ip);
+}
+
+async function loadWhitelist() {
+  const res = await fetch('/api/whitelist');
+  const data = await res.json();
+  const tbody = document.getElementById('whitelist-table');
+  tbody.innerHTML = '';
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="muted">No hay entradas en la whitelist.</td></tr>';
+    return;
+  }
+  data.forEach(item => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${item.cidr}</td>
+      <td>${item.note || '-'}</td>
+      <td>${new Date(item.created_at).toLocaleString()}</td>
+      <td style="text-align:right"><button class="secondary" onclick="deleteWhitelist(${item.id})">Eliminar</button></td>
+    `;
+    tbody.appendChild(row);
+  });
+}
+
+async function submitWhitelist(event) {
+  event.preventDefault();
+  const form = event.target;
+  const payload = Object.fromEntries(new FormData(form));
+  const res = await fetch('/api/whitelist', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const message = document.getElementById('whitelist-message');
+  if (res.ok) {
+    message.textContent = 'Guardado';
+    message.style.color = '#67e8f9';
+    form.reset();
+    loadWhitelist();
+  } else {
+    message.textContent = 'No se pudo guardar';
+    message.style.color = '#fca5a5';
+  }
+}
+
+async function deleteWhitelist(id) {
+  await fetch(`/api/whitelist/${id}`, { method: 'DELETE' });
+  loadWhitelist();
+}
+
+// Event bindings
+ document.getElementById('block-form').addEventListener('submit', addBlock);
+ document.getElementById('firewall-form').addEventListener('submit', submitForm);
+ document.getElementById('offense-form').addEventListener('submit', submitOffense);
+ document.getElementById('whitelist-form').addEventListener('submit', submitWhitelist);
+ document.getElementById('blocking-settings').addEventListener('submit', submitBlockingSettings);
+ editForm.addEventListener('submit', submitEdit);
+ editModal.addEventListener('click', (event) => {
+   if (event.target === editModal) {
+     closeEditModal();
+   }
+ });
+
+// Cargas iniciales
+loadBlockingSettings();
 loadFirewalls();
+loadDatabaseBlocks();
+loadOffenses();
+loadIps();
+loadWhitelist();
 </script>
 {% endblock %}

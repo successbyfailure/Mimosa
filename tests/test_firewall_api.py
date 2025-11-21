@@ -16,7 +16,7 @@ def build_client(tmp_dir: str) -> tuple[TestClient, FirewallConfigStore]:
     offense_store = OffenseStore(db_path=storage_dir / "mimosa.db")
     app = create_app(
         offense_store=offense_store,
-        block_manager=BlockManager(),
+        block_manager=BlockManager(db_path=offense_store.db_path),
         config_store=config_store,
     )
     return TestClient(app), config_store

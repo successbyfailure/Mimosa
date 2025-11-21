@@ -1,22 +1,22 @@
-"""Persistencia local de ofensas en SQLite.
+"""Persistencia local de ofensas y metadatos de IPs en SQLite.
 
 Este módulo proporciona una capa sencilla para almacenar ofensas
 generadas por los distintos módulos de Mimosa en una base de datos
-SQLite local. Facilita tanto el registro como la consulta reciente para
-alimentar el dashboard y los mecanismos de correlación.
+SQLite local. Amplía la funcionalidad previa incorporando un catálogo de
+IPs enriquecidas, listas blancas y utilidades para correlacionar
+bloqueos.
 """
 from __future__ import annotations
 
 import json
-import os
+import socket
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
-
-DEFAULT_DB_PATH = Path(os.getenv("MIMOSA_DB_PATH", "data/mimosa.db"))
+from mimosa.core.storage import DEFAULT_DB_PATH, ensure_database
 
 
 @dataclass
@@ -34,40 +34,39 @@ class OffenseRecord:
     context: Optional[Dict[str, str]] = None
 
 
+@dataclass
+class IpProfile:
+    """Información enriquecida de una IP conocida."""
+
+    ip: str
+    geo: Optional[str]
+    whois: Optional[str]
+    reverse_dns: Optional[str]
+    first_seen: datetime
+    last_seen: datetime
+    enriched_at: Optional[datetime] = None
+    offenses: int = 0
+    blocks: int = 0
+
+
+@dataclass
+class WhitelistEntry:
+    """Entrada en la lista blanca local."""
+
+    id: int
+    cidr: str
+    note: Optional[str]
+    created_at: datetime
+
+
 class OffenseStore:
     """Almacena y recupera ofensas desde SQLite."""
 
     def __init__(self, db_path: Path | str = DEFAULT_DB_PATH) -> None:
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
+        self.db_path = ensure_database(db_path)
 
     def _connection(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
-
-    def _init_db(self) -> None:
-        with self._connection() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS offenses (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_ip TEXT NOT NULL,
-                    description TEXT NOT NULL,
-                    severity TEXT NOT NULL,
-                    host TEXT,
-                    path TEXT,
-                    user_agent TEXT,
-                    context TEXT,
-                    created_at TEXT NOT NULL
-                );
-                """
-            )
-            conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_offenses_created
-                ON offenses(created_at);
-                """
-            )
 
     def record(
         self,
@@ -83,6 +82,7 @@ class OffenseStore:
         """Inserta una ofensa y devuelve la fila creada."""
 
         created_at = datetime.utcnow()
+        self._ensure_ip_profile(source_ip, seen_at=created_at)
         context_json = json.dumps(context) if context else None
         with self._connection() as conn:
             cursor = conn.execute(
@@ -124,6 +124,7 @@ class OffenseStore:
             rows = []
             for offense in offenses:
                 created_at = offense.get("created_at") or datetime.utcnow().isoformat()
+                self._ensure_ip_profile(offense.get("source_ip", "desconocido"))
                 rows.append(
                     (
                         offense.get("source_ip", "desconocido"),
@@ -159,6 +160,40 @@ class OffenseStore:
                 LIMIT ?;
                 """,
                 (limit,),
+            ).fetchall()
+
+        offenses: List[OffenseRecord] = []
+        for row in rows:
+            context = json.loads(row[7]) if row[7] else None
+            offenses.append(
+                OffenseRecord(
+                    id=row[0],
+                    source_ip=row[1],
+                    description=row[2],
+                    severity=row[3],
+                    host=row[4],
+                    path=row[5],
+                    user_agent=row[6],
+                    context=context,
+                    created_at=datetime.fromisoformat(row[8]),
+                )
+            )
+
+        return offenses
+
+    def list_by_ip(self, ip: str, limit: int = 50) -> List[OffenseRecord]:
+        """Devuelve ofensas asociadas a una IP concreta."""
+
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, source_ip, description, severity, host, path, user_agent, context, created_at
+                FROM offenses
+                WHERE source_ip = ?
+                ORDER BY datetime(created_at) DESC
+                LIMIT ?;
+                """,
+                (ip, limit),
             ).fetchall()
 
         offenses: List[OffenseRecord] = []
@@ -228,4 +263,172 @@ class OffenseStore:
             ).fetchall()
 
         return [{"bucket": row[0], "count": int(row[1])} for row in rows]
+
+    def list_ip_profiles(self, limit: int = 100) -> List[IpProfile]:
+        """Devuelve la lista de IPs conocidas con contadores básicos."""
+
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT ip, geo, whois, reverse_dns, first_seen, last_seen, enriched_at,
+                       (SELECT COUNT(*) FROM offenses o WHERE o.source_ip = ip_profiles.ip) AS offenses,
+                       (SELECT COUNT(*) FROM blocks b WHERE b.ip = ip_profiles.ip AND b.active = 1) AS blocks
+                FROM ip_profiles
+                ORDER BY datetime(last_seen) DESC
+                LIMIT ?;
+                """,
+                (limit,),
+            ).fetchall()
+
+        return [self._row_to_profile(row) for row in rows]
+
+    def get_ip_profile(self, ip: str) -> Optional[IpProfile]:
+        """Recupera los metadatos de una IP concreta."""
+
+        with self._connection() as conn:
+            row = conn.execute(
+                """
+                SELECT ip, geo, whois, reverse_dns, first_seen, last_seen, enriched_at,
+                       (SELECT COUNT(*) FROM offenses o WHERE o.source_ip = ip_profiles.ip) AS offenses,
+                       (SELECT COUNT(*) FROM blocks b WHERE b.ip = ip_profiles.ip AND b.active = 1) AS blocks
+                FROM ip_profiles
+                WHERE ip = ?
+                LIMIT 1;
+                """,
+                (ip,),
+            ).fetchone()
+
+        if not row:
+            return None
+        return self._row_to_profile(row)
+
+    def refresh_ip_profile(self, ip: str) -> Optional[IpProfile]:
+        """Recalcula los datos enriquecidos de una IP."""
+
+        metadata = self._enrich_ip(ip)
+        now = datetime.utcnow()
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO ip_profiles (ip, geo, whois, reverse_dns, first_seen, last_seen, enriched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(ip) DO UPDATE SET
+                    geo=excluded.geo,
+                    whois=excluded.whois,
+                    reverse_dns=excluded.reverse_dns,
+                    last_seen=excluded.last_seen,
+                    enriched_at=excluded.enriched_at
+                ;
+                """,
+                (
+                    ip,
+                    metadata.get("geo"),
+                    metadata.get("whois"),
+                    metadata.get("reverse_dns"),
+                    now.isoformat(),
+                    now.isoformat(),
+                    now.isoformat(),
+                ),
+            )
+        return self.get_ip_profile(ip)
+
+    def add_whitelist(self, cidr: str, note: Optional[str] = None) -> WhitelistEntry:
+        """Inserta una entrada en la lista blanca local."""
+
+        created_at = datetime.utcnow()
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO whitelist (cidr, note, created_at)
+                VALUES (?, ?, ?);
+                """,
+                (cidr, note, created_at.isoformat()),
+            )
+            entry_id = cursor.lastrowid
+        return WhitelistEntry(id=entry_id, cidr=cidr, note=note, created_at=created_at)
+
+    def list_whitelist(self) -> List[WhitelistEntry]:
+        """Devuelve todas las entradas de whitelist."""
+
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, cidr, note, created_at
+                FROM whitelist
+                ORDER BY datetime(created_at) DESC;
+                """
+            ).fetchall()
+
+        return [
+            WhitelistEntry(
+                id=row[0], cidr=row[1], note=row[2], created_at=datetime.fromisoformat(row[3])
+            )
+            for row in rows
+        ]
+
+    def delete_whitelist(self, entry_id: int) -> None:
+        with self._connection() as conn:
+            conn.execute("DELETE FROM whitelist WHERE id = ?;", (entry_id,))
+
+    def _ensure_ip_profile(self, ip: str, *, seen_at: Optional[datetime] = None) -> None:
+        """Garantiza que existe una entrada de IP y actualiza last_seen."""
+
+        seen = seen_at or datetime.utcnow()
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT ip FROM ip_profiles WHERE ip = ? LIMIT 1;", (ip,)
+            ).fetchone()
+            if row:
+                conn.execute(
+                    "UPDATE ip_profiles SET last_seen = ? WHERE ip = ?;",
+                    (seen.isoformat(), ip),
+                )
+                return
+
+            metadata = self._enrich_ip(ip)
+            conn.execute(
+                """
+                INSERT INTO ip_profiles (ip, geo, whois, reverse_dns, first_seen, last_seen, enriched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?);
+                """,
+                (
+                    ip,
+                    metadata.get("geo"),
+                    metadata.get("whois"),
+                    metadata.get("reverse_dns"),
+                    seen.isoformat(),
+                    seen.isoformat(),
+                    seen.isoformat(),
+                ),
+            )
+
+    def _row_to_profile(self, row: tuple) -> IpProfile:
+        return IpProfile(
+            ip=row[0],
+            geo=row[1],
+            whois=row[2],
+            reverse_dns=row[3],
+            first_seen=datetime.fromisoformat(row[4]),
+            last_seen=datetime.fromisoformat(row[5]),
+            enriched_at=datetime.fromisoformat(row[6]) if row[6] else None,
+            offenses=int(row[7]) if row[7] is not None else 0,
+            blocks=int(row[8]) if row[8] is not None else 0,
+        )
+
+    def _enrich_ip(self, ip: str) -> Dict[str, Optional[str]]:
+        """Obtiene información básica de la IP.
+
+        Se prioriza la velocidad y el funcionamiento offline: reverse DNS se
+        obtiene con la librería estándar y los campos de geolocalización y
+        whois quedan en ``None`` para permitir completarlos más adelante por
+        plugins especializados.
+        """
+
+        reverse_dns: Optional[str] = None
+        try:
+            reverse_dns = socket.gethostbyaddr(ip)[0]
+        except Exception:  # pragma: no cover - dependiente de red/resolución
+            reverse_dns = None
+
+        return {"geo": None, "whois": None, "reverse_dns": reverse_dns}
 
