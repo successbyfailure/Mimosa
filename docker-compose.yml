@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   mimosa:
     image: ghcr.io/successbyfailure/mimosa:latest
