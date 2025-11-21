@@ -46,6 +46,12 @@ def ensure_database(path: Path | str = DEFAULT_DB_PATH) -> Path:
         )
         conn.execute(
             """
+            CREATE INDEX IF NOT EXISTS idx_offenses_source_ip
+            ON offenses(source_ip);
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS ip_profiles (
                 ip TEXT PRIMARY KEY,
                 geo TEXT,

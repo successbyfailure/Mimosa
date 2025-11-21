@@ -222,6 +222,15 @@ class OffenseStore:
             row = conn.execute("SELECT COUNT(*) FROM offenses;").fetchone()
         return int(row[0]) if row else 0
 
+    def count_by_ip(self, ip: str) -> int:
+        """Cuenta ofensas totales asociadas a una IP."""
+
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM offenses WHERE source_ip = ?;", (ip,)
+            ).fetchone()
+        return int(row[0]) if row else 0
+
     def count_since(self, since: datetime) -> int:
         """Cuenta ofensas registradas desde un momento concreto."""
 
@@ -233,6 +242,21 @@ class OffenseStore:
                 WHERE datetime(created_at) >= datetime(?);
                 """,
                 (since.isoformat(),),
+            ).fetchone()
+
+        return int(row[0]) if row else 0
+
+    def count_by_ip_since(self, ip: str, since: datetime) -> int:
+        """Cuenta ofensas de una IP desde un momento concreto."""
+
+        with self._connection() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM offenses
+                WHERE source_ip = ? AND datetime(created_at) >= datetime(?);
+                """,
+                (ip, since.isoformat()),
             ).fetchone()
 
         return int(row[0]) if row else 0
