@@ -180,14 +180,29 @@ class OPNsenseClient(_BaseSenseClient):
         )
 
     def _block_ip_backend(self, ip: str, reason: str) -> None:
-        self._request(
+        response = self._request(
             "POST",
-            f"/api/firewall/alias_util/add/{self.alias_name}/{ip}",
-            json={"description": reason} if reason else None,
+            f"/api/firewall/alias_util/add/{self.alias_name}",
+            json={"address": ip, "description": reason} if reason else {"address": ip},
         )
+        data = response.json()
+        if isinstance(data, dict) and data.get("status") not in {"done", "ok", None}:
+            raise RuntimeError(f"No se pudo añadir la IP al alias: {data}")
 
     def _unblock_ip_backend(self, ip: str) -> None:
-        self._request("POST", f"/api/firewall/alias_util/remove/{self.alias_name}/{ip}")
+        current = self._list_table_backend()
+        if ip not in current:
+            return
+
+        remaining = [address for address in current if address != ip]
+        self._request("POST", f"/api/firewall/alias_util/flush/{self.alias_name}")
+
+        for address in remaining:
+            self._request(
+                "POST",
+                f"/api/firewall/alias_util/add/{self.alias_name}",
+                json={"address": address},
+            )
 
     def _list_table_backend(self) -> List[str]:
         try:
@@ -205,24 +220,29 @@ class OPNsenseClient(_BaseSenseClient):
             else:
                 raise
         data = response.json()
-        if isinstance(data, dict) and "items" in data:
-            return [entry.get("address", "") for entry in data.get("items", [])]
+        if isinstance(data, dict):
+            if "rows" in data:
+                return [entry.get("ip", "") for entry in data.get("rows", [])]
+            if "items" in data:
+                return [entry.get("address", "") for entry in data.get("items", [])]
         if isinstance(data, list):
             return data
         return []
 
     def _ensure_alias_exists(self) -> bool:
         try:
-            self._request("GET", f"/api/firewall/alias_util/list/{self.alias_name}")
-            return False
-        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
-            if exc.response.status_code != 404:
-                raise
+            response = self._request("GET", "/api/firewall/alias/searchItem")
+            data = response.json()
+            rows = data.get("rows", []) if isinstance(data, dict) else []
+            if any(row.get("name") == self.alias_name for row in rows):
+                return False
+        except httpx.HTTPStatusError:
+            pass
 
         payload = {
             "alias": {
                 "name": self.alias_name,
-                "type": "network",
+                "type": "host",
                 "content": "",
                 "description": "Mimosa blocklist",
                 "enabled": "1",

@@ -11,12 +11,41 @@ class OPNsenseClientTests(unittest.TestCase):
         self.alias_created = False
         self.alias_name = "mimosa_blocklist"
         self.requests: list[tuple[str, str, int]] = []
+        self.alias_addresses: set[str] = set()
         self.fallback_after_additem_404 = False
 
         def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == f"/api/firewall/alias/searchItem":
+                rows = (
+                    [{"name": self.alias_name, "uuid": "alias-uuid"}]
+                    if self.alias_created
+                    else []
+                )
+                response = httpx.Response(
+                    200,
+                    json={
+                        "rows": rows,
+                        "rowCount": len(rows),
+                        "total": len(rows),
+                        "current": 1,
+                    },
+                )
+                self.requests.append((request.method, request.url.path, response.status_code))
+                return response
+
             if request.url.path == f"/api/firewall/alias_util/list/{self.alias_name}":
                 if self.alias_created:
-                    response = httpx.Response(200, json={"items": []})
+                    response = httpx.Response(
+                        200,
+                        json={
+                            "total": len(self.alias_addresses),
+                            "rowCount": len(self.alias_addresses),
+                            "current": 1,
+                            "rows": [
+                                {"ip": address} for address in sorted(self.alias_addresses)
+                            ],
+                        },
+                    )
                 else:
                     response = httpx.Response(404, json={"error": "alias missing"})
                 self.requests.append((request.method, request.url.path, response.status_code))
@@ -40,20 +69,21 @@ class OPNsenseClientTests(unittest.TestCase):
                 self.requests.append((request.method, request.url.path, response.status_code))
                 return response
 
-            if request.url.path.startswith(
-                f"/api/firewall/alias_util/add/{self.alias_name}/"
-            ):
-                ip = request.url.path.rsplit("/", maxsplit=1)[-1]
-                self.alias_created = True
-                response = httpx.Response(200, json={"added": ip})
+            if request.url.path == f"/api/firewall/alias_util/add/{self.alias_name}":
+                payload = json.loads(request.content or b"{}")
+                ip = payload.get("address")
+                if ip:
+                    self.alias_addresses.add(ip)
+                    self.alias_created = True
+                    response = httpx.Response(200, json={"status": "done"})
+                else:
+                    response = httpx.Response(400, json={"status": "failed"})
                 self.requests.append((request.method, request.url.path, response.status_code))
                 return response
 
-            if request.url.path.startswith(
-                f"/api/firewall/alias_util/remove/{self.alias_name}/"
-            ):
-                ip = request.url.path.rsplit("/", maxsplit=1)[-1]
-                response = httpx.Response(200, json={"removed": ip})
+            if request.url.path == f"/api/firewall/alias_util/flush/{self.alias_name}":
+                self.alias_addresses.clear()
+                response = httpx.Response(200, json={"status": "done"})
                 self.requests.append((request.method, request.url.path, response.status_code))
                 return response
 
@@ -91,7 +121,7 @@ class OPNsenseClientTests(unittest.TestCase):
         items = self.firewall.list_blocks()
         self.assertEqual(items, [])
         statuses = [status for *_, status in self.requests]
-        self.assertEqual(statuses.count(404), 1)
+        self.assertEqual(statuses.count(404), 0)
 
     def test_list_blocks_recovers_from_missing_alias(self) -> None:
         blocks = self.firewall.list_blocks()
