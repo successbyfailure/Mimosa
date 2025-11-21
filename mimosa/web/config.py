@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import uuid
+import os
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -64,6 +65,12 @@ class FirewallConfigStore:
         self._configs: Dict[str, FirewallConfig] = {}
         self._load()
 
+        # Opcionalmente crea una configuración inicial a partir de variables de entorno
+        # (útil para despliegues automatizados). Solo se ejecuta cuando el almacén
+        # está vacío para evitar duplicados en arranques sucesivos.
+        if not self._configs:
+            self._maybe_seed_from_env()
+
     def _load(self) -> None:
         if not self.path.exists():
             return
@@ -101,6 +108,46 @@ class FirewallConfigStore:
         self._configs[config_id] = payload
         self._save()
         return payload
+
+    def _maybe_seed_from_env(self) -> Optional[FirewallConfig]:
+        env = os.environ
+        name = env.get("MIMOSA_FIREWALL_NAME")
+        if not name:
+            return None
+
+        firewall_type = env.get("MIMOSA_FIREWALL_TYPE", "pfsense").lower()
+        if firewall_type not in {"dummy", "pfsense", "opnsense"}:
+            raise ValueError("MIMOSA_FIREWALL_TYPE debe ser dummy, pfsense u opnsense")
+
+        def _as_bool(value: str | None, default: bool) -> bool:
+            if value is None:
+                return default
+            return value.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+        alias = env.get("MIMOSA_FIREWALL_ALIAS_NAME") or env.get(
+            "PFSENSE_ALIAS_NAME", "mimosa_blocklist"
+        )
+        config = FirewallConfig.new(
+            name=name,
+            type=firewall_type,
+            base_url=env.get("MIMOSA_FIREWALL_BASE_URL")
+            or env.get("PFSENSE_BASE_URL"),
+            api_key=env.get("MIMOSA_FIREWALL_API_KEY")
+            or env.get("PFSENSE_API_KEY"),
+            api_secret=env.get("MIMOSA_FIREWALL_API_SECRET")
+            or env.get("PFSENSE_API_SECRET"),
+            alias_name=alias,
+            verify_ssl=_as_bool(
+                env.get("MIMOSA_FIREWALL_VERIFY_SSL"),
+                _as_bool(env.get("VERIFY_FIREWALL_SSL"), True),
+            ),
+            timeout=float(
+                env.get("MIMOSA_FIREWALL_TIMEOUT") or env.get("REQUEST_TIMEOUT", 5)
+            ),
+            apply_changes=_as_bool(env.get("MIMOSA_FIREWALL_APPLY_CHANGES"), True),
+        )
+
+        return self.add(config)
 
 
 def build_firewall_gateway(config: FirewallConfig) -> FirewallGateway:
