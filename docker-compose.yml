@@ -1,9 +1,8 @@
-version: "3.9"
-
 services:
   mimosa:
-    image: ghcr.io/successbyfailure/mimosa:latest
     build: .
+    image: mimosa:local
+    pull_policy: build
     container_name: mimosa
     labels:
       - "com.centurylinklabs.watchtower.scope=mimosa"
