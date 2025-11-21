@@ -1,7 +1,8 @@
 version: "3.9"
 
-services:
+services:ghcr.io/successbyfailure/mimosa:latest
   mimosa:
+    image: 
     build: .
     container_name: mimosa
     labels:
