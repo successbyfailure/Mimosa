@@ -111,40 +111,37 @@ class FirewallConfigStore:
 
     def _maybe_seed_from_env(self) -> Optional[FirewallConfig]:
         env = os.environ
-        name = env.get("MIMOSA_FIREWALL_NAME")
+        name = env.get("INITIAL_FIREWALL_NAME")
         if not name:
             return None
 
-        firewall_type = env.get("MIMOSA_FIREWALL_TYPE", "pfsense").lower()
+        firewall_type = env.get("INITIAL_FIREWALL_TYPE", "pfsense").lower()
         if firewall_type not in {"dummy", "pfsense", "opnsense"}:
-            raise ValueError("MIMOSA_FIREWALL_TYPE debe ser dummy, pfsense u opnsense")
+            raise ValueError("INITIAL_FIREWALL_TYPE debe ser dummy, pfsense u opnsense")
 
         def _as_bool(value: str | None, default: bool) -> bool:
             if value is None:
                 return default
             return value.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
 
-        alias = env.get("MIMOSA_FIREWALL_ALIAS_NAME") or env.get(
-            "PFSENSE_ALIAS_NAME", "mimosa_blocklist"
-        )
+        alias = env.get("INITIAL_FIREWALL_ALIAS_NAME", "mimosa_blocklist")
         config = FirewallConfig.new(
             name=name,
             type=firewall_type,
-            base_url=env.get("MIMOSA_FIREWALL_BASE_URL")
-            or env.get("PFSENSE_BASE_URL"),
-            api_key=env.get("MIMOSA_FIREWALL_API_KEY")
-            or env.get("PFSENSE_API_KEY"),
-            api_secret=env.get("MIMOSA_FIREWALL_API_SECRET")
-            or env.get("PFSENSE_API_SECRET"),
+            base_url=env.get("INITIAL_FIREWALL_BASE_URL"),
+            api_key=env.get("INITIAL_FIREWALL_API_KEY"),
+            api_secret=env.get("INITIAL_FIREWALL_API_SECRET"),
             alias_name=alias,
             verify_ssl=_as_bool(
-                env.get("MIMOSA_FIREWALL_VERIFY_SSL"),
+                env.get("INITIAL_FIREWALL_VERIFY_SSL"),
                 _as_bool(env.get("VERIFY_FIREWALL_SSL"), True),
             ),
             timeout=float(
-                env.get("MIMOSA_FIREWALL_TIMEOUT") or env.get("REQUEST_TIMEOUT", 5)
+                env.get("INITIAL_FIREWALL_TIMEOUT") or env.get("REQUEST_TIMEOUT", 5)
             ),
-            apply_changes=_as_bool(env.get("MIMOSA_FIREWALL_APPLY_CHANGES"), True),
+            apply_changes=_as_bool(
+                env.get("INITIAL_FIREWALL_APPLY_CHANGES"), True
+            ),
         )
 
         return self.add(config)

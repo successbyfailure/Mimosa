@@ -35,7 +35,7 @@ Mimosa incluye una pequeña aplicación FastAPI para consultar métricas y gesti
 
 ## Uso rápido
 1. Instala las dependencias: `pip install -r requirements.txt`.
-2. Configura tus credenciales del firewall y la ruta de base de datos mediante variables de entorno (ver `env.example`). Si defines `MIMOSA_FIREWALL_NAME`, la UI creará automáticamente una configuración inicial de firewall en `data/firewalls.json` usando los valores `MIMOSA_FIREWALL_*` o, en su defecto, los de `PFSENSE_*`.
+2. Configura tus credenciales del firewall y la ruta de base de datos mediante variables de entorno (ver `env.example`). Si defines `INITIAL_FIREWALL_NAME`, la UI creará automáticamente una configuración inicial de firewall en `data/firewalls.json` usando los valores `INITIAL_FIREWALL_*`.
 3. Crea la API núcleo y el cliente pfSense:
    ```python
    from mimosa.core.api import CoreAPI
