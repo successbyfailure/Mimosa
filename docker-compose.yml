@@ -4,10 +4,23 @@ services:
   mimosa:
     build: .
     container_name: mimosa
+    labels:
+      - "com.centurylinklabs.watchtower.scope=mimosa"
     env_file:
       - .env
     ports:
       - "8000:8000"
     volumes:
       - ./data:/app/data
+      - ./.env:/app/.env
+    restart: unless-stopped
+
+  watchtower:
+    image: containrrr/watchtower:1.7.1
+    container_name: mimosa-watchtower
+    command: --interval 60 --scope mimosa
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      - "com.centurylinklabs.watchtower.scope=mimosa"
     restart: unless-stopped
