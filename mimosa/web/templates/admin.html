@@ -133,7 +133,7 @@
       </div>
       <button class="secondary" onclick="loadOffenses()">Actualizar</button>
     </div>
-    <div class="grid" style="grid-template-columns: 1.1fr 2fr; gap: 18px;">
+    <div class="grid" style="grid-template-columns: 1.1fr 1fr; gap: 18px; align-items:start;">
       <form id="offense-form" class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
         <h3 style="margin-top:0">Crear ofensa manual</h3>
         <label>IP origen</label>
@@ -148,21 +148,39 @@
         </select>
         <button type="submit" style="margin-top:12px;">Registrar</button>
       </form>
-      <div style="overflow:auto; max-height:420px;">
-        <table>
-          <thead>
-            <tr>
-              <th>Fecha</th>
-              <th>IP</th>
-              <th>Descripción</th>
-              <th>Severidad</th>
-            </tr>
-          </thead>
-          <tbody id="offense-table">
-            <tr><td colspan="4" class="muted">Cargando...</td></tr>
-          </tbody>
-        </table>
-      </div>
+      <form id="offense-block-form" class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+        <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
+          <div>
+            <h3 style="margin:0">Gestor de bloqueos</h3>
+            <div class="muted">Bloquea la IP seleccionada directamente desde la lista de ofensas.</div>
+          </div>
+          <select id="offense-block-fw-select" class="block-fw-select" style="max-width:220px;"></select>
+        </div>
+        <label>IP a bloquear</label>
+        <input name="ip" required placeholder="Selecciona una ofensa o escribe la IP" />
+        <label>Motivo</label>
+        <input name="reason" placeholder="Escalada manual desde ofensas" />
+        <label>Duración (min)</label>
+        <input name="duration_minutes" type="number" min="0" placeholder="60" />
+        <button type="submit" style="margin-top:12px;">Añadir a la lista</button>
+        <div id="offense-block-message" class="muted"></div>
+      </form>
+    </div>
+    <div style="overflow:auto; max-height:420px; margin-top:12px;">
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>IP</th>
+            <th>Descripción</th>
+            <th>Severidad</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="offense-table">
+          <tr><td colspan="5" class="muted">Cargando...</td></tr>
+        </tbody>
+      </table>
     </div>
   </section>
 </section>
@@ -175,7 +193,7 @@
         <div class="muted">Consulta y modifica las listas de bloqueo locales y en el firewall.</div>
       </div>
       <div class="flex" style="gap:8px;">
-        <select id="block-fw-select" onchange="handleFirewallChange(event)" style="min-width:220px"></select>
+        <select id="block-fw-select" class="block-fw-select" style="min-width:220px"></select>
         <button class="secondary" onclick="refreshBlocks()">Actualizar</button>
       </div>
     </div>
@@ -451,7 +469,7 @@ async function loadFirewalls() {
   tbody.innerHTML = '';
   if (!data.length) {
     tbody.innerHTML = '<tr><td colspan="6" class="muted">No hay firewalls configurados.</td></tr>';
-    renderBlockSelector();
+    renderBlockSelectors();
     return;
   }
   data.forEach(cfg => {
@@ -474,7 +492,7 @@ async function loadFirewalls() {
     closeEditModal();
   }
 
-  renderBlockSelector();
+  renderBlockSelectors();
 }
 
 async function deleteFirewall(id) {
@@ -608,25 +626,30 @@ async function setupFirewall(event) {
   }
 }
 
-function renderBlockSelector() {
-  const select = document.getElementById('block-fw-select');
-  select.innerHTML = '';
+function renderBlockSelectors() {
+  const selects = document.querySelectorAll('.block-fw-select');
+  selects.forEach(select => { select.innerHTML = ''; });
   if (!firewallsCache.length) {
-    select.innerHTML = '<option value="" disabled selected>Configura un firewall primero</option>';
+    selects.forEach(select => {
+      select.innerHTML = '<option value="" disabled selected>Configura un firewall primero</option>';
+    });
     updateBlockTableMessage('Añade un firewall para gestionar bloqueos.');
+    document.getElementById('offense-block-message').textContent = 'Configura un firewall para bloquear desde aquí.';
     selectedFirewallId = null;
     return;
   }
-  firewallsCache.forEach(cfg => {
-    const opt = document.createElement('option');
-    opt.value = cfg.id;
-    opt.textContent = `${cfg.name} (${cfg.type})`;
-    select.appendChild(opt);
-  });
   if (!selectedFirewallId) {
     selectedFirewallId = firewallsCache[0].id;
   }
-  select.value = selectedFirewallId;
+  selects.forEach(select => {
+    firewallsCache.forEach(cfg => {
+      const opt = document.createElement('option');
+      opt.value = cfg.id;
+      opt.textContent = `${cfg.name} (${cfg.type})`;
+      select.appendChild(opt);
+    });
+    select.value = selectedFirewallId;
+  });
   refreshBlocks();
 }
 
@@ -694,14 +717,21 @@ async function loadDatabaseBlocks() {
 
 function handleFirewallChange(event) {
   selectedFirewallId = event.target.value;
+  document.querySelectorAll('.block-fw-select').forEach(select => {
+    if (select.value !== selectedFirewallId) {
+      select.value = selectedFirewallId;
+    }
+  });
   refreshBlocks();
 }
 
-async function addBlock(event) {
+async function submitBlockForm(event, messageId) {
   event.preventDefault();
   if (!selectedFirewallId) return;
   const form = event.target;
   const payload = Object.fromEntries(new FormData(form));
+  const message = document.getElementById(messageId);
+  message.textContent = '';
   if (payload.duration_minutes === '') {
     delete payload.duration_minutes;
   } else {
@@ -715,14 +745,22 @@ async function addBlock(event) {
     });
     if (res.ok) {
       form.reset();
-      document.getElementById('block-message').textContent = 'Entrada añadida correctamente.';
+      message.textContent = 'Entrada añadida correctamente.';
       refreshBlocks();
     } else {
-      document.getElementById('block-message').textContent = 'No se pudo añadir la entrada.';
+      message.textContent = 'No se pudo añadir la entrada.';
     }
   } catch (error) {
-    document.getElementById('block-message').textContent = 'Error al añadir la entrada.';
+    message.textContent = 'Error al añadir la entrada.';
   }
+}
+
+function addBlock(event) {
+  return submitBlockForm(event, 'block-message');
+}
+
+function addBlockFromOffense(event) {
+  return submitBlockForm(event, 'offense-block-message');
 }
 
 async function removeBlock(ip) {
@@ -741,19 +779,30 @@ async function loadOffenses() {
   const tbody = document.getElementById('offense-table');
   tbody.innerHTML = '';
   if (!data.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="muted">No hay ofensas registradas.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="muted">No hay ofensas registradas.</td></tr>';
     return;
   }
   data.forEach(item => {
     const row = document.createElement('tr');
+    const safeReason = JSON.stringify(item.description || '');
     row.innerHTML = `
       <td>${new Date(item.created_at).toLocaleString()}</td>
       <td>${item.source_ip}</td>
       <td>${item.description}</td>
       <td>${item.severity}</td>
+      <td style="text-align:right"><button class="secondary" onclick="prefillBlockFromOffense('${item.source_ip}', ${safeReason})">Bloquear</button></td>
     `;
     tbody.appendChild(row);
   });
+}
+
+function prefillBlockFromOffense(ip, description) {
+  const form = document.getElementById('offense-block-form');
+  if (!form) return;
+  form.ip.value = ip;
+  form.reason.value = description || 'Escalada manual desde ofensas';
+  const message = document.getElementById('offense-block-message');
+  message.textContent = `IP ${ip} lista para bloquear.`;
 }
 
 async function submitOffense(event) {
@@ -877,10 +926,14 @@ async function deleteWhitelist(id) {
 
 // Event bindings
  document.getElementById('block-form').addEventListener('submit', addBlock);
+ document.getElementById('offense-block-form').addEventListener('submit', addBlockFromOffense);
  document.getElementById('firewall-form').addEventListener('submit', submitForm);
  document.getElementById('offense-form').addEventListener('submit', submitOffense);
  document.getElementById('whitelist-form').addEventListener('submit', submitWhitelist);
  document.getElementById('blocking-settings').addEventListener('submit', submitBlockingSettings);
+ document.querySelectorAll('.block-fw-select').forEach(select => {
+   select.addEventListener('change', handleFirewallChange);
+ });
  editForm.addEventListener('submit', submitEdit);
  editModal.addEventListener('click', (event) => {
    if (event.target === editModal) {
