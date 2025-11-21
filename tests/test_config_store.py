@@ -47,6 +47,9 @@ class FirewallConfigStoreEnvTests(unittest.TestCase):
             self.assertFalse(cfg.apply_changes)
 
     def test_seeds_config_with_defaults(self) -> None:
+        for key in list(os.environ):
+            if key.startswith("INITIAL_FIREWALL_"):
+                os.environ.pop(key, None)
         os.environ.update(
             {
                 "INITIAL_FIREWALL_NAME": "seeded-fw",
