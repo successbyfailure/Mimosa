@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from mimosa.web.config import FirewallConfigStore
+from mimosa.web.config import FirewallConfig, FirewallConfigStore
 
 
 class FirewallConfigStoreEnvTests(unittest.TestCase):
@@ -50,7 +50,6 @@ class FirewallConfigStoreEnvTests(unittest.TestCase):
         os.environ.update(
             {
                 "INITIAL_FIREWALL_NAME": "seeded-fw",
-                "REQUEST_TIMEOUT": "15",
             }
         )
 
@@ -69,6 +68,39 @@ class FirewallConfigStoreEnvTests(unittest.TestCase):
             self.assertTrue(cfg.verify_ssl)
             self.assertEqual(cfg.timeout, 15)
             self.assertTrue(cfg.apply_changes)
+
+    def test_does_not_seed_when_configs_already_exist(self) -> None:
+        seed_env = {"INITIAL_FIREWALL_NAME": "seeded-fw"}
+
+        with TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "firewalls.json"
+
+            os.environ.pop("INITIAL_FIREWALL_NAME", None)
+
+            existing = FirewallConfigStore(path=store_path)
+            existing.add(
+                FirewallConfig.new(
+                    name="existing-fw",
+                    type="opnsense",
+                    base_url="https://fw.local",
+                    api_key="key",
+                    api_secret="secret",
+                    alias_name="alias",
+                    verify_ssl=False,
+                    timeout=7,
+                    apply_changes=False,
+                )
+            )
+
+            os.environ.update(seed_env)
+            reloaded = FirewallConfigStore(path=store_path)
+            configs = reloaded.list()
+
+            self.assertEqual(len(configs), 1)
+            cfg = configs[0]
+            self.assertEqual(cfg.name, "existing-fw")
+            self.assertFalse(cfg.verify_ssl)
+            self.assertEqual(cfg.timeout, 7)
 
 
 if __name__ == "__main__":
