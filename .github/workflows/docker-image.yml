@@ -2,10 +2,8 @@ name: Build Docker image
 
 on:
   push:
+    branches: ["**"]
     tags: ["v*", "release-*", "latest"]
-  pull_request:
-    branches: ["main"]
-    types: [closed]
 
 env:
   REGISTRY: ghcr.io
@@ -13,7 +11,6 @@ env:
 
 jobs:
   build:
-    if: github.event_name != 'pull_request' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
       contents: read
