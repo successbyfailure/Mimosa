@@ -30,8 +30,9 @@ Mimosa incluye una pequeña aplicación FastAPI para consultar métricas y gesti
 ## Despliegue con Docker Compose
 1. Crea un fichero `.env` a partir de `env.example` con tus credenciales de firewall y la ruta de base de datos deseada. El contenedor sincronizará automáticamente las variables nuevas que aparezcan en `env.example` manteniendo los valores existentes de `.env`.
 2. Levanta el servicio con Docker Compose: `docker compose up --build -d`.
-3. El servicio quedará accesible en `http://localhost:8000` y persistirá los datos en el volumen local `./data`.
-4. Watchtower se encarga de actualizar la imagen de Mimosa cada 60 segundos usando el mismo `docker-compose.yml`, limitando el alcance a los servicios de esta pila.
+3. El servicio usa `network_mode: host`, por lo que expone directamente el puerto 8000 de la máquina donde se ejecuta. Asegúrate de no tener otro servicio en ese puerto antes de levantar el contenedor.
+4. El servicio quedará accesible en `http://localhost:8000` y persistirá los datos en el volumen local `./data`.
+5. Watchtower se encarga de actualizar la imagen de Mimosa cada 60 segundos usando el mismo `docker-compose.yml`, limitando el alcance a los servicios de esta pila.
 
 ## Uso rápido
 1. Instala las dependencias: `pip install -r requirements.txt`.

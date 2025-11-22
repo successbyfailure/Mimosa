@@ -3,12 +3,11 @@ services:
     image: ghcr.io/successbyfailure/mimosa:latest
     build: .
     container_name: mimosa
+    network_mode: host
     labels:
       - "com.centurylinklabs.watchtower.scope=mimosa"
     env_file:
       - .env
-    ports:
-      - "8000:8000"
     volumes:
       - ./data:/app/data
       - ./.env:/app/.env
