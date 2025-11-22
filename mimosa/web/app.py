@@ -16,6 +16,8 @@ from mimosa.core.api import FirewallGateway
 from mimosa.core.blocking import BlockEntry, BlockManager
 from mimosa.core.firewall import DummyFirewall
 from mimosa.core.offenses import OffenseRecord, OffenseStore
+from mimosa.core.plugins import PluginConfigStore, ProxyTrapConfig
+from mimosa.core.proxytrap import ProxyTrapService
 from mimosa.core.rules import OffenseEvent, OffenseRule, OffenseRuleStore, RuleManager
 from mimosa.web.config import (
     FirewallConfig,
@@ -52,6 +54,16 @@ class BlockingSettingsInput(BaseModel):
 
     default_duration_minutes: int = 60
     sync_interval_seconds: int = 300
+
+
+class ProxyTrapInput(BaseModel):
+    """Configuración expuesta para el plugin ProxyTrap."""
+
+    enabled: bool = False
+    port: int = 8081
+    default_severity: str = "alto"
+    response_type: Literal["silence", "404", "custom"] = "404"
+    custom_html: str | None = None
 
 
 class OffenseInput(BaseModel):
@@ -108,7 +120,15 @@ def create_app(
     block_manager = block_manager or BlockManager(db_path=offense_store.db_path)
     config_store = config_store or FirewallConfigStore()
     rule_store = rule_store or OffenseRuleStore(db_path=offense_store.db_path)
+    plugin_store = PluginConfigStore()
     gateway_cache: Dict[str, FirewallGateway] = {}
+
+    proxytrap_service = ProxyTrapService(
+        offense_store,
+        block_manager,
+        rule_store,
+        gateway_factory=lambda: _select_gateway(),
+    )
 
     def _select_gateway() -> FirewallGateway:
         configs = config_store.list()
@@ -175,6 +195,19 @@ def create_app(
             "block_minutes": rule.block_minutes,
         }
 
+    def _serialize_plugins() -> List[Dict[str, object]]:
+        proxytrap_config = plugin_store.get_proxytrap()
+        return [
+            {"name": "dummy", "enabled": True},
+            {
+                "name": "proxytrap",
+                "enabled": proxytrap_config.enabled,
+                "config": proxytrap_config.__dict__,
+            },
+        ]
+
+    proxytrap_service.apply_config(plugin_store.get_proxytrap())
+
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
         return templates.TemplateResponse("dashboard.html", {"request": request})
@@ -211,6 +244,24 @@ def create_app(
                 },
             },
         }
+
+    @app.get("/api/plugins")
+    def plugins() -> List[Dict[str, object]]:
+        return _serialize_plugins()
+
+    @app.get("/api/plugins/proxytrap/stats")
+    def proxytrap_stats() -> Dict[str, object]:
+        return proxytrap_service.stats()
+
+    @app.put("/api/plugins/proxytrap")
+    def update_proxytrap_settings(payload: ProxyTrapInput) -> Dict[str, object]:
+        config = ProxyTrapConfig(**payload.model_dump())
+        try:
+            proxytrap_service.apply_config(config)
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        plugin_store.update_proxytrap(config)
+        return config.__dict__
 
     @app.get("/api/settings/blocking")
     def blocking_settings() -> Dict[str, int]:
