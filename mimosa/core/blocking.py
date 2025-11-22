@@ -159,7 +159,7 @@ class BlockManager:
             )
         self._blocks.pop(ip, None)
 
-    def purge_expired(self) -> List[BlockEntry]:
+    def purge_expired(self, *, firewall_gateway: "FirewallGateway" | None = None) -> List[BlockEntry]:
         """Elimina de la lista activa cualquier bloqueo caducado."""
 
         now = datetime.utcnow()
@@ -168,6 +168,8 @@ class BlockManager:
             if entry.expires_at and entry.expires_at <= now:
                 expired.append(entry)
                 self.remove(ip)
+                if firewall_gateway:
+                    firewall_gateway.unblock_ip(ip)
         return expired
 
     def list(self, *, include_expired: bool = False) -> List[BlockEntry]:
