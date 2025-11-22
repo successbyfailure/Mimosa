@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from mimosa.core.api import FirewallGateway
 from mimosa.core.blocking import BlockEntry, BlockManager
 from mimosa.core.offenses import OffenseRecord, OffenseStore
+from mimosa.core.rules import OffenseRule, OffenseRuleStore
 from mimosa.web.config import (
     FirewallConfig,
     FirewallConfigStore,
@@ -64,6 +65,19 @@ class OffenseInput(BaseModel):
     context: Optional[Dict[str, str]] = None
 
 
+class RuleInput(BaseModel):
+    """Definición de regla configurable desde la UI."""
+
+    plugin: str = "*"
+    event_id: str = "*"
+    severity: str = "*"
+    description: str = "*"
+    min_last_hour: int = 1
+    min_total: int = 1
+    min_blocks_total: int = 0
+    block_minutes: int | None = None
+
+
 class WhitelistInput(BaseModel):
     """Entrada para la lista blanca."""
 
@@ -76,6 +90,7 @@ def create_app(
     offense_store: OffenseStore | None = None,
     block_manager: BlockManager | None = None,
     config_store: FirewallConfigStore | None = None,
+    rule_store: OffenseRuleStore | None = None,
 ) -> FastAPI:
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -89,6 +104,7 @@ def create_app(
     offense_store = offense_store or OffenseStore()
     block_manager = block_manager or BlockManager(db_path=offense_store.db_path)
     config_store = config_store or FirewallConfigStore()
+    rule_store = rule_store or OffenseRuleStore(db_path=offense_store.db_path)
     gateway_cache: Dict[str, FirewallGateway] = {}
 
     def _get_firewall(config_id: str) -> tuple[FirewallConfig, FirewallGateway]:
@@ -115,6 +131,19 @@ def create_app(
             "path": offense.path,
             "user_agent": offense.user_agent,
             "context": offense.context,
+        }
+
+    def _serialize_rule(rule: OffenseRule) -> Dict[str, object]:
+        return {
+            "id": rule.id,
+            "plugin": rule.plugin,
+            "event_id": rule.event_id,
+            "severity": rule.severity,
+            "description": rule.description,
+            "min_last_hour": rule.min_last_hour,
+            "min_total": rule.min_total,
+            "min_blocks_total": rule.min_blocks_total,
+            "block_minutes": rule.block_minutes,
         }
 
     @app.get("/", response_class=HTMLResponse)
@@ -175,6 +204,20 @@ def create_app(
     def create_offense(payload: OffenseInput) -> Dict[str, object]:
         offense = offense_store.record(**payload.model_dump())
         return _serialize_offense(offense)
+
+    @app.get("/api/rules")
+    def list_rules() -> List[Dict[str, object]]:
+        return [_serialize_rule(rule) for rule in rule_store.list()]
+
+    @app.post("/api/rules", status_code=201)
+    def create_rule(payload: RuleInput) -> Dict[str, object]:
+        rule = OffenseRule(**payload.model_dump())
+        saved = rule_store.add(rule)
+        return _serialize_rule(saved)
+
+    @app.delete("/api/rules/{rule_id}", status_code=204)
+    def delete_rule(rule_id: int) -> None:
+        rule_store.delete(rule_id)
 
     @app.get("/api/ips")
     def list_ips(limit: int = 100) -> List[Dict[str, object]]:
