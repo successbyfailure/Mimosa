@@ -231,7 +231,9 @@ def create_app(
 
     @app.post("/api/offenses", status_code=201)
     def create_offense(payload: OffenseInput) -> Dict[str, object]:
-        offense = offense_store.record(**payload.model_dump())
+        offense = offense_store.record(
+            **payload.model_dump(exclude={"plugin", "event_id"})
+        )
         manager = _rule_manager()
         manager.process_offense(
             OffenseEvent(

@@ -937,14 +937,18 @@ async function deleteRule(ruleId) {
 function prefillBlockFromOffense(ip, description) {
   const form = document.getElementById('offense-block-form');
   if (!form) return;
-  form.ip.value = ip;
-  form.reason.value = description || 'Escalada manual desde ofensas';
+  const offenseIp = form.querySelector('input[name="ip"]');
+  const offenseReason = form.querySelector('input[name="reason"]');
+  if (offenseIp) offenseIp.value = ip;
+  if (offenseReason) offenseReason.value = description || 'Escalada manual desde ofensas';
   const message = document.getElementById('offense-block-message');
   message.textContent = `IP ${ip} lista para bloquear.`;
   const mainForm = document.getElementById('block-form');
   if (mainForm) {
-    mainForm.ip.value = ip;
-    mainForm.reason.value = description || 'Escalada manual desde ofensas';
+    const mainIp = mainForm.querySelector('input[name="ip"]');
+    const mainReason = mainForm.querySelector('input[name="reason"]');
+    if (mainIp) mainIp.value = ip;
+    if (mainReason) mainReason.value = description || 'Escalada manual desde ofensas';
   }
   const mainMessage = document.getElementById('block-message');
   if (mainMessage) {
