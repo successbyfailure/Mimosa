@@ -7,9 +7,17 @@ como para el nuevo plugin "proxytrap".
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Dict, List
+
+
+DEFAULT_PROXYTRAP_POLICIES = [
+    {"pattern": "phpmyadmin.*", "severity": "alto"},
+    {"pattern": "admin.*", "severity": "alto"},
+    {"pattern": "*.admin", "severity": "alto"},
+    {"pattern": "cpanel.*", "severity": "alto"},
+]
 
 
 @dataclass
@@ -30,6 +38,10 @@ class ProxyTrapConfig:
     default_severity: str = "alto"
     response_type: str = "404"
     custom_html: str | None = None
+    domain_policies: List[Dict[str, str]] = field(
+        default_factory=lambda: list(DEFAULT_PROXYTRAP_POLICIES)
+    )
+    wildcard_severity: str | None = None
 
 
 class PluginConfigStore:

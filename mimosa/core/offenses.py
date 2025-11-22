@@ -8,6 +8,7 @@ bloqueos.
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import socket
 import sqlite3
@@ -393,6 +394,23 @@ class OffenseStore:
     def delete_whitelist(self, entry_id: int) -> None:
         with self._connection() as conn:
             conn.execute("DELETE FROM whitelist WHERE id = ?;", (entry_id,))
+
+    def is_whitelisted(self, ip: str) -> bool:
+        """Comprueba si una IP pertenece a alguna entrada de whitelist."""
+
+        try:
+            address = ipaddress.ip_address(ip)
+        except ValueError:
+            return False
+
+        for entry in self.list_whitelist():
+            try:
+                network = ipaddress.ip_network(entry.cidr, strict=False)
+            except ValueError:
+                continue
+            if address in network:
+                return True
+        return False
 
     def _ensure_ip_profile(self, ip: str, *, seen_at: Optional[datetime] = None) -> None:
         """Garantiza que existe una entrada de IP y actualiza last_seen."""

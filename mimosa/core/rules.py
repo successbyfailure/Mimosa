@@ -172,6 +172,8 @@ class RuleManager:
         if event.source_ip in self.block_manager._blocks:  # pragma: no cover - acceso intencional
             return self.block_manager._blocks[event.source_ip]
 
+        sync_with_firewall = self.block_manager.should_sync(event.source_ip)
+
         now = datetime.utcnow()
         last_hour = now - timedelta(hours=1)
         last_hour_count = self.offense_store.count_by_ip_since(event.source_ip, last_hour)
@@ -204,15 +206,16 @@ class RuleManager:
                 duration_minutes=duration,
                 source=f"rule:{rule.plugin}/{rule.event_id}",
             )
-            duration_for_firewall: Optional[int] = None
-            if entry.expires_at:
-                delta = entry.expires_at - datetime.utcnow()
-                duration_for_firewall = max(int(delta.total_seconds() // 60), 1)
-            self.firewall_gateway.block_ip(
-                event.source_ip,
-                reason,
-                duration_minutes=duration_for_firewall,
-            )
+            if sync_with_firewall:
+                duration_for_firewall: Optional[int] = None
+                if entry.expires_at:
+                    delta = entry.expires_at - datetime.utcnow()
+                    duration_for_firewall = max(int(delta.total_seconds() // 60), 1)
+                self.firewall_gateway.block_ip(
+                    event.source_ip,
+                    reason,
+                    duration_minutes=duration_for_firewall,
+                )
             return entry
 
         return None
