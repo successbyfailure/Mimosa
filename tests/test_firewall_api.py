@@ -87,6 +87,36 @@ class FirewallApiTests(unittest.TestCase):
         final_listing = self.client.get(f"/api/firewalls/{config_id}/blocks")
         self.assertEqual(final_listing.json()["items"], [])
 
+    def test_rule_endpoints_allow_add_and_delete(self) -> None:
+        initial = self.client.get("/api/rules")
+        self.assertEqual(initial.status_code, 200)
+        initial_count = len(initial.json())
+
+        create_resp = self.client.post(
+            "/api/rules",
+            json={
+                "plugin": "auth",
+                "severity": "alto",
+                "description": "intentos fallidos",
+                "min_last_hour": 2,
+                "min_total": 3,
+                "min_blocks_total": 1,
+                "block_minutes": 90,
+            },
+        )
+        self.assertEqual(create_resp.status_code, 201)
+        created = create_resp.json()
+
+        listing = self.client.get("/api/rules")
+        self.assertEqual(len(listing.json()), initial_count + 1)
+        self.assertEqual(created["plugin"], "auth")
+
+        delete_resp = self.client.delete(f"/api/rules/{created['id']}")
+        self.assertEqual(delete_resp.status_code, 204)
+
+        final_listing = self.client.get("/api/rules")
+        self.assertEqual(len(final_listing.json()), initial_count)
+
 
 if __name__ == "__main__":
     unittest.main()

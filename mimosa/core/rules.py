@@ -3,7 +3,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Iterable, List, Optional
+
+import sqlite3
+
+from mimosa.core.storage import DEFAULT_DB_PATH, ensure_database
 
 from mimosa.core.blocking import BlockEntry, BlockManager
 from mimosa.core.offenses import OffenseStore
@@ -30,9 +35,18 @@ class OffenseRule:
     description: str = "*"
     min_last_hour: int = 1
     min_total: int = 1
+    min_blocks_total: int = 0
     block_minutes: Optional[int] = None
+    id: Optional[int] = None
 
-    def matches(self, event: OffenseEvent, *, last_hour: int, total: int) -> bool:
+    def matches(
+        self,
+        event: OffenseEvent,
+        *,
+        last_hour: int,
+        total: int,
+        total_blocks: int,
+    ) -> bool:
         """Comprueba si la regla aplica al evento y cumple umbrales."""
 
         def _match(field: str, value: str) -> bool:
@@ -46,12 +60,83 @@ class OffenseRule:
             return False
         if not _match(self.description, event.description):
             return False
-        return last_hour >= self.min_last_hour and total >= self.min_total
+        return (
+            last_hour >= self.min_last_hour
+            and total >= self.min_total
+            and total_blocks >= self.min_blocks_total
+        )
 
-    def reason_for(self, event: OffenseEvent, *, last_hour: int, total: int) -> str:
+    def reason_for(
+        self, event: OffenseEvent, *, last_hour: int, total: int, total_blocks: int
+    ) -> str:
         base = self.description if self.description != "*" else event.description
-        summary = f"{base} · {total} ofensas totales, {last_hour} en 1h"
+        summary = (
+            f"{base} · {total} ofensas totales, {last_hour} en 1h, "
+            f"{total_blocks} bloqueos previos"
+        )
         return summary
+
+
+class OffenseRuleStore:
+    """Persistencia simple de reglas de escalado de ofensas."""
+
+    def __init__(self, db_path: str | Path = DEFAULT_DB_PATH) -> None:
+        self.db_path = ensure_database(db_path)
+
+    def _connection(self) -> sqlite3.Connection:
+        return sqlite3.connect(self.db_path)
+
+    def list(self) -> List[OffenseRule]:
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, plugin, event_id, severity, description, min_last_hour, min_total,
+                       min_blocks_total, block_minutes
+                FROM offense_rules
+                ORDER BY id ASC;
+                """
+            ).fetchall()
+
+        return [
+            OffenseRule(
+                id=row[0],
+                plugin=row[1],
+                event_id=row[2],
+                severity=row[3],
+                description=row[4],
+                min_last_hour=row[5],
+                min_total=row[6],
+                min_blocks_total=row[7],
+                block_minutes=row[8],
+            )
+            for row in rows
+        ]
+
+    def add(self, rule: OffenseRule) -> OffenseRule:
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO offense_rules
+                    (plugin, event_id, severity, description, min_last_hour, min_total, min_blocks_total, block_minutes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                (
+                    rule.plugin,
+                    rule.event_id,
+                    rule.severity,
+                    rule.description,
+                    rule.min_last_hour,
+                    rule.min_total,
+                    rule.min_blocks_total,
+                    rule.block_minutes,
+                ),
+            )
+            rule.id = cursor.lastrowid
+        return rule
+
+    def delete(self, rule_id: int) -> None:
+        with self._connection() as conn:
+            conn.execute("DELETE FROM offense_rules WHERE id = ?;", (rule_id,))
 
 
 class RuleManager:
@@ -83,9 +168,15 @@ class RuleManager:
         last_hour = now - timedelta(hours=1)
         last_hour_count = self.offense_store.count_by_ip_since(event.source_ip, last_hour)
         total_count = self.offense_store.count_by_ip(event.source_ip)
+        block_count = self.block_manager.count_for_ip(event.source_ip)
 
         for rule in self.rules:
-            if not rule.matches(event, last_hour=last_hour_count, total=total_count):
+            if not rule.matches(
+                event,
+                last_hour=last_hour_count,
+                total=total_count,
+                total_blocks=block_count,
+            ):
                 continue
 
             duration = (
@@ -93,7 +184,12 @@ class RuleManager:
                 if rule.block_minutes is not None
                 else self.block_manager.default_duration_minutes
             )
-            reason = rule.reason_for(event, last_hour=last_hour_count, total=total_count)
+            reason = rule.reason_for(
+                event,
+                last_hour=last_hour_count,
+                total=total_count,
+                total_blocks=block_count,
+            )
             entry = self.block_manager.add(
                 event.source_ip,
                 reason,
@@ -120,4 +216,4 @@ class RuleManager:
         self.firewall_gateway.unblock_ip(ip)
 
 
-__all__ = ["OffenseEvent", "OffenseRule", "RuleManager"]
+__all__ = ["OffenseEvent", "OffenseRule", "OffenseRuleStore", "RuleManager"]

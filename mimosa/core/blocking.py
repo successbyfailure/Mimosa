@@ -185,6 +185,11 @@ class BlockManager:
     def history_for_ip(self, ip: str) -> List[BlockEntry]:
         return [entry for entry in self._history if entry.ip == ip]
 
+    def count_for_ip(self, ip: str) -> int:
+        """Número total de bloqueos registrados para una IP."""
+
+        return len(self.history_for_ip(ip))
+
     def timeline(self, window: timedelta, *, bucket: str = "hour") -> List[Dict[str, str | int]]:
         """Devuelve recuentos de bloqueos agrupados por intervalo temporal."""
 

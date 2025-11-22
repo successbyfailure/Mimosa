@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 
 import httpx
@@ -156,6 +157,15 @@ class OPNsenseClientTests(unittest.TestCase):
         apply_calls = [req for req in self.requests if req[1] == "/api/firewall/filter/apply"]
         self.assertEqual(len(apply_calls), 2)
 
+    def test_unblock_ip_preserves_other_entries(self) -> None:
+        self.firewall.block_ip("203.0.113.10", reason="prueba")
+        self.firewall.block_ip("203.0.113.11", reason="prueba")
+
+        self.firewall.unblock_ip("203.0.113.10")
+
+        self.assertNotIn("203.0.113.10", self.alias_addresses)
+        self.assertIn("203.0.113.11", self.alias_addresses)
+
     def test_ensure_ready_applies_when_creating_alias(self) -> None:
         self.firewall.ensure_ready()
 
@@ -178,6 +188,33 @@ class OPNsenseClientTests(unittest.TestCase):
 
         apply_calls = [req for req in self.requests if req[1] == "/api/firewall/filter/apply"]
         self.assertEqual(len(apply_calls), 0)
+
+    def test_live_opnsense_calls_use_environment(self) -> None:
+        base_url = os.getenv("OPNSENSE_BASE_URL") or os.getenv("OPNSENSE_URL")
+        api_key = os.getenv("OPNSENSE_API_KEY")
+        api_secret = os.getenv("OPNSENSE_API_SECRET")
+        alias_name = os.getenv("OPNSENSE_ALIAS_NAME", "mimosa_blocklist")
+        test_ip = os.getenv("OPNSENSE_TEST_IP", "198.51.100.250")
+
+        if not base_url or not api_key or not api_secret:
+            self.skipTest("Entorno OPNsense no configurado")
+
+        firewall = OPNsenseClient(
+            base_url=base_url,
+            api_key=api_key,
+            api_secret=api_secret,
+            alias_name=alias_name,
+            verify_ssl=os.getenv("OPNSENSE_VERIFY_SSL", "true").lower() not in {"0", "false", "no"},
+            apply_changes=False,
+        )
+
+        firewall.check_connection()
+        firewall.ensure_ready()
+        firewall.block_ip(test_ip, reason="prueba-ci")
+        try:
+            self.assertIn(test_ip, firewall.list_blocks())
+        finally:
+            firewall.unblock_ip(test_ip)
 
 
 if __name__ == "__main__":
