@@ -33,7 +33,7 @@
       </div>
       <div>
         <label>Intervalo de comprobación (s)</label>
-        <input name="sync_interval_seconds" type="number" min="60" value="300" />
+        <input name="sync_interval_seconds" type="number" min="5" value="300" />
       </div>
       <div style="display:flex; align-items:flex-end; gap:10px;">
         <button type="submit">Guardar</button>
@@ -794,11 +794,15 @@ function handleFirewallChange(event) {
 
 async function submitBlockForm(event, messageId) {
   event.preventDefault();
-  if (!selectedFirewallId) return;
   const form = event.target;
   const payload = Object.fromEntries(new FormData(form));
   const message = document.getElementById(messageId);
   message.textContent = '';
+  if (!selectedFirewallId) {
+    message.textContent = 'Selecciona o configura un firewall antes de bloquear.';
+    message.style.color = '#fca5a5';
+    return;
+  }
   if (payload.duration_minutes === '') {
     delete payload.duration_minutes;
   } else {
