@@ -189,6 +189,7 @@
       <div>
         <h2 style="margin:0">Reglas de escalado</h2>
         <div class="muted">Define cuándo una ofensa debe convertirse en bloqueo automático.</div>
+        <div class="muted" style="margin-top:4px;">Los umbrales se aplican solo si se indica un valor y se evaluan con la condición <strong>&gt; X</strong>.</div>
       </div>
       <button class="secondary" onclick="loadRules()">Actualizar</button>
     </div>
@@ -209,15 +210,15 @@
         <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px;">
           <div>
             <label>Ofensas última hora</label>
-            <input name="min_last_hour" type="number" min="1" value="1" />
+            <input name="min_last_hour" type="number" min="0" value="0" placeholder="> X" />
           </div>
           <div>
             <label>Ofensas totales</label>
-            <input name="min_total" type="number" min="1" value="1" />
+            <input name="min_total" type="number" min="0" value="0" placeholder="> X" />
           </div>
           <div>
             <label>Bloqueos totales</label>
-            <input name="min_blocks_total" type="number" min="0" value="0" />
+            <input name="min_blocks_total" type="number" min="0" value="0" placeholder="> X" />
           </div>
           <div>
             <label>Duración (min)</label>
@@ -918,8 +919,8 @@ async function submitRule(event) {
     form.reset();
     form.plugin.value = '*';
     form.description.value = '*';
-    form.min_last_hour.value = 1;
-    form.min_total.value = 1;
+    form.min_last_hour.value = 0;
+    form.min_total.value = 0;
     form.min_blocks_total.value = 0;
     loadRules();
   } else {

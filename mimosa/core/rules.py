@@ -33,8 +33,8 @@ class OffenseRule:
     event_id: str = "*"
     severity: str = "*"
     description: str = "*"
-    min_last_hour: int = 1
-    min_total: int = 1
+    min_last_hour: int = 0
+    min_total: int = 0
     min_blocks_total: int = 0
     block_minutes: Optional[int] = None
     id: Optional[int] = None
@@ -49,8 +49,16 @@ class OffenseRule:
     ) -> bool:
         """Comprueba si la regla aplica al evento y cumple umbrales."""
 
+        def _is_wildcard(field: str) -> bool:
+            return field == "*" or field == ""
+
         def _match(field: str, value: str) -> bool:
-            return field == "*" or field == value
+            return _is_wildcard(field) or field == value
+
+        def _passes_threshold(observed: int, threshold: int) -> bool:
+            if threshold <= 0:
+                return True
+            return observed > threshold
 
         if not _match(self.plugin, event.plugin):
             return False
@@ -61,9 +69,9 @@ class OffenseRule:
         if not _match(self.description, event.description):
             return False
         return (
-            last_hour >= self.min_last_hour
-            and total >= self.min_total
-            and total_blocks >= self.min_blocks_total
+            _passes_threshold(last_hour, self.min_last_hour)
+            and _passes_threshold(total, self.min_total)
+            and _passes_threshold(total_blocks, self.min_blocks_total)
         )
 
     def reason_for(

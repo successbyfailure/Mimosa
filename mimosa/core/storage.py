@@ -123,8 +123,8 @@ def ensure_database(path: Path | str = DEFAULT_DB_PATH) -> Path:
                 event_id TEXT NOT NULL DEFAULT '*',
                 severity TEXT NOT NULL,
                 description TEXT NOT NULL,
-                min_last_hour INTEGER NOT NULL DEFAULT 1,
-                min_total INTEGER NOT NULL DEFAULT 1,
+                min_last_hour INTEGER NOT NULL DEFAULT 0,
+                min_total INTEGER NOT NULL DEFAULT 0,
                 min_blocks_total INTEGER NOT NULL DEFAULT 0,
                 block_minutes INTEGER
             );

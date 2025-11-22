@@ -14,8 +14,9 @@ from pydantic import BaseModel
 
 from mimosa.core.api import FirewallGateway
 from mimosa.core.blocking import BlockEntry, BlockManager
+from mimosa.core.firewall import DummyFirewall
 from mimosa.core.offenses import OffenseRecord, OffenseStore
-from mimosa.core.rules import OffenseRule, OffenseRuleStore
+from mimosa.core.rules import OffenseEvent, OffenseRule, OffenseRuleStore, RuleManager
 from mimosa.web.config import (
     FirewallConfig,
     FirewallConfigStore,
@@ -57,6 +58,8 @@ class OffenseInput(BaseModel):
     """Payload para crear ofensas manuales desde la UI."""
 
     source_ip: str
+    plugin: str = "manual"
+    event_id: str = "manual"
     description: str
     severity: str = "medio"
     host: Optional[str] = None
@@ -72,8 +75,8 @@ class RuleInput(BaseModel):
     event_id: str = "*"
     severity: str = "*"
     description: str = "*"
-    min_last_hour: int = 1
-    min_total: int = 1
+    min_last_hour: int = 0
+    min_total: int = 0
     min_blocks_total: int = 0
     block_minutes: int | None = None
 
@@ -106,6 +109,32 @@ def create_app(
     config_store = config_store or FirewallConfigStore()
     rule_store = rule_store or OffenseRuleStore(db_path=offense_store.db_path)
     gateway_cache: Dict[str, FirewallGateway] = {}
+
+    def _select_gateway() -> FirewallGateway:
+        configs = config_store.list()
+        if not configs:
+            return DummyFirewall()
+
+        primary = configs[0]
+        cached = gateway_cache.get(primary.id)
+        if cached:
+            return cached
+
+        gateway = build_firewall_gateway(primary)
+        gateway_cache[primary.id] = gateway
+        return gateway
+
+    def _cleanup_expired_blocks() -> None:
+        gateway = _select_gateway()
+        block_manager.purge_expired(firewall_gateway=gateway)
+
+    def _rule_manager() -> RuleManager:
+        return RuleManager(
+            offense_store,
+            block_manager,
+            _select_gateway(),
+            rules=rule_store.list() or [OffenseRule()],
+        )
 
     def _get_firewall(config_id: str) -> tuple[FirewallConfig, FirewallGateway]:
         config = config_store.get(config_id)
@@ -203,6 +232,17 @@ def create_app(
     @app.post("/api/offenses", status_code=201)
     def create_offense(payload: OffenseInput) -> Dict[str, object]:
         offense = offense_store.record(**payload.model_dump())
+        manager = _rule_manager()
+        manager.process_offense(
+            OffenseEvent(
+                source_ip=payload.source_ip,
+                plugin=payload.plugin,
+                event_id=payload.event_id,
+                severity=payload.severity,
+                description=payload.description,
+            )
+        )
+        _cleanup_expired_blocks()
         return _serialize_offense(offense)
 
     @app.get("/api/rules")
@@ -273,6 +313,7 @@ def create_app(
 
     @app.get("/api/blocks")
     def list_database_blocks(include_expired: bool = False) -> List[Dict[str, object]]:
+        _cleanup_expired_blocks()
         return [_serialize_block(block) for block in block_manager.list(include_expired=include_expired)]
 
     @app.get("/api/firewalls")
@@ -320,6 +361,7 @@ def create_app(
         config, gateway = _get_firewall(config_id)
         try:
             gateway.ensure_ready()
+            block_manager.purge_expired(firewall_gateway=gateway)
             sync_info = block_manager.sync_with_firewall(gateway)
             items = gateway.list_blocks()
         except httpx.HTTPStatusError as exc:

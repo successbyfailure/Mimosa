@@ -41,8 +41,8 @@ def test_rule_thresholds_consider_counts(tmp_path):
         event_id="login_failed",
         severity="alto",
         description="Fallo de login",
-        min_last_hour=2,
-        min_total=3,
+        min_last_hour=1,
+        min_total=2,
         block_minutes=120,
     )
     manager = RuleManager(store, block_manager, firewall, rules=[rule])
@@ -88,3 +88,28 @@ def test_unblock_removes_from_firewall(tmp_path):
 
     assert block_manager.list() == []
     assert firewall.list_blocks() == []
+
+
+def test_empty_filters_behave_as_wildcards(tmp_path):
+    store, block_manager, firewall = _setup(tmp_path)
+    rule = OffenseRule(
+        plugin="",
+        event_id="",
+        severity="",
+        description="",
+    )
+    manager = RuleManager(store, block_manager, firewall, rules=[rule])
+
+    event = OffenseEvent(
+        source_ip="203.0.113.50",
+        plugin="any",
+        event_id="any_event",
+        severity="medio",
+        description="Prueba de wildcard",
+    )
+    store.record(source_ip=event.source_ip, description=event.description, severity=event.severity)
+
+    entry = manager.process_offense(event)
+
+    assert entry is not None
+    assert firewall.list_blocks() == [event.source_ip]
