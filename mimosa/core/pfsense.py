@@ -190,6 +190,20 @@ class OPNsenseClient(_BaseSenseClient):
             raise RuntimeError(f"No se pudo añadir la IP al alias: {data}")
 
     def _unblock_ip_backend(self, ip: str) -> None:
+        try:
+            response = self._request(
+                "POST",
+                f"/api/firewall/alias_util/delete/{self.alias_name}",
+                json={"address": ip},
+            )
+            data = response.json()
+            if isinstance(data, dict) and data.get("status") not in {"done", "ok", None}:
+                raise RuntimeError(f"No se pudo eliminar la IP del alias: {data}")
+            return
+        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
+            if exc.response.status_code != 404:
+                raise
+
         current = self._list_table_backend()
         if ip not in current:
             return

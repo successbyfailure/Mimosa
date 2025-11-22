@@ -14,6 +14,7 @@ class OPNsenseClientTests(unittest.TestCase):
         self.requests: list[tuple[str, str, int]] = []
         self.alias_addresses: set[str] = set()
         self.fallback_after_additem_404 = False
+        self.fallback_after_delete_404 = False
 
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == f"/api/firewall/alias/searchItem":
@@ -79,6 +80,20 @@ class OPNsenseClientTests(unittest.TestCase):
                     response = httpx.Response(200, json={"status": "done"})
                 else:
                     response = httpx.Response(400, json={"status": "failed"})
+                self.requests.append((request.method, request.url.path, response.status_code))
+                return response
+
+            if request.url.path == f"/api/firewall/alias_util/delete/{self.alias_name}":
+                if self.fallback_after_delete_404:
+                    response = httpx.Response(404, json={"error": "missing endpoint"})
+                else:
+                    payload = json.loads(request.content or b"{}")
+                    ip = payload.get("address")
+                    if ip and ip in self.alias_addresses:
+                        self.alias_addresses.remove(ip)
+                        response = httpx.Response(200, json={"status": "done"})
+                    else:
+                        response = httpx.Response(404, json={"status": "not found"})
                 self.requests.append((request.method, request.url.path, response.status_code))
                 return response
 
@@ -166,6 +181,33 @@ class OPNsenseClientTests(unittest.TestCase):
         self.assertNotIn("203.0.113.10", self.alias_addresses)
         self.assertIn("203.0.113.11", self.alias_addresses)
 
+    def test_unblock_ip_uses_delete_endpoint_when_available(self) -> None:
+        self.firewall.block_ip("203.0.113.12", reason="prueba")
+
+        self.firewall.unblock_ip("203.0.113.12")
+
+        self.assertNotIn("203.0.113.12", self.alias_addresses)
+        self.assertIn(
+            ("POST", f"/api/firewall/alias_util/delete/{self.alias_name}", 200),
+            self.requests,
+        )
+
+    def test_unblock_ip_falls_back_when_delete_endpoint_missing(self) -> None:
+        self.fallback_after_delete_404 = True
+        self.firewall.block_ip("203.0.113.13", reason="prueba")
+
+        self.firewall.unblock_ip("203.0.113.13")
+
+        self.assertNotIn("203.0.113.13", self.alias_addresses)
+        self.assertIn(
+            ("POST", f"/api/firewall/alias_util/delete/{self.alias_name}", 404),
+            self.requests,
+        )
+        self.assertIn(
+            ("POST", f"/api/firewall/alias_util/flush/{self.alias_name}", 200),
+            self.requests,
+        )
+
     def test_ensure_ready_applies_when_creating_alias(self) -> None:
         self.firewall.ensure_ready()
 
@@ -213,6 +255,50 @@ class OPNsenseClientTests(unittest.TestCase):
         firewall.block_ip(test_ip, reason="prueba-ci")
         try:
             self.assertIn(test_ip, firewall.list_blocks())
+        finally:
+            firewall.unblock_ip(test_ip)
+
+    def test_live_opnsense_calls_use_test_environment(self) -> None:
+        if os.getenv("TEST_FIREWALL_TYPE", "").lower() != "opnsense":
+            self.skipTest("Entorno de pruebas OPNsense no configurado")
+
+        base_url = os.getenv("TEST_FIREWALL_BASE_URL")
+        api_key = os.getenv("TEST_FIREWALL_API_KEY")
+        api_secret = os.getenv("TEST_FIREWALL_API_SECRET")
+        alias_name = os.getenv("TEST_FIREWALL_ALIAS_NAME", "mimosa_blocklist")
+        verify_ssl = os.getenv("TEST_FIREWALL_VERIFY_SSL", "true").lower() not in {
+            "0",
+            "false",
+            "no",
+        }
+        apply_changes = os.getenv("TEST_FIREWALL_APPLY_CHANGES", "false").lower() not in {
+            "0",
+            "false",
+            "no",
+        }
+        timeout_str = os.getenv("TEST_FIREWALL_TIMEOUT")
+        timeout = float(timeout_str) if timeout_str else 10.0
+        test_ip = os.getenv("TEST_FIREWALL_TEST_IP", "198.51.100.251")
+
+        if not base_url or not api_key or not api_secret:
+            self.skipTest("Entorno de pruebas OPNsense incompleto")
+
+        firewall = OPNsenseClient(
+            base_url=base_url,
+            api_key=api_key,
+            api_secret=api_secret,
+            alias_name=alias_name,
+            verify_ssl=verify_ssl,
+            timeout=timeout,
+            apply_changes=apply_changes,
+        )
+
+        firewall.check_connection()
+        firewall.ensure_ready()
+        firewall.block_ip(test_ip, reason="prueba-ci-env")
+        try:
+            blocks = firewall.list_blocks()
+            self.assertIn(test_ip, blocks)
         finally:
             firewall.unblock_ip(test_ip)
 
