@@ -9,9 +9,10 @@ from __future__ import annotations
 import json
 import threading
 from dataclasses import asdict
+from fnmatch import fnmatch
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, Tuple
 
 from mimosa.core.offenses import OffenseStore
 from mimosa.core.rules import OffenseEvent, OffenseRule, OffenseRuleStore, RuleManager
@@ -46,7 +47,9 @@ class ProxyTrapService:
     def apply_config(self, config: ProxyTrapConfig) -> None:
         """Actualiza la configuración y reinicia el servidor si procede."""
 
-        self.config = config
+        sanitized = config
+        sanitized.domain_policies = list(config.domain_policies or [])
+        self.config = sanitized
         if config.enabled:
             self.start()
         else:
@@ -87,8 +90,9 @@ class ProxyTrapService:
                 return
 
             def _respond(self) -> None:
+                source_ip = self._extract_ip()
                 service._handle_request(
-                    source_ip=self.client_address[0],
+                    source_ip=source_ip,
                     host=self.headers.get("Host", "desconocido"),
                     path=self.path,
                 )
@@ -124,24 +128,40 @@ class ProxyTrapService:
             def do_POST(self):  # noqa: N802 - nombre requerido por BaseHTTPRequestHandler
                 self._respond()
 
+            def _extract_ip(self) -> str:
+                forwarded = self.headers.get("X-Forwarded-For")
+                if forwarded:
+                    return forwarded.split(",")[0].strip()
+                forwarded_header = self.headers.get("Forwarded")
+                if forwarded_header:
+                    for part in forwarded_header.split(";"):
+                        segment = part.strip()
+                        if segment.lower().startswith("for="):
+                            return segment.split("=", 1)[1].strip(" \"[]")
+                return self.client_address[0]
+
         return Handler
 
     # ---------------------------- logica -------------------------------
     def _handle_request(self, *, source_ip: str, host: str, path: str) -> None:
         domain = host.split(":", 1)[0] if host else "desconocido"
+        severity, matched = self._resolve_severity(domain)
         description = f"proxytrap: {domain}"
         self.offense_store.record(
             source_ip=source_ip,
             description=description,
-            severity=self.config.default_severity,
+            severity=severity,
             host=domain,
             path=path,
-            context={"plugin": "proxytrap"},
+            context={
+                "plugin": "proxytrap",
+                "matched_policy": matched or "wildcard",
+            },
         )
         self._increment_stat(domain)
-        self._process_rules(domain, source_ip)
+        self._process_rules(domain, source_ip, severity)
 
-    def _process_rules(self, domain: str, source_ip: str) -> None:
+    def _process_rules(self, domain: str, source_ip: str, severity: str) -> None:
         manager = RuleManager(
             self.offense_store,
             self.block_manager,
@@ -153,10 +173,19 @@ class ProxyTrapService:
                 source_ip=source_ip,
                 plugin="proxytrap",
                 event_id=domain,
-                severity=self.config.default_severity,
+                severity=severity,
                 description=f"proxytrap: {domain}",
             )
         )
+
+    def _resolve_severity(self, domain: str) -> Tuple[str, Optional[str]]:
+        normalized = domain.lower()
+        for policy in self.config.domain_policies:
+            pattern = (policy.get("pattern") or "").lower()
+            severity = policy.get("severity") or self.config.default_severity
+            if pattern and fnmatch(normalized, pattern):
+                return severity, pattern
+        return (self.config.wildcard_severity or self.config.default_severity, None)
 
     # ----------------------------- stats -------------------------------
     def _load_stats(self) -> Dict[str, int]:

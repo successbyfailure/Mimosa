@@ -41,20 +41,24 @@ class CoreAPI:
         entry = self.block_manager.add(
             request.source_ip, request.reason, request.duration_minutes
         )
+        sync_with_firewall = self.block_manager.should_sync(request.source_ip)
         duration_minutes = None
         if entry.expires_at:
             delta = entry.expires_at - datetime.utcnow()
             duration_minutes = max(int(delta.total_seconds() // 60), 1)
-        self.firewall_gateway.block_ip(
-            request.source_ip, request.reason, duration_minutes=duration_minutes
-        )
+        if sync_with_firewall:
+            self.firewall_gateway.block_ip(
+                request.source_ip, request.reason, duration_minutes=duration_minutes
+            )
         expiry = (
             f" expira {entry.expires_at.isoformat(timespec='seconds')}"
             if entry.expires_at
             else ""
         )
+        message_suffix = " (solo base de datos)" if not sync_with_firewall else ""
         return BlockResponse(
-            blocked=True, message=f"IP {request.source_ip} bloqueada{expiry}"
+            blocked=True,
+            message=f"IP {request.source_ip} bloqueada{expiry}{message_suffix}",
         )
 
     def block_ip(self, ip: str, reason: str, duration_minutes: int | None = None) -> None:

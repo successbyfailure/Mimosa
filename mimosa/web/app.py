@@ -10,7 +10,7 @@ import httpx
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from mimosa.core.api import FirewallGateway
 from mimosa.core.blocking import BlockEntry, BlockManager
@@ -56,6 +56,13 @@ class BlockingSettingsInput(BaseModel):
     sync_interval_seconds: int = 300
 
 
+class ProxyTrapDomainInput(BaseModel):
+    """Dominio/host específico con severidad personalizada."""
+
+    pattern: str
+    severity: str = "alto"
+
+
 class ProxyTrapInput(BaseModel):
     """Configuración expuesta para el plugin ProxyTrap."""
 
@@ -64,6 +71,8 @@ class ProxyTrapInput(BaseModel):
     default_severity: str = "alto"
     response_type: Literal["silence", "404", "custom"] = "404"
     custom_html: str | None = None
+    domain_policies: List[ProxyTrapDomainInput] = Field(default_factory=list)
+    wildcard_severity: Optional[str] = None
 
 
 class OffenseInput(BaseModel):
@@ -117,7 +126,10 @@ def create_app(
     )
 
     offense_store = offense_store or OffenseStore()
-    block_manager = block_manager or BlockManager(db_path=offense_store.db_path)
+    block_manager = block_manager or BlockManager(
+        db_path=offense_store.db_path, whitelist_checker=offense_store.is_whitelisted
+    )
+    block_manager.set_whitelist_checker(offense_store.is_whitelisted)
     config_store = config_store or FirewallConfigStore()
     rule_store = rule_store or OffenseRuleStore(db_path=offense_store.db_path)
     plugin_store = PluginConfigStore()
@@ -438,21 +450,24 @@ def create_app(
         if entry.expires_at:
             delta = entry.expires_at - datetime.utcnow()
             duration_minutes = max(int(delta.total_seconds() // 60), 1)
-        try:
-            gateway.ensure_ready()
-            gateway.block_ip(
-                payload.ip,
-                payload.reason or "",
-                duration_minutes=duration_minutes,
-            )
-        except httpx.HTTPStatusError as exc:
-            block_manager.remove(payload.ip)
-            raise HTTPException(status_code=502, detail=str(exc))
+        should_sync = block_manager.should_sync(payload.ip)
+        if should_sync:
+            try:
+                gateway.ensure_ready()
+                gateway.block_ip(
+                    payload.ip,
+                    payload.reason or "",
+                    duration_minutes=duration_minutes,
+                )
+            except httpx.HTTPStatusError as exc:
+                block_manager.remove(payload.ip)
+                raise HTTPException(status_code=502, detail=str(exc))
         return {
             "alias": config.alias_name,
             "ip": payload.ip,
             "reason": payload.reason or "",
             "duration_minutes": duration_minutes,
+            "synced_with_firewall": should_sync,
         }
 
     @app.delete("/api/firewalls/{config_id}/blocks/{ip}", status_code=204)

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 import sqlite3
 from pathlib import Path
 
@@ -48,6 +48,7 @@ class BlockManager:
         db_path: Path | str = DEFAULT_DB_PATH,
         default_duration_minutes: int = 60,
         sync_interval_seconds: int = 300,
+        whitelist_checker: Callable[[str], bool] | None = None,
     ) -> None:
         self.db_path = ensure_database(db_path)
         self.default_duration_minutes = default_duration_minutes
@@ -55,6 +56,9 @@ class BlockManager:
         self._blocks: Dict[str, BlockEntry] = {}
         self._history: List[BlockEntry] = []
         self._last_sync: Optional[datetime] = None
+        self._should_sync = lambda ip: True
+        if whitelist_checker:
+            self.set_whitelist_checker(whitelist_checker)
         self._load_state()
         self._load_settings()
 
@@ -225,7 +229,9 @@ class BlockManager:
             return {"added": [], "removed": []}
 
         expired = self.purge_expired()
-        desired_ips = set(self._blocks.keys())
+        desired_ips = {
+            ip for ip in self._blocks.keys() if self.should_sync(ip)
+        }
         firewall_entries = set(gateway.list_blocks())
 
         added: List[str] = []
@@ -263,6 +269,15 @@ class BlockManager:
             "default_duration_minutes": self.default_duration_minutes,
             "sync_interval_seconds": self.sync_interval_seconds,
         }
+
+    def set_whitelist_checker(self, checker: Callable[[str], bool]) -> None:
+        self._should_sync = lambda ip: not checker(ip)
+
+    def should_sync(self, ip: str) -> bool:
+        try:
+            return bool(self._should_sync(ip))
+        except Exception:
+            return True
 
     def update_settings(self, *, default_duration_minutes: Optional[int] = None, sync_interval_seconds: Optional[int] = None) -> None:
         if default_duration_minutes is not None:

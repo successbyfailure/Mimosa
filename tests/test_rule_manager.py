@@ -9,7 +9,11 @@ from mimosa.core.rules import OffenseEvent, OffenseRule, RuleManager
 
 def _setup(tmp_path: Path):
     store = OffenseStore(db_path=tmp_path / "rules.db")
-    block_manager = BlockManager(db_path=store.db_path, default_duration_minutes=45)
+    block_manager = BlockManager(
+        db_path=store.db_path,
+        default_duration_minutes=45,
+        whitelist_checker=store.is_whitelisted,
+    )
     firewall = DummyFirewall()
     return store, block_manager, firewall
 
@@ -67,6 +71,27 @@ def test_rule_thresholds_consider_counts(tmp_path):
     remaining = entry.expires_at - entry.created_at
     assert remaining >= timedelta(minutes=119)
     assert firewall.list_blocks() == [event.source_ip]
+
+
+def test_whitelisted_ips_are_not_sent_to_firewall(tmp_path):
+    store, block_manager, firewall = _setup(tmp_path)
+    store.add_whitelist("203.0.113.0/24")
+    manager = RuleManager(store, block_manager, firewall)
+
+    event = OffenseEvent(
+        source_ip="203.0.113.10",
+        plugin="any",
+        event_id="generic",
+        severity="alto",
+        description="en whitelist",
+    )
+    store.record(source_ip=event.source_ip, description=event.description, severity=event.severity)
+
+    entry = manager.process_offense(event)
+
+    assert entry is not None
+    assert firewall.list_blocks() == []
+    assert any(b.ip == event.source_ip for b in block_manager.list())
 
 
 def test_unblock_removes_from_firewall(tmp_path):

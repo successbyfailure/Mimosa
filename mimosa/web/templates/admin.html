@@ -11,6 +11,7 @@
 
 <div class="tabs">
   <button class="tab-btn active" data-tab="config" onclick="switchTab('config')">Configuración</button>
+  <button class="tab-btn" data-tab="plugins" onclick="switchTab('plugins')">Plugins</button>
   <button class="tab-btn" data-tab="offenses" onclick="switchTab('offenses')">Ofensas</button>
   <button class="tab-btn" data-tab="blocks" onclick="switchTab('blocks')">Bloqueos</button>
   <button class="tab-btn" data-tab="ips" onclick="switchTab('ips')">IP inspector</button>
@@ -40,70 +41,6 @@
         <div id="blocking-settings-message" class="muted"></div>
       </div>
     </form>
-  </section>
-
-  <section class="card space">
-    <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
-      <div>
-        <h2 style="margin:0 0 6px">Plugins</h2>
-        <div class="muted">Activa y configura los plugins disponibles. El dummy permite registrar ofensas manuales; ProxyTrap crea ofensas al recibir conexiones HTTP en el puerto configurado.</div>
-      </div>
-      <button class="secondary" onclick="loadPlugins()">Actualizar</button>
-    </div>
-    <div id="plugin-list" class="muted" style="margin-bottom:12px;">Cargando plugins...</div>
-
-    <div class="grid" style="grid-template-columns: 1.1fr 1fr; gap: 18px; align-items:start;">
-      <form id="proxytrap-form" class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
-        <h3 style="margin-top:0">ProxyTrap</h3>
-        <label style="display:flex; gap:8px; align-items:center;">
-          <input type="checkbox" name="enabled" style="width:auto;" />
-          Habilitar servidor ProxyTrap
-        </label>
-        <label>Puerto de escucha</label>
-        <input name="port" type="number" min="1" max="65535" value="8081" />
-        <label>Severidad por defecto</label>
-        <select name="default_severity">
-          <option value="bajo">Bajo</option>
-          <option value="medio">Medio</option>
-          <option value="alto" selected>Alto</option>
-        </select>
-        <label>Respuesta al ofensor</label>
-        <select name="response_type" onchange="toggleCustomHtml()">
-          <option value="silence">Silencio (204)</option>
-          <option value="404">404 Not Found</option>
-          <option value="custom">HTML personalizado</option>
-        </select>
-        <div id="custom-html-wrapper" style="display:none;">
-          <label>HTML personalizado</label>
-          <textarea name="custom_html" rows="4" placeholder="&lt;h1&gt;No permitido&lt;/h1&gt;"></textarea>
-        </div>
-        <button type="submit" style="margin-top:12px;">Guardar configuración</button>
-        <div id="proxytrap-message" class="muted"></div>
-      </form>
-
-      <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
-        <div class="flex space" style="align-items:flex-start;">
-          <div>
-            <h3 style="margin-top:0">Dominios más solicitados</h3>
-            <div class="muted">Estadísticas recogidas por ProxyTrap.</div>
-          </div>
-          <button class="secondary" onclick="loadProxyTrapStats()">Refrescar</button>
-        </div>
-        <div style="max-height:260px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
-          <table>
-            <thead>
-              <tr>
-                <th>Dominio</th>
-                <th>Solicitudes</th>
-              </tr>
-            </thead>
-            <tbody id="proxytrap-stats">
-              <tr><td colspan="2" class="muted">Sin datos.</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
   </section>
 
   <section class="card space">
@@ -186,6 +123,137 @@
       </tbody>
     </table>
   </section>
+</section>
+
+<section id="tab-plugins" class="tab-panel">
+  <section class="card space">
+    <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
+      <div>
+        <h2 style="margin:0 0 6px">Plugins</h2>
+        <div class="muted">Activa y configura los plugins disponibles. ProxyTrap ahora permite ajustar severidad por dominio.</div>
+      </div>
+      <button class="secondary" onclick="loadPlugins()">Actualizar</button>
+    </div>
+    <div id="plugin-list" class="muted" style="margin-top:4px;">Cargando plugins...</div>
+  </section>
+
+  <div class="grid" style="grid-template-columns: 1.25fr 1fr; gap: 18px; align-items:start;">
+    <div class="grid" style="grid-template-rows: auto auto; gap: 18px;">
+      <form id="proxytrap-form" class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+        <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
+          <div>
+            <h3 style="margin-top:0">ProxyTrap</h3>
+            <div class="muted">Servidor honeypot HTTP ligero.</div>
+          </div>
+          <span class="pill warn" style="display:none;" id="proxytrap-warning">Deshabilitado</span>
+        </div>
+        <label style="display:flex; gap:8px; align-items:center;">
+          <input type="checkbox" name="enabled" style="width:auto;" />
+          Habilitar servidor ProxyTrap
+        </label>
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px; align-items:end;">
+          <div>
+            <label>Puerto de escucha</label>
+            <input name="port" type="number" min="1" max="65535" value="8081" />
+          </div>
+          <div>
+            <label>Respuesta al ofensor</label>
+            <select name="response_type" onchange="toggleCustomHtml()">
+              <option value="silence">Silencio (204)</option>
+              <option value="404">404 Not Found</option>
+              <option value="custom">HTML personalizado</option>
+            </select>
+          </div>
+          <div>
+            <label>Severidad por defecto</label>
+            <select name="default_severity">
+              <option value="bajo">Bajo</option>
+              <option value="medio">Medio</option>
+              <option value="alto" selected>Alto</option>
+            </select>
+          </div>
+          <div>
+            <label>Severidad para coincidencias wildcard</label>
+            <select name="wildcard_severity" id="proxytrap-wildcard">
+              <option value="">Usar severidad por defecto</option>
+              <option value="bajo">Bajo</option>
+              <option value="medio">Medio</option>
+              <option value="alto">Alto</option>
+            </select>
+          </div>
+        </div>
+        <div id="custom-html-wrapper" style="display:none;">
+          <label>HTML personalizado</label>
+          <textarea name="custom_html" rows="4" placeholder="&lt;h1&gt;No permitido&lt;/h1&gt;"></textarea>
+        </div>
+        <button type="submit" style="margin-top:12px;">Guardar configuración</button>
+        <div id="proxytrap-message" class="muted"></div>
+      </form>
+
+      <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+        <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
+          <div>
+            <h3 style="margin-top:0">Severidad por dominio</h3>
+            <div class="muted">Define reglas específicas (soporta wildcard) y una opción comodín.</div>
+          </div>
+          <button class="secondary" onclick="resetProxytrapDefaults()">Restaurar defaults</button>
+        </div>
+        <form id="proxytrap-policy-form" class="grid" style="grid-template-columns: 2fr 1fr auto; gap: 10px; align-items:end;">
+          <div>
+            <label>Dominio / patrón</label>
+            <input name="pattern" required placeholder="admin.ejemplo.com o *.intranet" />
+          </div>
+          <div>
+            <label>Severidad</label>
+            <select name="severity">
+              <option value="bajo">Bajo</option>
+              <option value="medio">Medio</option>
+              <option value="alto" selected>Alto</option>
+            </select>
+          </div>
+          <button type="submit">Añadir</button>
+        </form>
+        <div id="proxytrap-policy-message" class="muted" style="margin-top:6px;"></div>
+        <div style="max-height:240px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px; margin-top:8px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Patrón</th>
+                <th>Severidad</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="proxytrap-policy-table">
+              <tr><td colspan="3" class="muted">Sin reglas.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+      <div class="flex space" style="align-items:flex-start;">
+        <div>
+          <h3 style="margin-top:0">Dominios más solicitados</h3>
+          <div class="muted">Estadísticas recogidas por ProxyTrap.</div>
+        </div>
+        <button class="secondary" onclick="loadProxyTrapStats()">Refrescar</button>
+      </div>
+      <div style="max-height:320px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Dominio</th>
+              <th>Solicitudes</th>
+            </tr>
+          </thead>
+          <tbody id="proxytrap-stats">
+            <tr><td colspan="2" class="muted">Sin datos.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </section>
 
 <section id="tab-offenses" class="tab-panel">
@@ -528,6 +596,9 @@ let firewallsCache = [];
 let selectedFirewallId = null;
 let editingFirewallId = null;
 let pluginsCache = [];
+let proxytrapPolicies = [];
+let editingPolicyIndex = null;
+let ipBlockChart = null;
 const editModal = document.getElementById('edit-modal');
 const editForm = document.getElementById('edit-form');
 
@@ -541,6 +612,8 @@ function switchTab(tab) {
   if (tab === 'config') {
     loadBlockingSettings();
     loadFirewalls();
+  }
+  if (tab === 'plugins') {
     loadPlugins();
   }
 }
@@ -573,10 +646,20 @@ async function loadBlockingSettings() {
   form.sync_interval_seconds.value = data.sync_interval_seconds ?? 300;
 }
 
+function defaultProxytrapPolicies() {
+  return [
+    { pattern: 'phpmyadmin.*', severity: 'alto' },
+    { pattern: 'admin.*', severity: 'alto' },
+    { pattern: '*.admin', severity: 'alto' },
+    { pattern: 'cpanel.*', severity: 'alto' },
+  ];
+}
+
 async function loadPlugins() {
   const res = await fetch('/api/plugins');
   const data = await res.json();
   pluginsCache = data;
+  editingPolicyIndex = null;
   const list = document.getElementById('plugin-list');
   if (!data.length) {
     list.textContent = 'No hay plugins configurados.';
@@ -590,6 +673,8 @@ async function loadPlugins() {
   if (proxytrap && proxytrap.config) {
     setProxyTrapForm(proxytrap.config);
     toggleCustomHtml();
+    const message = document.getElementById('proxytrap-policy-message');
+    if (message) message.textContent = 'Reglas cargadas desde configuración.';
   }
   loadProxyTrapStats();
 }
@@ -601,6 +686,84 @@ function setProxyTrapForm(config) {
   form.default_severity.value = config.default_severity || 'alto';
   form.response_type.value = config.response_type || '404';
   form.custom_html.value = config.custom_html || '';
+  form.wildcard_severity.value = config.wildcard_severity || '';
+  proxytrapPolicies = (config.domain_policies && config.domain_policies.length)
+    ? config.domain_policies
+    : defaultProxytrapPolicies();
+  renderProxytrapPolicies();
+  const warning = document.getElementById('proxytrap-warning');
+  if (warning) {
+    warning.style.display = form.enabled.checked ? 'none' : 'inline-flex';
+  }
+}
+
+function renderProxytrapPolicies() {
+  const tbody = document.getElementById('proxytrap-policy-table');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  if (!proxytrapPolicies.length) {
+    tbody.innerHTML = '<tr><td colspan="3" class="muted">Sin reglas.</td></tr>';
+    return;
+  }
+  proxytrapPolicies.forEach((policy, index) => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${policy.pattern}</td>
+      <td>${policy.severity}</td>
+      <td style="text-align:right; display:flex; gap:8px; justify-content:flex-end;">
+        <button class="secondary" type="button" onclick="editProxytrapPolicy(${index})">Editar</button>
+        <button class="secondary" type="button" onclick="deleteProxytrapPolicy(${index})">Quitar</button>
+      </td>`;
+    tbody.appendChild(row);
+  });
+}
+
+function resetProxytrapDefaults() {
+  proxytrapPolicies = defaultProxytrapPolicies();
+  editingPolicyIndex = null;
+  renderProxytrapPolicies();
+  const msg = document.getElementById('proxytrap-policy-message');
+  if (msg) msg.textContent = 'Restauradas reglas por defecto (admin.*, phpmyadmin.*, cpanel.*).';
+}
+
+function submitProxytrapPolicy(event) {
+  event.preventDefault();
+  const form = event.target;
+  const payload = Object.fromEntries(new FormData(form));
+  const entry = { pattern: (payload.pattern || '').trim(), severity: payload.severity || 'alto' };
+  if (!entry.pattern) return;
+
+  if (editingPolicyIndex !== null) {
+    proxytrapPolicies[editingPolicyIndex] = entry;
+  } else {
+    proxytrapPolicies.push(entry);
+  }
+  editingPolicyIndex = null;
+  form.reset();
+  form.querySelector('button').textContent = 'Añadir';
+  renderProxytrapPolicies();
+  const msg = document.getElementById('proxytrap-policy-message');
+  if (msg) msg.textContent = 'Regla guardada. Recuerda pulsar "Guardar configuración" para aplicar.';
+}
+
+function editProxytrapPolicy(index) {
+  const policy = proxytrapPolicies[index];
+  if (!policy) return;
+  const form = document.getElementById('proxytrap-policy-form');
+  form.pattern.value = policy.pattern;
+  form.severity.value = policy.severity || 'alto';
+  form.querySelector('button').textContent = 'Actualizar';
+  editingPolicyIndex = index;
+  const msg = document.getElementById('proxytrap-policy-message');
+  if (msg) msg.textContent = 'Editando regla. Guarda para mantener los cambios.';
+}
+
+function deleteProxytrapPolicy(index) {
+  proxytrapPolicies.splice(index, 1);
+  editingPolicyIndex = null;
+  renderProxytrapPolicies();
+  const msg = document.getElementById('proxytrap-policy-message');
+  if (msg) msg.textContent = 'Regla eliminada localmente.';
 }
 
 function toggleCustomHtml() {
@@ -615,6 +778,8 @@ async function submitProxytrap(event) {
   const payload = Object.fromEntries(new FormData(form));
   payload.enabled = form.enabled.checked;
   payload.port = Number(payload.port || 8081);
+  payload.domain_policies = proxytrapPolicies;
+  payload.wildcard_severity = form.wildcard_severity.value || null;
   if (payload.response_type !== 'custom') {
     payload.custom_html = null;
   }
@@ -1166,12 +1331,34 @@ async function showIpDetail(ip) {
   const profile = data.profile;
   const offenses = data.offenses || [];
   const blocks = data.blocks || [];
+  const blockGroups = blocks.reduce((acc, block) => {
+    const key = block.source || 'desconocido';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  const blockTypeSummary = Object.entries(blockGroups)
+    .map(([source, count]) => `${source}: ${count}`)
+    .join(' · ');
+  const latestBlock = blocks[0] ? new Date(blocks[0].created_at).toLocaleString() : 'sin registros';
   detail.innerHTML = `
     <div><strong>${profile.ip}</strong></div>
     <div class="muted">Reverse DNS: ${profile.reverse_dns || 'n/d'}</div>
     <div class="muted">Geo: ${profile.geo || 'pendiente'} · Whois: ${profile.whois || 'pendiente'}</div>
     <div class="muted">Primera vista: ${new Date(profile.first_seen).toLocaleString()}</div>
     <div class="muted">Última vista: ${new Date(profile.last_seen).toLocaleString()}</div>
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:12px; margin:12px 0;">
+      <div class="card" style="padding:12px; background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+        <div class="muted">Estadísticas rápidas</div>
+        <div style="font-weight:700;">${offenses.length} ofensas · ${blocks.length} bloqueos</div>
+        <div class="muted">Último bloqueo: ${latestBlock}</div>
+        <div class="muted">Tipos: ${blockTypeSummary || 'Sin bloqueos registrados'}</div>
+      </div>
+      <div class="card" style="padding:12px; background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+        <div class="muted" style="margin-bottom:6px;">Distribución de bloqueos</div>
+        <canvas id="ip-block-chart" height="140"></canvas>
+        <div id="ip-block-chart-empty" class="muted" style="display:none;">Sin bloqueos para graficar.</div>
+      </div>
+    </div>
     <h4>Ofensas</h4>
     <ul style="max-height:120px; overflow:auto; padding-left:18px;">
       ${offenses.map(o => `<li>${new Date(o.created_at).toLocaleString()} · ${o.description}</li>`).join('') || '<li class="muted">Sin ofensas registradas</li>'}
@@ -1181,6 +1368,45 @@ async function showIpDetail(ip) {
       ${blocks.map(b => `<li>${new Date(b.created_at).toLocaleString()} · ${b.reason}</li>`).join('') || '<li class="muted">Sin bloqueos</li>'}
     </ul>
   `;
+  renderIpBlockChart(blocks);
+}
+
+function renderIpBlockChart(blocks) {
+  const canvas = document.getElementById('ip-block-chart');
+  const emptyState = document.getElementById('ip-block-chart-empty');
+  if (!canvas) return;
+  if (ipBlockChart) {
+    ipBlockChart.destroy();
+    ipBlockChart = null;
+  }
+  const grouped = blocks.reduce((acc, block) => {
+    const key = block.source || 'desconocido';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  const labels = Object.keys(grouped);
+  const values = Object.values(grouped);
+
+  if (!labels.length) {
+    canvas.style.display = 'none';
+    if (emptyState) emptyState.style.display = 'block';
+    return;
+  }
+
+  canvas.style.display = 'block';
+  if (emptyState) emptyState.style.display = 'none';
+
+  const colors = ['#38bdf8', '#22c55e', '#fbbf24', '#f472b6', '#a78bfa', '#60a5fa'];
+  ipBlockChart = new Chart(canvas.getContext('2d'), {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{ data: values, backgroundColor: labels.map((_, idx) => colors[idx % colors.length]) }]
+    },
+    options: {
+      plugins: { legend: { labels: { color: '#e2e8f0' } } }
+    }
+  });
 }
 
 async function refreshIp(ip) {
@@ -1245,6 +1471,7 @@ document.getElementById('rule-form').addEventListener('submit', submitRule);
 document.getElementById('whitelist-form').addEventListener('submit', submitWhitelist);
 document.getElementById('blocking-settings').addEventListener('submit', submitBlockingSettings);
 document.getElementById('proxytrap-form').addEventListener('submit', submitProxytrap);
+document.getElementById('proxytrap-policy-form').addEventListener('submit', submitProxytrapPolicy);
 document.querySelectorAll('.block-fw-select').forEach(select => {
   select.addEventListener('change', handleFirewallChange);
 });
