@@ -114,3 +114,13 @@ class FirewallGateway:
         """
 
         self.list_blocks()
+
+    def block_rule_stats(self, *, interface: str = "wan") -> dict:
+        """Devuelve estadísticas de la regla de bloqueo principal."""
+
+        raise NotImplementedError
+
+    def flush_states(self) -> dict:
+        """Resetea los estados activos del firewall."""
+
+        raise NotImplementedError
