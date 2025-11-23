@@ -124,3 +124,21 @@ class FirewallGateway:
         """Resetea los estados activos del firewall."""
 
         raise NotImplementedError
+
+    def ensure_port_forwards(
+        self,
+        *,
+        target_ip: str,
+        ports: List[int],
+        protocol: str = "tcp",
+        description: str | None = None,
+        interface: str = "wan",
+    ) -> dict:
+        """Publica puertos hacia un destino concreto."""
+
+        raise NotImplementedError
+
+    def list_services(self) -> List[dict]:
+        """Lista reglas NAT/servicios existentes."""
+
+        raise NotImplementedError
