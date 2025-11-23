@@ -569,6 +569,19 @@
         </table>
       </div>
     </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="flex space" style="margin-bottom:8px; gap:10px; flex-wrap: wrap; align-items: center;">
+        <h3 style="margin:0">Regla de bloqueo en el firewall</h3>
+        <div class="flex" style="gap:8px; flex-wrap: wrap; align-items: center;">
+          <input id="block-rule-interface" placeholder="wan" style="max-width:120px;" />
+          <button class="secondary" onclick="loadBlockRuleStats()">Consultar</button>
+          <button class="secondary" onclick="flushFirewallStates()">Reset estados</button>
+        </div>
+      </div>
+      <div id="block-rule-message" class="muted"></div>
+      <div id="block-rule-stats" class="muted">Selecciona un firewall y pulsa Consultar para ver las estadísticas de la regla.</div>
+    </div>
   </section>
 </section>
 
@@ -730,6 +743,7 @@ let editingPortRuleIndex = null;
 let ipBlockChart = null;
 const editModal = document.getElementById('edit-modal');
 const editForm = document.getElementById('edit-form');
+document.getElementById('block-rule-interface').value = 'wan';
 
 function switchTab(tab) {
   document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
@@ -1360,6 +1374,7 @@ function updateBlockTableMessage(message) {
 async function refreshBlocks() {
   loadDatabaseBlocks();
   loadBlockHistory();
+  loadBlockRuleStats();
   if (!selectedFirewallId) {
     updateBlockTableMessage('Configura un firewall para ver las listas.');
     return;
@@ -1437,6 +1452,77 @@ async function loadBlockHistory() {
   } catch (error) {
     const tbody = document.getElementById('block-history-table');
     tbody.innerHTML = '<tr><td colspan="4" class="muted">No se pudo cargar el historial.</td></tr>';
+  }
+}
+
+function updateBlockRuleMessage(message, color = '') {
+  const msg = document.getElementById('block-rule-message');
+  msg.textContent = message;
+  msg.style.color = color;
+}
+
+async function loadBlockRuleStats() {
+  const statsEl = document.getElementById('block-rule-stats');
+  const interfaceInput = document.getElementById('block-rule-interface');
+  const iface = (interfaceInput?.value || 'wan').trim() || 'wan';
+  if (interfaceInput && !interfaceInput.value) interfaceInput.value = iface;
+  updateBlockRuleMessage('');
+
+  if (!selectedFirewallId) {
+    statsEl.textContent = 'Configura un firewall para consultar la regla.';
+    return;
+  }
+
+  statsEl.textContent = 'Consultando datos de la regla...';
+  try {
+    const res = await fetch(`/api/firewalls/${selectedFirewallId}/block_rule_stats?interface=${encodeURIComponent(iface)}`);
+    const data = await res.json();
+    if (!res.ok) {
+      updateBlockRuleMessage(data.detail || 'No se pudieron recuperar las estadísticas.', '#fca5a5');
+      statsEl.textContent = '';
+      return;
+    }
+    if (data.supported === false) {
+      updateBlockRuleMessage(data.message || 'Regla no soportada en este firewall.', '#fca5a5');
+      statsEl.textContent = '';
+      return;
+    }
+
+    const ruleLabel = data.rule || 'Regla no localizada';
+    const states = typeof data.states === 'number' ? data.states : 0;
+    const matches = data.matches ?? 0;
+    const uuid = data.uuid || 'Desconocido';
+
+    statsEl.innerHTML = `
+      <div><strong>Alias:</strong> ${data.alias || '-'} (${data.interface})</div>
+      <div><strong>Regla:</strong> ${ruleLabel}</div>
+      <div><strong>UUID:</strong> ${uuid}</div>
+      <div><strong>Estados activos:</strong> ${states}</div>
+      <div class="muted">Coincidencias encontradas: ${matches}</div>
+    `;
+  } catch (error) {
+    updateBlockRuleMessage('Error al consultar las estadísticas de la regla.', '#fca5a5');
+    statsEl.textContent = '';
+  }
+}
+
+async function flushFirewallStates() {
+  if (!selectedFirewallId) {
+    updateBlockRuleMessage('Selecciona un firewall antes de resetear estados.', '#fca5a5');
+    return;
+  }
+  updateBlockRuleMessage('Reseteando estados activos...');
+  try {
+    const res = await fetch(`/api/firewalls/${selectedFirewallId}/flush_states`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      updateBlockRuleMessage(data.detail || 'No se pudieron limpiar los estados.', '#fca5a5');
+      return;
+    }
+    updateBlockRuleMessage(data.message || data.status || 'Estados reiniciados.', '#c0e2ff');
+    loadBlockRuleStats();
+  } catch (error) {
+    updateBlockRuleMessage('Error al resetear los estados.', '#fca5a5');
   }
 }
 

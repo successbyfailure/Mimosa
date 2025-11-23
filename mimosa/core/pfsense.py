@@ -218,6 +218,41 @@ class OPNsenseClient(_BaseSenseClient):
                 json={"address": address},
             )
 
+    def block_rule_stats(self, *, interface: str = "wan") -> Dict[str, object]:
+        response = self._request(
+            "GET",
+            "/api/firewall/filter/search_rule",
+            params={"interface": interface, "show_all": "1"},
+        )
+        data = response.json()
+        rows = data.get("rows", []) if isinstance(data, dict) else []
+        matches: List[Dict[str, object]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            haystack = " ".join(
+                str(value) for value in row.values() if value is not None
+            )
+            if self.alias_name in haystack:
+                matches.append(row)
+
+        if not matches:
+            return {"supported": True, "matches": 0, "states": 0, "rule": None, "uuid": None}
+
+        best = max(matches, key=lambda item: int(item.get("states") or 0))
+        return {
+            "supported": True,
+            "matches": len(matches),
+            "states": int(best.get("states") or 0),
+            "rule": best.get("descr") or best.get("tracker") or best.get("uuid"),
+            "uuid": best.get("uuid") or best.get("tracker"),
+        }
+
+    def flush_states(self) -> Dict[str, object]:
+        response = self._request("POST", "/api/core/diagnostics/flushState")
+        payload = response.json()
+        return payload if isinstance(payload, dict) else {"status": "ok"}
+
     def _list_table_backend(self) -> List[str]:
         try:
             response = self._request(

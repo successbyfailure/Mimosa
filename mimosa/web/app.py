@@ -504,6 +504,24 @@ def create_app(
             "sync": sync_info,
         }
 
+    @app.get("/api/firewalls/{config_id}/block_rule_stats")
+    def firewall_block_rule_stats(config_id: str, interface: str = "wan") -> Dict[str, object]:
+        config, gateway = _get_firewall(config_id)
+        try:
+            stats = gateway.block_rule_stats(interface=interface)
+        except NotImplementedError:
+            raise HTTPException(
+                status_code=501,
+                detail="El firewall no expone estadísticas de regla via API",
+            )
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {
+            "alias": config.alias_name,
+            "interface": interface,
+            **stats,
+        }
+
     @app.post("/api/firewalls/{config_id}/blocks", status_code=201)
     def add_firewall_block(config_id: str, payload: BlockInput) -> Dict[str, object]:
         config, gateway = _get_firewall(config_id)
@@ -545,6 +563,19 @@ def create_app(
         except httpx.HTTPStatusError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         block_manager.remove(ip)
+
+    @app.post("/api/firewalls/{config_id}/flush_states")
+    def flush_firewall_states(config_id: str) -> Dict[str, object]:
+        _, gateway = _get_firewall(config_id)
+        try:
+            return gateway.flush_states()
+        except NotImplementedError:
+            raise HTTPException(
+                status_code=501,
+                detail="El firewall no permite resetear estados desde la API",
+            )
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
 
     @app.post("/api/firewalls/{config_id}/setup")
     def setup_firewall(config_id: str) -> Dict[str, str]:

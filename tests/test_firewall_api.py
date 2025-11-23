@@ -1,3 +1,4 @@
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -20,6 +21,29 @@ def build_client(tmp_dir: str) -> tuple[TestClient, FirewallConfigStore]:
         config_store=config_store,
     )
     return TestClient(app), config_store
+
+
+def _as_bool(value: str | None, default: bool = True) -> bool:
+    if value is None:
+        return default
+    return value.lower() not in {"false", "0", "no"}
+
+
+def _env_firewall_payload() -> FirewallInput | None:
+    base_url = os.getenv("TEST_FIREWALL_BASE_URL")
+    if not base_url:
+        return None
+    return FirewallInput(
+        name=os.getenv("TEST_FIREWALL_NAME", "env-firewall"),
+        type=os.getenv("TEST_FIREWALL_TYPE", "opnsense"),
+        base_url=base_url,
+        api_key=os.getenv("TEST_FIREWALL_API_KEY"),
+        api_secret=os.getenv("TEST_FIREWALL_API_SECRET"),
+        alias_name=os.getenv("TEST_FIREWALL_ALIAS_NAME", "mimosa_blocklist"),
+        verify_ssl=_as_bool(os.getenv("TEST_FIREWALL_VERIFY_SSL"), True),
+        timeout=float(os.getenv("TEST_FIREWALL_TIMEOUT") or 15),
+        apply_changes=_as_bool(os.getenv("TEST_FIREWALL_APPLY_CHANGES"), True),
+    )
 
 
 class FirewallApiTests(unittest.TestCase):
@@ -87,6 +111,20 @@ class FirewallApiTests(unittest.TestCase):
         final_listing = self.client.get(f"/api/firewalls/{config_id}/blocks")
         self.assertEqual(final_listing.json()["items"], [])
 
+    def test_block_rule_stats_returns_error_for_dummy(self) -> None:
+        created = self.client.post("/api/firewalls", json=self._dummy_payload()).json()
+        config_id = created["id"]
+
+        stats = self.client.get(f"/api/firewalls/{config_id}/block_rule_stats")
+        self.assertEqual(stats.status_code, 501)
+
+    def test_flush_states_returns_error_for_dummy(self) -> None:
+        created = self.client.post("/api/firewalls", json=self._dummy_payload()).json()
+        config_id = created["id"]
+
+        response = self.client.post(f"/api/firewalls/{config_id}/flush_states")
+        self.assertEqual(response.status_code, 501)
+
     def test_rule_endpoints_allow_add_and_delete(self) -> None:
         initial = self.client.get("/api/rules")
         self.assertEqual(initial.status_code, 200)
@@ -116,6 +154,43 @@ class FirewallApiTests(unittest.TestCase):
 
         final_listing = self.client.get("/api/rules")
         self.assertEqual(len(final_listing.json()), initial_count)
+class FirewallEnvIntegrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.client, self.config_store = build_client(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    @unittest.skipUnless(
+        os.getenv("TEST_FIREWALL_BASE_URL"),
+        "Variables de entorno de firewall no configuradas",
+    )
+    def test_block_rule_stats_with_env_firewall(self) -> None:
+        payload = _env_firewall_payload()
+        self.assertIsNotNone(payload)
+        response = self.client.post("/api/firewalls", json=payload.model_dump())
+        self.assertEqual(response.status_code, 201)
+        config_id = response.json()["id"]
+
+        stats = self.client.get(f"/api/firewalls/{config_id}/block_rule_stats")
+        self.assertIn(stats.status_code, (200, 501))
+
+    @unittest.skipUnless(
+        os.getenv("TEST_FIREWALL_BASE_URL"),
+        "Variables de entorno de firewall no configuradas",
+    )
+    def test_flush_states_with_env_firewall(self) -> None:
+        payload = _env_firewall_payload()
+        self.assertIsNotNone(payload)
+        response = self.client.post("/api/firewalls", json=payload.model_dump())
+        self.assertEqual(response.status_code, 201)
+        config_id = response.json()["id"]
+
+        flush = self.client.post(f"/api/firewalls/{config_id}/flush_states")
+        self.assertIn(flush.status_code, (200, 501, 502))
+
+
 
 
 if __name__ == "__main__":
