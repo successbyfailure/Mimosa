@@ -51,6 +51,19 @@ class DummyPluginConfig:
 
 
 @dataclass
+class ReverseProxySettings:
+    """Configuración para integrar un proxy reverso externo."""
+
+    enabled: bool = False
+    provider: str = "npm"
+    api_url: str | None = None
+    api_token: str | None = None
+    forward_ip: str | None = None
+    forward_port: int = 8081
+    forward_scheme: str = "http"
+
+
+@dataclass
 class ProxyTrapConfig:
     """Opciones del plugin ProxyTrap."""
 
@@ -60,6 +73,10 @@ class ProxyTrapConfig:
     default_severity: str = "alto"
     response_type: str = "404"
     custom_html: str | None = None
+    trap_hosts: List[str] = field(default_factory=list)
+    reverse_proxy: ReverseProxySettings = field(
+        default_factory=ReverseProxySettings
+    )
     domain_policies: List[Dict[str, str]] = field(
         default_factory=lambda: list(DEFAULT_PROXYTRAP_POLICIES)
     )
@@ -121,6 +138,10 @@ class PluginConfigStore:
             return proxytrap
         config = dict(config)
         config.pop("wildcard_severity", None)
+        reverse_proxy = config.get("reverse_proxy") or {}
+        trap_hosts = config.get("trap_hosts") or []
+        config["reverse_proxy"] = ReverseProxySettings(**reverse_proxy)
+        config["trap_hosts"] = list(trap_hosts)
         return ProxyTrapConfig(**config)
 
     def update_proxytrap(self, payload: ProxyTrapConfig) -> ProxyTrapConfig:

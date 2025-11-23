@@ -18,6 +18,7 @@ from mimosa.core.offenses import OffenseStore
 from mimosa.core.rules import OffenseEvent, OffenseRule, OffenseRuleStore, RuleManager
 from mimosa.core.blocking import BlockManager
 from mimosa.core.plugins import ProxyTrapConfig
+from mimosa.core.reverseproxy import ReverseProxyManager
 
 
 class ProxyTrapService:
@@ -30,6 +31,7 @@ class ProxyTrapService:
         rule_store: OffenseRuleStore,
         gateway_factory: Callable[[], object],
         stats_path: Path | str = Path("data/proxytrap_stats.json"),
+        reverse_proxy_manager: ReverseProxyManager | None = None,
     ) -> None:
         self.offense_store = offense_store
         self.block_manager = block_manager
@@ -42,6 +44,7 @@ class ProxyTrapService:
         self._stats_path.parent.mkdir(parents=True, exist_ok=True)
         self._domain_hits: Dict[str, int] = self._load_stats()
         self.config = ProxyTrapConfig()
+        self._reverse_proxy = reverse_proxy_manager
 
     # -------------------------- configuracion --------------------------
     def apply_config(self, config: ProxyTrapConfig) -> None:
@@ -49,11 +52,13 @@ class ProxyTrapService:
 
         sanitized = config
         sanitized.domain_policies = list(config.domain_policies or [])
+        sanitized.trap_hosts = list(config.trap_hosts or [])
         self.config = sanitized
         if config.enabled:
             self.start()
         else:
             self.stop()
+        self._sync_reverse_proxy()
 
     # ---------------------------- servidor -----------------------------
     def start(self) -> None:
@@ -186,6 +191,29 @@ class ProxyTrapService:
             if pattern and fnmatch(normalized, pattern):
                 return severity, pattern
         return (self.config.default_severity, None)
+
+    def _sync_reverse_proxy(self) -> None:
+        settings = getattr(self.config, "reverse_proxy", None)
+        if not self._reverse_proxy or not settings or not settings.enabled:
+            return
+        hostnames = [host.strip() for host in self.config.trap_hosts if host.strip()]
+        if not hostnames:
+            return
+        forward_ip = settings.forward_ip or "127.0.0.1"
+        result = self._reverse_proxy.sync_hosts(
+            provider=settings.provider,
+            api_url=settings.api_url or "",
+            api_token=settings.api_token or "",
+            forward_ip=forward_ip,
+            forward_port=settings.forward_port,
+            forward_scheme=settings.forward_scheme,
+            hostnames=hostnames,
+        )
+        if result.errors:
+            joined = "; ".join(result.errors)
+            raise RuntimeError(
+                f"No se pudieron crear todas las entradas en el proxy reverso: {joined}"
+            )
 
     # ----------------------------- stats -------------------------------
     def _load_stats(self) -> Dict[str, int]:

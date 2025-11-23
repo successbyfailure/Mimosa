@@ -37,6 +37,21 @@ class DummyFirewall(FirewallGateway):
 
         return None
 
+    def ensure_port_forwards(
+        self,
+        *,
+        target_ip: str,
+        ports: List[int],
+        protocol: str = "tcp",
+        description: str | None = None,
+        interface: str = "wan",
+    ) -> dict:
+        _ = target_ip, description, interface
+        return {"created": ports, "conflicts": [], "already_present": []}
+
+    def list_services(self) -> List[dict]:
+        return []
+
 
 class SSHIptablesFirewall(FirewallGateway):
     """Gestiona reglas básicas de iptables mediante SSH."""
@@ -94,6 +109,25 @@ class SSHIptablesFirewall(FirewallGateway):
             f"sudo iptables -I INPUT 1 -j {self.chain}"
         )
         self._execute(setup)
+
+    def ensure_port_forwards(
+        self,
+        *,
+        target_ip: str,
+        ports: List[int],
+        protocol: str = "tcp",
+        description: str | None = None,
+        interface: str = "wan",
+    ) -> dict:
+        _ = target_ip, ports, protocol, description, interface
+        raise NotImplementedError(
+            "La gestión de NAT no está disponible para SSH + iptables"
+        )
+
+    def list_services(self) -> List[dict]:
+        raise NotImplementedError(
+            "La gestión de NAT no está disponible para SSH + iptables"
+        )
 
     # --------------------------- utilidades ---------------------------------
     def _execute(self, remote_command: str) -> str:

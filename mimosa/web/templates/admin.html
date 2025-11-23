@@ -140,6 +140,73 @@
       </tbody>
     </table>
   </section>
+
+  <section class="card space">
+    <div class="flex space" style="align-items:flex-end; gap:10px;">
+      <div>
+        <h3 style="margin:0">Servicios en producción</h3>
+        <div class="muted">Listado de reglas NAT/port-forward ya presentes en el firewall.</div>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <select id="service-fw-select" class="block-fw-select" style="min-width:220px;"></select>
+        <button class="secondary" type="button" onclick="loadFirewallServices()">Actualizar</button>
+      </div>
+    </div>
+    <div style="overflow:auto; max-height:260px; margin-top:10px;">
+      <table>
+        <thead>
+          <tr>
+            <th>Puerto</th>
+            <th>Protocolo</th>
+            <th>Destino</th>
+            <th>Descripción</th>
+          </tr>
+        </thead>
+        <tbody id="fw-services-table">
+          <tr><td colspan="4" class="muted">Sin datos.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card space">
+    <div class="flex space" style="align-items:flex-start;">
+      <div>
+        <h3 style="margin:0">Publicar puertos hacia Mimosa</h3>
+        <div class="muted">Crea reglas de NAT en el firewall para reenviar los puertos declarados.</div>
+      </div>
+    </div>
+    <form id="port-forward-form" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:12px; align-items:end;" onsubmit="submitPortForwards(event)">
+      <div>
+        <label>Destino (IP Mimosa)</label>
+        <input name="target_ip" placeholder="127.0.0.1" />
+      </div>
+      <div>
+        <label>Protocolo</label>
+        <select name="protocol">
+          <option value="tcp" selected>TCP</option>
+          <option value="udp">UDP</option>
+        </select>
+      </div>
+      <div>
+        <label>Puertos (coma)</label>
+        <input name="ports" placeholder="8081,8443" />
+      </div>
+      <div>
+        <label>Descripción</label>
+        <input name="description" placeholder="Mimosa honeypots" />
+      </div>
+      <div>
+        <label>Interfaz</label>
+        <input name="interface" value="wan" />
+      </div>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button type="button" class="secondary" onclick="prefillPortsFromDetector()">Usar puertos Port Detector</button>
+        <button type="submit">Publicar puertos</button>
+      </div>
+    </form>
+    <div id="port-forward-message" class="muted" style="margin-top:8px;"></div>
+  </section>
 </section>
 
 <section id="tab-plugins" class="tab-panel">
@@ -193,6 +260,45 @@
         <div id="custom-html-wrapper" style="display:none;">
           <label>HTML personalizado</label>
           <textarea name="custom_html" rows="4" placeholder="&lt;h1&gt;No permitido&lt;/h1&gt;"></textarea>
+        </div>
+        <label>Dominios trampa (uno por línea)</label>
+        <textarea name="trap_hosts" rows="3" placeholder="admin.midominio.com&#10;vpn.midominio.com"></textarea>
+        <div class="card" style="margin-top:12px; background: rgba(255,255,255,.03); border:1px dashed rgba(255,255,255,.08);">
+          <div class="flex space" style="align-items:flex-start;">
+            <div>
+              <h4 style="margin:0;">Gestión de proxy reverso</h4>
+              <div class="muted">Actualmente soporta Nginx Proxy Manager vía API.</div>
+            </div>
+            <label style="display:flex; gap:8px; align-items:center;">
+              <input type="checkbox" name="reverse_proxy_enabled" style="width:auto;" />
+              Crear entradas automáticamente
+            </label>
+          </div>
+          <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px;">
+            <div>
+              <label>URL API</label>
+              <input name="reverse_proxy_url" placeholder="https://proxy.local" />
+            </div>
+            <div>
+              <label>Token API</label>
+              <input name="reverse_proxy_token" placeholder="Bearer..." />
+            </div>
+            <div>
+              <label>IP destino</label>
+              <input name="reverse_proxy_forward_ip" placeholder="127.0.0.1" />
+            </div>
+            <div>
+              <label>Puerto destino</label>
+              <input name="reverse_proxy_forward_port" type="number" min="1" max="65535" value="8081" />
+            </div>
+            <div>
+              <label>Esquema</label>
+              <select name="reverse_proxy_scheme">
+                <option value="http">HTTP</option>
+                <option value="https">HTTPS</option>
+              </select>
+            </div>
+          </div>
         </div>
         <button type="submit" style="margin-top:12px;">Guardar configuración</button>
         <div id="proxytrap-message" class="muted"></div>
@@ -849,6 +955,14 @@ function setProxyTrapForm(config) {
   form.default_severity.value = config.default_severity || 'alto';
   form.response_type.value = config.response_type || '404';
   form.custom_html.value = config.custom_html || '';
+  form.trap_hosts.value = (config.trap_hosts || []).join('\n');
+  const reverse = config.reverse_proxy || {};
+  form.reverse_proxy_enabled.checked = Boolean(reverse.enabled);
+  form.reverse_proxy_url.value = reverse.api_url || '';
+  form.reverse_proxy_token.value = reverse.api_token || '';
+  form.reverse_proxy_forward_ip.value = reverse.forward_ip || '';
+  form.reverse_proxy_forward_port.value = reverse.forward_port || 8081;
+  form.reverse_proxy_scheme.value = reverse.forward_scheme || 'http';
   proxytrapPolicies = (config.domain_policies && config.domain_policies.length)
     ? config.domain_policies
     : defaultProxytrapPolicies();
@@ -1107,6 +1221,19 @@ async function submitProxytrap(event) {
   payload.enabled = form.enabled.checked;
   payload.port = Number(payload.port || 8081);
   payload.domain_policies = proxytrapPolicies;
+  payload.trap_hosts = (payload.trap_hosts || '')
+    .split(/\n|,/)
+    .map(entry => entry.trim())
+    .filter(Boolean);
+  payload.reverse_proxy = {
+    enabled: form.reverse_proxy_enabled.checked,
+    provider: 'npm',
+    api_url: payload.reverse_proxy_url || null,
+    api_token: payload.reverse_proxy_token || null,
+    forward_ip: payload.reverse_proxy_forward_ip || null,
+    forward_port: Number(payload.reverse_proxy_forward_port || payload.port),
+    forward_scheme: payload.reverse_proxy_scheme || 'http'
+  };
   if (payload.response_type !== 'custom') {
     payload.custom_html = null;
   }
@@ -1123,7 +1250,8 @@ async function submitProxytrap(event) {
       message.style.color = '#67e8f9';
       loadPlugins();
     } else {
-      message.textContent = 'No se pudo guardar la configuración.';
+      const detail = await res.json().catch(() => null);
+      message.textContent = detail?.detail || 'No se pudo guardar la configuración.';
       message.style.color = '#fca5a5';
     }
   } catch (error) {
@@ -1209,6 +1337,7 @@ async function loadFirewalls() {
   }
 
   renderBlockSelectors();
+  loadFirewallServices();
 }
 
 async function deleteFirewall(id) {
@@ -1372,6 +1501,132 @@ function renderBlockSelectors() {
     select.value = selectedFirewallId;
   });
   refreshBlocks();
+}
+
+function renderServiceTable(items) {
+  const tbody = document.getElementById('fw-services-table');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  if (!items || !items.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="muted">Sin servicios conocidos.</td></tr>';
+    return;
+  }
+  items.forEach(entry => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${entry.port ?? '-'}</td>
+      <td>${(entry.protocol || 'tcp').toUpperCase()}</td>
+      <td>${entry.target || '-'}</td>
+      <td>${entry.description || ''}</td>`;
+    tbody.appendChild(row);
+  });
+}
+
+async function loadFirewallServices() {
+  const message = document.getElementById('port-forward-message');
+  if (!selectedFirewallId) {
+    renderServiceTable([]);
+    if (message) message.textContent = 'Configura un firewall para revisar los servicios publicados.';
+    return;
+  }
+  try {
+    const res = await fetch(`/api/firewalls/${selectedFirewallId}/services`);
+    if (!res.ok) {
+      renderServiceTable([]);
+      const detail = await res.json().catch(() => null);
+      const text = detail?.detail || 'No se pudieron consultar los servicios.';
+      if (message) message.textContent = text;
+      return;
+    }
+    const data = await res.json();
+    renderServiceTable(data.items || []);
+    if (message) message.textContent = '';
+  } catch (error) {
+    renderServiceTable([]);
+    if (message) message.textContent = 'Error al cargar servicios.';
+  }
+}
+
+function extractPortsFromRules(rules) {
+  if (!Array.isArray(rules)) return [];
+  const ports = new Set();
+  rules.forEach(rule => {
+    if (rule.port) ports.add(Number(rule.port));
+    if (Array.isArray(rule.ports)) rule.ports.forEach(p => ports.add(Number(p)));
+    if (rule.start && rule.end) {
+      const start = Number(rule.start);
+      const end = Number(rule.end);
+      const low = Math.min(start, end);
+      const high = Math.max(start, end);
+      for (let p = low; p <= high && p - low < 200; p += 1) {
+        ports.add(p);
+      }
+    }
+  });
+  return Array.from(ports).sort((a, b) => a - b);
+}
+
+function prefillPortsFromDetector() {
+  const input = document.querySelector('#port-forward-form input[name="ports"]');
+  if (!input) return;
+  const ports = extractPortsFromRules(portDetectorRules || []);
+  if (!ports.length) {
+    input.value = '';
+    const msg = document.getElementById('port-forward-message');
+    if (msg) msg.textContent = 'No hay reglas en Port Detector para extraer puertos.';
+    return;
+  }
+  input.value = ports.join(',');
+  const msg = document.getElementById('port-forward-message');
+  if (msg) msg.textContent = 'Puertos precargados desde Port Detector.';
+}
+
+async function submitPortForwards(event) {
+  event.preventDefault();
+  if (!selectedFirewallId) {
+    const msg = document.getElementById('port-forward-message');
+    if (msg) msg.textContent = 'Configura y selecciona un firewall antes de publicar puertos.';
+    return;
+  }
+  const form = event.target;
+  const payload = Object.fromEntries(new FormData(form));
+  const ports = (payload.ports || '')
+    .split(',')
+    .map(p => Number(p.trim()))
+    .filter(p => !Number.isNaN(p) && p > 0);
+  const message = document.getElementById('port-forward-message');
+  message.textContent = 'Publicando puertos...';
+  payload.target_ip = payload.target_ip || window.location.hostname || '127.0.0.1';
+  payload.ports = ports;
+  payload.interface = payload.interface || 'wan';
+  if (payload.description === '') delete payload.description;
+  try {
+    const res = await fetch(`/api/firewalls/${selectedFirewallId}/port_forwards`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => null);
+      message.textContent = detail?.detail || 'No se pudieron crear las reglas de NAT.';
+      message.style.color = '#fca5a5';
+      return;
+    }
+    const data = await res.json();
+    const result = data.result || {};
+    const created = (result.created || []).join(', ');
+    const conflicts = result.conflicts || [];
+    const already = (result.already_present || []).join(', ');
+    let summary = created ? `Creados: ${created}. ` : '';
+    if (already) summary += `Ya existían: ${already}. `;
+    if (conflicts.length) summary += `Conflictos: ${conflicts.map(c => c.port || '').join(', ')}`;
+    message.textContent = summary || 'Sin cambios.';
+    message.style.color = '#67e8f9';
+    loadFirewallServices();
+  } catch (error) {
+    message.textContent = 'Error al publicar puertos.';
+    message.style.color = '#fca5a5';
+  }
 }
 
 function updateBlockTableMessage(message) {
@@ -1542,6 +1797,7 @@ function handleFirewallChange(event) {
     }
   });
   refreshBlocks();
+  loadFirewallServices();
 }
 
 async function submitBlockForm(event, messageId) {

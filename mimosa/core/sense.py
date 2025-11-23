@@ -97,6 +97,46 @@ class _BaseSenseClient(FirewallGateway):
         if created:
             self._apply_changes_if_enabled()
 
+    def ensure_port_forwards(
+        self,
+        *,
+        target_ip: str,
+        ports: List[int],
+        protocol: str = "tcp",
+        description: str | None = None,
+        interface: str = "wan",
+    ) -> Dict[str, object]:
+        normalized_ports = sorted({int(port) for port in ports if port})
+        existing = self.list_services()
+        conflicts: List[Dict[str, object]] = []
+        already_present: List[int] = []
+        created: List[int] = []
+        for port in normalized_ports:
+            match = next(
+                (svc for svc in existing if svc.get("port") == port and svc.get("protocol") == protocol),
+                None,
+            )
+            if match and match.get("target") == target_ip:
+                already_present.append(port)
+                continue
+            if match and match.get("target") != target_ip:
+                conflicts.append(match)
+                continue
+            self._create_port_forward(
+                port=port,
+                protocol=protocol,
+                target_ip=target_ip,
+                description=description,
+                interface=interface,
+            )
+            created.append(port)
+        if created:
+            self._apply_changes_if_enabled()
+        return {"created": created, "conflicts": conflicts, "already_present": already_present}
+
+    def list_services(self) -> List[Dict[str, object]]:
+        return self._list_port_forwards()
+
     def _schedule_unblock(self, ip: str, *, minutes: int) -> None:
         delay = timedelta(minutes=minutes).total_seconds()
         timer = threading.Timer(delay, lambda: self.unblock_ip(ip))
@@ -140,6 +180,24 @@ class _BaseSenseClient(FirewallGateway):
         (permitiendo lanzar un reload del firewall) o ``False`` si ya
         existía.
         """
+
+        raise NotImplementedError
+
+    def _list_port_forwards(self) -> List[Dict[str, object]]:
+        """Devuelve las reglas de NAT/port-forward conocidas."""
+
+        raise NotImplementedError
+
+    def _create_port_forward(
+        self,
+        *,
+        port: int,
+        protocol: str,
+        target_ip: str,
+        description: str | None,
+        interface: str,
+    ) -> None:
+        """Crea una regla de NAT que apunte a Mimosa."""
 
         raise NotImplementedError
 
@@ -247,6 +305,69 @@ class OPNsenseClient(_BaseSenseClient):
             "rule": best.get("descr") or best.get("tracker") or best.get("uuid"),
             "uuid": best.get("uuid") or best.get("tracker"),
         }
+
+    def _list_port_forwards(self) -> List[Dict[str, object]]:
+        response = self._request("GET", "/api/firewall/nat/searchNAT")
+        data = response.json()
+        rows = data.get("rows", []) if isinstance(data, dict) else []
+        services: List[Dict[str, object]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            raw_port = (
+                row.get("dstbeginport")
+                or row.get("destination_port")
+                or row.get("destination_port_start")
+                or row.get("dstport")
+            )
+            if not raw_port:
+                continue
+            try:
+                port = int(str(raw_port).split(":")[0])
+            except ValueError:
+                continue
+            services.append(
+                {
+                    "id": row.get("uuid") or row.get("tracker") or row.get("id"),
+                    "description": row.get("descr") or row.get("description"),
+                    "port": port,
+                    "protocol": (row.get("protocol") or row.get("proto") or "tcp").lower(),
+                    "target": row.get("target")
+                    or row.get("natip")
+                    or row.get("redirect_targetip"),
+                }
+            )
+        return services
+
+    def _create_port_forward(
+        self,
+        *,
+        port: int,
+        protocol: str,
+        target_ip: str,
+        description: str | None,
+        interface: str,
+    ) -> None:
+        payload = {
+            "nat": {
+                "interface": interface,
+                "proto": protocol,
+                "src": {"any": "1"},
+                "dst": {"any": "1", "port": str(port)},
+                "redirect_targetip": target_ip,
+                "redirect_targetport": str(port),
+                "descr": description or f"Mimosa {protocol}:{port}",
+                "natreflection": "enable",
+                "top": "yes",
+            }
+        }
+        try:
+            self._request("POST", "/api/firewall/nat/addNAT", json=payload)
+        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
+            if exc.response.status_code == 404:
+                self._request("POST", "/api/firewall/nat/addPortForward", json=payload)
+            else:
+                raise
 
     def flush_states(self) -> Dict[str, object]:
         response = self._request("POST", "/api/core/diagnostics/flushState")
@@ -423,3 +544,54 @@ class PFSenseClient(_BaseSenseClient):
                     "Las credenciales de pfRest no son válidas o carecen de permisos"
                 ) from exc
             raise
+
+    def _list_port_forwards(self) -> List[Dict[str, object]]:
+        response = self._request("GET", "/api/v1/firewall/nat/port_forward")
+        data = response.json()
+        items = data.get("data") if isinstance(data, dict) else data
+        if not isinstance(items, list):
+            return []
+        services: List[Dict[str, object]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            raw_port = item.get("destination_port") or item.get("dstport")
+            try:
+                port = int(str(raw_port).split(":")[0]) if raw_port else None
+            except ValueError:
+                port = None
+            if not port:
+                continue
+            services.append(
+                {
+                    "id": item.get("tracker") or item.get("id"),
+                    "description": item.get("descr") or item.get("description"),
+                    "port": port,
+                    "protocol": (item.get("protocol") or item.get("proto") or "tcp").lower(),
+                    "target": item.get("target")
+                    or item.get("local-port")
+                    or item.get("redirect_targetip"),
+                }
+            )
+        return services
+
+    def _create_port_forward(
+        self,
+        *,
+        port: int,
+        protocol: str,
+        target_ip: str,
+        description: str | None,
+        interface: str,
+    ) -> None:
+        payload = {
+            "interface": interface,
+            "protocol": protocol,
+            "source": {"address": "any"},
+            "destination": {"address": "any", "port": str(port)},
+            "target": target_ip,
+            "local-port": str(port),
+            "description": description or f"Mimosa {protocol}:{port}",
+            "natreflection": "enable",
+        }
+        self._request("POST", "/api/v1/firewall/nat/port_forward", json=payload)
