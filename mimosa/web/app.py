@@ -23,7 +23,7 @@ from mimosa.core.plugins import (
     PortDetectorRule,
     ProxyTrapConfig,
 )
-from mimosa.core.portdetector import PortDetectorService
+from mimosa.core.portdetector import PortBindingError, PortDetectorService
 from mimosa.core.proxytrap import ProxyTrapService
 from mimosa.core.rules import OffenseEvent, OffenseRule, OffenseRuleStore, RuleManager
 from mimosa.web.config import (
@@ -327,6 +327,11 @@ def create_app(
         )
         try:
             portdetector_service.apply_config(config)
+        except PortBindingError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"message": str(exc), "failed_ports": exc.failed_ports},
+            )
         except OSError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         plugin_store.update_port_detector(config)
