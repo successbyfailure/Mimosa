@@ -75,57 +75,82 @@ function buildChart(ctx, label, data, borderColor) {
   });
 }
 
-async function loadStats(range = '7d') {
-  const res = await fetch('/api/stats');
-  const data = await res.json();
-  document.getElementById('offenses-total').innerText = data.offenses.total;
-  document.getElementById('offenses-7d').innerText = data.offenses.last_7d;
-  document.getElementById('offenses-24h').innerText = data.offenses.last_24h;
-  document.getElementById('blocks-current').innerText = data.blocks.current;
+function updateStatsCards(offenses = {}, blocks = {}) {
+  document.getElementById('offenses-total').innerText = offenses.total ?? '—';
+  document.getElementById('offenses-7d').innerText = offenses.last_7d ?? '—';
+  document.getElementById('offenses-24h').innerText = offenses.last_24h ?? '—';
+  document.getElementById('blocks-current').innerText = blocks.current ?? '—';
+}
 
-  const offenseTimeline = data.offenses.timeline[range];
-  const blockTimeline = data.blocks.timeline[range];
-
+function cleanCharts() {
   if (offenseChart) offenseChart.destroy();
   if (blockChart) blockChart.destroy();
+}
 
-  offenseChart = buildChart(document.getElementById('offenses-chart'), 'Ofensas', offenseTimeline, '#38bdf8');
-  blockChart = buildChart(document.getElementById('blocks-chart'), 'Bloqueos', blockTimeline, '#22c55e');
+async function loadStats(range = '7d') {
+  try {
+    const res = await fetch('/api/stats');
+    if (!res.ok) {
+      throw new Error('Respuesta no válida');
+    }
+    const data = await res.json();
+    updateStatsCards(data.offenses, data.blocks);
+
+    const offenseTimeline = data.offenses?.timeline?.[range] || [];
+    const blockTimeline = data.blocks?.timeline?.[range] || [];
+
+    cleanCharts();
+    offenseChart = buildChart(document.getElementById('offenses-chart'), 'Ofensas', offenseTimeline, '#38bdf8');
+    blockChart = buildChart(document.getElementById('blocks-chart'), 'Bloqueos', blockTimeline, '#22c55e');
+  } catch (error) {
+    updateStatsCards();
+    cleanCharts();
+  }
 }
 
 async function loadStatuses() {
   const container = document.getElementById('fw-status');
   container.innerHTML = '<div class="muted">Consultando...</div>';
-  const res = await fetch('/api/firewalls/status');
-  const statuses = await res.json();
-  container.innerHTML = '';
-  if (!statuses.length) {
-    container.innerHTML = '<div class="muted">No hay firewalls configurados todavía.</div>';
-    document.getElementById('fw-indicator').innerText = 'Sin configuraciones';
-    document.getElementById('fw-indicator').className = 'pill error';
-    return;
-  }
-  let onlineCount = 0;
-  statuses.forEach(status => {
-    const pillClass = status.online ? 'pill ok' : 'pill error';
-    if (status.online) onlineCount += 1;
-    const card = document.createElement('div');
-    card.className = 'card';
-    card.innerHTML = `
-      <div class="flex" style="justify-content: space-between;">
-        <div>
-          <div class="muted">${status.type}</div>
-          <div style="font-weight:700;">${status.name}</div>
-        </div>
-        <span class="${pillClass}">${status.online ? 'En línea' : 'Error'}</span>
-      </div>
-      <div class="muted" style="margin-top:8px;">${status.message || ''}</div>
-    `;
-    container.appendChild(card);
-  });
   const indicator = document.getElementById('fw-indicator');
-  indicator.innerText = `${onlineCount}/${statuses.length} en línea`;
-  indicator.className = onlineCount === statuses.length ? 'pill ok' : 'pill error';
+
+  try {
+    const res = await fetch('/api/firewalls/status');
+    if (!res.ok) {
+      throw new Error('Respuesta no válida');
+    }
+    const statuses = await res.json();
+    container.innerHTML = '';
+    if (!statuses.length) {
+      container.innerHTML = '<div class="muted">No hay firewalls configurados todavía.</div>';
+      indicator.innerText = 'Sin configuraciones';
+      indicator.className = 'pill error';
+      return;
+    }
+    let onlineCount = 0;
+    statuses.forEach(status => {
+      const pillClass = status.online ? 'pill ok' : 'pill error';
+      if (status.online) onlineCount += 1;
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `
+        <div class="flex" style="justify-content: space-between;">
+          <div>
+            <div class="muted">${status.type}</div>
+            <div style="font-weight:700;">${status.name}</div>
+          </div>
+          <span class="${pillClass}">${status.online ? 'En línea' : 'Error'}</span>
+        </div>
+        <div class="muted" style="margin-top:8px;">${status.message || ''}</div>
+      `;
+      container.appendChild(card);
+    });
+    indicator.innerText = `${onlineCount}/${statuses.length} en línea`;
+    indicator.className = onlineCount === statuses.length ? 'pill ok' : 'pill error';
+  } catch (error) {
+    container.innerHTML = '<div class="muted">No se pudieron obtener los estados de los firewalls.</div>';
+    indicator.innerText = 'Error de consulta';
+    indicator.className = 'pill error';
+  }
 }
 
 document.getElementById('range-selector').addEventListener('change', (e) => {
