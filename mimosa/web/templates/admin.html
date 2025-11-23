@@ -459,43 +459,7 @@
       </div>
       <button class="secondary" onclick="loadOffenses()">Actualizar</button>
     </div>
-    <div class="grid" style="grid-template-columns: 1.1fr 1fr; gap: 18px; align-items:start;">
-      <form id="offense-form" class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
-        <h3 style="margin-top:0">Crear ofensa manual</h3>
-        <label>IP origen</label>
-        <input name="source_ip" required placeholder="203.0.113.10" />
-        <label>Descripción</label>
-        <input name="description" required placeholder="Actividad sospechosa" />
-        <label>Severidad</label>
-        <select name="severity">
-          <option value="bajo">Bajo</option>
-          <option value="medio" selected>Medio</option>
-          <option value="alto">Alto</option>
-        </select>
-        <button type="submit" style="margin-top:12px;">Registrar</button>
-      </form>
-      <form id="offense-block-form" class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
-        <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
-          <div>
-            <h3 style="margin:0">Gestor de bloqueos</h3>
-            <div class="muted">Bloquea la IP seleccionada directamente desde la lista de ofensas.</div>
-          </div>
-          <select id="offense-block-fw-select" class="block-fw-select" style="max-width:220px;"></select>
-        </div>
-        <label>IP a bloquear</label>
-        <input name="ip" required placeholder="Selecciona una ofensa o escribe la IP" />
-        <label>Motivo</label>
-        <input name="reason" placeholder="Escalada manual desde ofensas" />
-        <label>Duración (min)</label>
-        <input name="duration_minutes" type="number" min="0" placeholder="60" />
-        <label style="display:flex; gap:8px; align-items:center;">
-          <input type="checkbox" name="sync_with_firewall" checked style="width:auto;" />
-          Enviar bloqueo al firewall
-        </label>
-        <button type="submit" style="margin-top:12px;">Añadir a la lista</button>
-        <div id="offense-block-message" class="muted"></div>
-      </form>
-    </div>
+    <div id="offense-message" class="muted" style="margin-top:8px;"></div>
     <div style="overflow:auto; max-height:420px; margin-top:12px;">
       <table>
         <thead>
@@ -1484,7 +1448,7 @@ function renderBlockSelectors() {
       select.innerHTML = '<option value="" disabled selected>Configura un firewall primero</option>';
     });
     updateBlockTableMessage('Añade un firewall para gestionar bloqueos.');
-    document.getElementById('offense-block-message').textContent = 'Configura un firewall para bloquear desde aquí.';
+    updateOffenseMessage('Configura un firewall para bloquear ofensas.');
     selectedFirewallId = null;
     return;
   }
@@ -1500,6 +1464,7 @@ function renderBlockSelectors() {
     });
     select.value = selectedFirewallId;
   });
+  updateOffenseMessage('');
   refreshBlocks();
 }
 
@@ -1843,10 +1808,6 @@ function addBlock(event) {
   return submitBlockForm(event, 'block-message');
 }
 
-function addBlockFromOffense(event) {
-  return submitBlockForm(event, 'offense-block-message');
-}
-
 async function removeBlock(ip) {
   if (!selectedFirewallId) return;
   const res = await fetch(`/api/firewalls/${selectedFirewallId}/blocks/${encodeURIComponent(ip)}`, { method: 'DELETE' });
@@ -1874,7 +1835,7 @@ async function loadOffenses() {
       <td>${item.source_ip}</td>
       <td>${item.description}</td>
       <td>${item.severity}</td>
-      <td style="text-align:right"><button class="secondary" onclick="prefillBlockFromOffense('${item.source_ip}', ${safeReason})">Bloquear</button></td>
+      <td style="text-align:right"><button class="secondary" onclick="blockOffense('${item.source_ip}', ${safeReason})">Bloquear</button></td>
     `;
     tbody.appendChild(row);
   });
@@ -1951,41 +1912,40 @@ async function deleteRule(ruleId) {
   loadRules();
 }
 
-function prefillBlockFromOffense(ip, description) {
-  const form = document.getElementById('offense-block-form');
-  if (!form) return;
-  const offenseIp = form.querySelector('input[name="ip"]');
-  const offenseReason = form.querySelector('input[name="reason"]');
-  if (offenseIp) offenseIp.value = ip;
-  if (offenseReason) offenseReason.value = description || 'Escalada manual desde ofensas';
-  const message = document.getElementById('offense-block-message');
-  message.textContent = `IP ${ip} lista para bloquear.`;
-  const mainForm = document.getElementById('block-form');
-  if (mainForm) {
-    const mainIp = mainForm.querySelector('input[name="ip"]');
-    const mainReason = mainForm.querySelector('input[name="reason"]');
-    if (mainIp) mainIp.value = ip;
-    if (mainReason) mainReason.value = description || 'Escalada manual desde ofensas';
+async function blockOffense(ip, description) {
+  updateOffenseMessage('');
+  if (!selectedFirewallId) {
+    updateOffenseMessage('Configura o selecciona un firewall antes de bloquear.', '#fca5a5');
+    return;
   }
-  const mainMessage = document.getElementById('block-message');
-  if (mainMessage) {
-    mainMessage.textContent = `IP ${ip} copiada al gestor de bloqueos.`;
+  const payload = {
+    ip,
+    reason: description || 'Escalada manual desde ofensas',
+    sync_with_firewall: true
+  };
+  try {
+    const res = await fetch(`/api/firewalls/${selectedFirewallId}/blocks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      updateOffenseMessage(data.message || 'Bloqueo enviado al firewall.', '#67e8f9');
+      refreshBlocks();
+    } else {
+      updateOffenseMessage(data.detail || 'No se pudo bloquear la IP.', '#fca5a5');
+    }
+  } catch (error) {
+    updateOffenseMessage('Error al bloquear la IP.', '#fca5a5');
   }
 }
 
-async function submitOffense(event) {
-  event.preventDefault();
-  const form = event.target;
-  const payload = Object.fromEntries(new FormData(form));
-  const res = await fetch('/api/offenses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  if (res.ok) {
-    form.reset();
-    loadOffenses();
-  }
+function updateOffenseMessage(text, color = '') {
+  const message = document.getElementById('offense-message');
+  if (!message) return;
+  message.textContent = text || '';
+  message.style.color = color;
 }
 
 async function loadIps() {
@@ -2155,9 +2115,7 @@ async function deleteWhitelist(id) {
 
 // Event bindings
 document.getElementById('block-form').addEventListener('submit', addBlock);
-document.getElementById('offense-block-form').addEventListener('submit', addBlockFromOffense);
 document.getElementById('firewall-form').addEventListener('submit', submitForm);
-document.getElementById('offense-form').addEventListener('submit', submitOffense);
 document.getElementById('rule-form').addEventListener('submit', submitRule);
 document.getElementById('whitelist-form').addEventListener('submit', submitWhitelist);
 document.getElementById('blocking-settings').addEventListener('submit', submitBlockingSettings);
