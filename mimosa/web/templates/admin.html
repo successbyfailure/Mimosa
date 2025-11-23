@@ -172,15 +172,6 @@
               <option value="alto" selected>Alto</option>
             </select>
           </div>
-          <div>
-            <label>Severidad para coincidencias wildcard</label>
-            <select name="wildcard_severity" id="proxytrap-wildcard">
-              <option value="">Usar severidad por defecto</option>
-              <option value="bajo">Bajo</option>
-              <option value="medio">Medio</option>
-              <option value="alto">Alto</option>
-            </select>
-          </div>
         </div>
         <div id="custom-html-wrapper" style="display:none;">
           <label>HTML personalizado</label>
@@ -459,6 +450,28 @@
         </table>
       </div>
     </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="flex space" style="margin-bottom:8px;">
+        <h3 style="margin:0">Historial reciente</h3>
+        <button class="secondary" onclick="loadBlockHistory()">Actualizar</button>
+      </div>
+      <div style="max-height:240px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Acción</th>
+              <th>IP</th>
+              <th>Motivo</th>
+              <th>Momento</th>
+            </tr>
+          </thead>
+          <tbody id="block-history-table">
+            <tr><td colspan="4" class="muted">Cargando historial...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </section>
 </section>
 
@@ -686,7 +699,6 @@ function setProxyTrapForm(config) {
   form.default_severity.value = config.default_severity || 'alto';
   form.response_type.value = config.response_type || '404';
   form.custom_html.value = config.custom_html || '';
-  form.wildcard_severity.value = config.wildcard_severity || '';
   proxytrapPolicies = (config.domain_policies && config.domain_policies.length)
     ? config.domain_policies
     : defaultProxytrapPolicies();
@@ -779,7 +791,6 @@ async function submitProxytrap(event) {
   payload.enabled = form.enabled.checked;
   payload.port = Number(payload.port || 8081);
   payload.domain_policies = proxytrapPolicies;
-  payload.wildcard_severity = form.wildcard_severity.value || null;
   if (payload.response_type !== 'custom') {
     payload.custom_html = null;
   }
@@ -1049,6 +1060,7 @@ function updateBlockTableMessage(message) {
 
 async function refreshBlocks() {
   loadDatabaseBlocks();
+  loadBlockHistory();
   if (!selectedFirewallId) {
     updateBlockTableMessage('Configura un firewall para ver las listas.');
     return;
@@ -1101,6 +1113,31 @@ async function loadDatabaseBlocks() {
     });
   } catch (error) {
     document.getElementById('block-db-table').innerHTML = '<tr><td colspan="3" class="muted">Error al cargar los bloqueos.</td></tr>';
+  }
+}
+
+async function loadBlockHistory() {
+  try {
+    const res = await fetch('/api/blocks/history');
+    const events = await res.json();
+    const tbody = document.getElementById('block-history-table');
+    tbody.innerHTML = '';
+    if (!events.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="muted">Sin actividad reciente.</td></tr>';
+      return;
+    }
+    events.forEach(event => {
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td>${event.action}</td>
+        <td>${event.ip}</td>
+        <td>${event.reason || '-'}</td>
+        <td>${new Date(event.at).toLocaleString()}</td>`;
+      tbody.appendChild(row);
+    });
+  } catch (error) {
+    const tbody = document.getElementById('block-history-table');
+    tbody.innerHTML = '<tr><td colspan="4" class="muted">No se pudo cargar el historial.</td></tr>';
   }
 }
 
@@ -1486,6 +1523,7 @@ editModal.addEventListener('click', (event) => {
 loadBlockingSettings();
 loadFirewalls();
 loadDatabaseBlocks();
+loadBlockHistory();
 loadOffenses();
 loadRules();
 loadIps();

@@ -72,7 +72,6 @@ class ProxyTrapInput(BaseModel):
     response_type: Literal["silence", "404", "custom"] = "404"
     custom_html: str | None = None
     domain_policies: List[ProxyTrapDomainInput] = Field(default_factory=list)
-    wildcard_severity: Optional[str] = None
 
 
 class OffenseInput(BaseModel):
@@ -380,6 +379,10 @@ def create_app(
     def list_database_blocks(include_expired: bool = False) -> List[Dict[str, object]]:
         _cleanup_expired_blocks()
         return [_serialize_block(block) for block in block_manager.list(include_expired=include_expired)]
+
+    @app.get("/api/blocks/history")
+    def block_history(limit: int = 20) -> List[Dict[str, object]]:
+        return block_manager.recent_activity(limit)
 
     @app.get("/api/firewalls")
     def list_firewalls() -> List[FirewallConfig]:

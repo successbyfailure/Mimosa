@@ -41,7 +41,6 @@ class ProxyTrapConfig:
     domain_policies: List[Dict[str, str]] = field(
         default_factory=lambda: list(DEFAULT_PROXYTRAP_POLICIES)
     )
-    wildcard_severity: str | None = None
 
 
 class PluginConfigStore:
@@ -83,6 +82,8 @@ class PluginConfigStore:
             self._plugins[proxytrap.name] = asdict(proxytrap)
             self._save()
             return proxytrap
+        config = dict(config)
+        config.pop("wildcard_severity", None)
         return ProxyTrapConfig(**config)
 
     def update_proxytrap(self, payload: ProxyTrapConfig) -> ProxyTrapConfig:

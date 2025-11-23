@@ -155,7 +155,7 @@ class ProxyTrapService:
             path=path,
             context={
                 "plugin": "proxytrap",
-                "matched_policy": matched or "wildcard",
+                "matched_policy": matched or "default",
             },
         )
         self._increment_stat(domain)
@@ -185,7 +185,7 @@ class ProxyTrapService:
             severity = policy.get("severity") or self.config.default_severity
             if pattern and fnmatch(normalized, pattern):
                 return severity, pattern
-        return (self.config.wildcard_severity or self.config.default_severity, None)
+        return (self.config.default_severity, None)
 
     # ----------------------------- stats -------------------------------
     def _load_stats(self) -> Dict[str, int]:
