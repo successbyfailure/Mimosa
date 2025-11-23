@@ -162,6 +162,10 @@ class BlockManager:
                 (now.isoformat(), ip),
             )
         self._blocks.pop(ip, None)
+        for entry in self._history:
+            if entry.ip == ip and entry.removed_at is None:
+                entry.removed_at = now
+                break
 
     def purge_expired(self, *, firewall_gateway: "FirewallGateway" | None = None) -> List[BlockEntry]:
         """Elimina de la lista activa cualquier bloqueo caducado."""
@@ -195,6 +199,37 @@ class BlockManager:
         """Número total de bloqueos registrados para una IP."""
 
         return len(self.history_for_ip(ip))
+
+    def recent_activity(self, limit: int = 20) -> List[Dict[str, object]]:
+        """Historial combinado de altas y bajas de bloqueos."""
+
+        events: List[Dict[str, object]] = []
+        for entry in self._history:
+            events.append(
+                {
+                    "ip": entry.ip,
+                    "reason": entry.reason,
+                    "source": entry.source,
+                    "action": "añadido",
+                    "at": entry.created_at,
+                }
+            )
+            if entry.removed_at:
+                events.append(
+                    {
+                        "ip": entry.ip,
+                        "reason": entry.reason,
+                        "source": entry.source,
+                        "action": "eliminado",
+                        "at": entry.removed_at,
+                    }
+                )
+
+        events.sort(key=lambda item: item["at"], reverse=True)
+        sliced = events[:limit]
+        for item in sliced:
+            item["at"] = item["at"].isoformat()
+        return sliced
 
     def timeline(self, window: timedelta, *, bucket: str = "hour") -> List[Dict[str, str | int]]:
         """Devuelve recuentos de bloqueos agrupados por intervalo temporal."""
