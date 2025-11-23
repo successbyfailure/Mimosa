@@ -8,7 +8,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from mimosa.core.firewall import DummyFirewall
+from mimosa.core.firewall import DummyFirewall, SSHIptablesFirewall
 from mimosa.core.pfsense import OPNsenseClient, PFSenseClient
 from mimosa.core.api import FirewallGateway
 
@@ -27,6 +27,10 @@ class FirewallConfig:
     verify_ssl: bool = True
     timeout: float = 5.0
     apply_changes: bool = True
+    ssh_host: str | None = None
+    ssh_user: str | None = None
+    ssh_key_path: str | None = None
+    ssh_port: int = 22
 
     @classmethod
     def new(
@@ -41,6 +45,10 @@ class FirewallConfig:
         verify_ssl: bool = True,
         timeout: float = 5.0,
         apply_changes: bool = True,
+        ssh_host: str | None = None,
+        ssh_user: str | None = None,
+        ssh_key_path: str | None = None,
+        ssh_port: int = 22,
     ) -> "FirewallConfig":
         return cls(
             id=uuid.uuid4().hex,
@@ -53,6 +61,10 @@ class FirewallConfig:
             verify_ssl=verify_ssl,
             timeout=timeout,
             apply_changes=apply_changes,
+            ssh_host=ssh_host,
+            ssh_user=ssh_user,
+            ssh_key_path=ssh_key_path,
+            ssh_port=ssh_port,
         )
 
 
@@ -119,8 +131,10 @@ class FirewallConfigStore:
             return None
 
         firewall_type = env.get("INITIAL_FIREWALL_TYPE", "pfsense").lower()
-        if firewall_type not in {"dummy", "pfsense", "opnsense"}:
-            raise ValueError("INITIAL_FIREWALL_TYPE debe ser dummy, pfsense u opnsense")
+        if firewall_type not in {"dummy", "pfsense", "opnsense", "ssh_iptables"}:
+            raise ValueError(
+                "INITIAL_FIREWALL_TYPE debe ser dummy, pfsense, opnsense o ssh_iptables"
+            )
 
         def _as_bool(value: str | None, default: bool) -> bool:
             if value is None:
@@ -140,6 +154,10 @@ class FirewallConfigStore:
             apply_changes=_as_bool(
                 env.get("INITIAL_FIREWALL_APPLY_CHANGES"), True
             ),
+            ssh_host=env.get("INITIAL_FIREWALL_SSH_HOST"),
+            ssh_user=env.get("INITIAL_FIREWALL_SSH_USER"),
+            ssh_key_path=env.get("INITIAL_FIREWALL_SSH_KEY_PATH"),
+            ssh_port=int(env.get("INITIAL_FIREWALL_SSH_PORT") or 22),
         )
 
         return self.add(config)
@@ -159,6 +177,13 @@ def build_firewall_gateway(config: FirewallConfig) -> FirewallGateway:
             verify_ssl=config.verify_ssl,
             timeout=config.timeout,
             apply_changes=config.apply_changes,
+        )
+    if config.type == "ssh_iptables":
+        return SSHIptablesFirewall(
+            host=config.ssh_host or config.base_url or "",
+            user=config.ssh_user or "root",
+            key_path=config.ssh_key_path,
+            port=config.ssh_port or 22,
         )
     if config.type == "pfsense":
         return PFSenseClient(

@@ -55,6 +55,7 @@
         <select name="type">
           <option value="pfsense">pfSense (pfRest)</option>
           <option value="opnsense">OPNsense</option>
+          <option value="ssh_iptables">SSH + iptables</option>
           <option value="dummy">Dummy</option>
         </select>
       </div>
@@ -73,6 +74,22 @@
       <div>
         <label>API secret</label>
         <input name="api_secret" />
+      </div>
+      <div>
+        <label>Host SSH</label>
+        <input name="ssh_host" placeholder="firewall.local" />
+      </div>
+      <div>
+        <label>Usuario SSH</label>
+        <input name="ssh_user" placeholder="root" />
+      </div>
+      <div>
+        <label>Puerto SSH</label>
+        <input name="ssh_port" type="number" min="1" max="65535" value="22" />
+      </div>
+      <div>
+        <label>Ruta llave SSH</label>
+        <input name="ssh_key_path" placeholder="/home/mimosa/.ssh/id_rsa" />
       </div>
       <div>
         <label>Timeout (s)</label>
@@ -138,7 +155,7 @@
   </section>
 
   <div class="grid" style="grid-template-columns: 1.25fr 1fr; gap: 18px; align-items:start;">
-    <div class="grid" style="grid-template-rows: auto auto; gap: 18px;">
+    <div class="grid" style="grid-template-rows: auto auto auto; gap: 18px;">
       <form id="proxytrap-form" class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
         <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
           <div>
@@ -216,6 +233,86 @@
             </thead>
             <tbody id="proxytrap-policy-table">
               <tr><td colspan="3" class="muted">Sin reglas.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+        <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
+          <div>
+            <h3 style="margin-top:0">Port Detector</h3>
+            <div class="muted">Escucha puertos TCP/UDP y registra conexiones entrantes.</div>
+          </div>
+          <span class="pill warn" style="display:none;" id="portdetector-warning">Deshabilitado</span>
+        </div>
+        <form id="portdetector-form" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px; align-items:end;">
+          <label style="display:flex; gap:8px; align-items:center;">
+            <input type="checkbox" name="enabled" style="width:auto;" />
+            Habilitar Port Detector
+          </label>
+          <div>
+            <label>Severidad por defecto</label>
+            <select name="default_severity">
+              <option value="bajo">Bajo</option>
+              <option value="medio" selected>Medio</option>
+              <option value="alto">Alto</option>
+            </select>
+          </div>
+          <button type="submit">Guardar configuración</button>
+        </form>
+        <div id="portdetector-message" class="muted" style="margin-top:4px;"></div>
+        <div class="muted" style="margin-top:8px;">Configura reglas por puerto, lista o rango con severidades personalizadas.</div>
+        <form id="portdetector-rule-form" class="grid" style="grid-template-columns: 1fr 1fr 1fr auto; gap: 10px; align-items:end; margin-top:10px;">
+          <div>
+            <label>Protocolo</label>
+            <select name="protocol">
+              <option value="tcp">TCP</option>
+              <option value="udp">UDP</option>
+            </select>
+          </div>
+          <div>
+            <label>Tipo</label>
+            <select name="mode" onchange="togglePortRange()">
+              <option value="port">Puerto</option>
+              <option value="list">Lista</option>
+              <option value="range">Rango</option>
+            </select>
+          </div>
+          <div id="portdetector-port-wrapper">
+            <label>Puerto o lista (coma)</label>
+            <input name="ports" placeholder="22,80,443" />
+          </div>
+          <div id="portdetector-range-wrapper" style="display:none; grid-column: span 1;">
+            <label>Rango</label>
+            <div class="grid" style="grid-template-columns: 1fr 1fr; gap:6px;">
+              <input name="start" type="number" min="1" max="65535" placeholder="8000" />
+              <input name="end" type="number" min="1" max="65535" placeholder="8100" />
+            </div>
+          </div>
+          <div>
+            <label>Severidad</label>
+            <select name="severity">
+              <option value="bajo">Bajo</option>
+              <option value="medio" selected>Medio</option>
+              <option value="alto">Alto</option>
+            </select>
+          </div>
+          <button type="submit">Añadir</button>
+        </form>
+        <div id="portdetector-rule-message" class="muted" style="margin-top:6px;"></div>
+        <div style="max-height:200px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px; margin-top:8px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Protocolo</th>
+                <th>Detalle</th>
+                <th>Severidad</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="portdetector-rule-table">
+              <tr><td colspan="4" class="muted">Sin reglas.</td></tr>
             </tbody>
           </table>
         </div>
@@ -564,6 +661,7 @@
         <select name="type">
           <option value="pfsense">pfSense (pfRest)</option>
           <option value="opnsense">OPNsense</option>
+          <option value="ssh_iptables">SSH + iptables</option>
           <option value="dummy">Dummy</option>
         </select>
       </div>
@@ -582,6 +680,22 @@
       <div>
         <label>API secret</label>
         <input name="api_secret" />
+      </div>
+      <div>
+        <label>Host SSH</label>
+        <input name="ssh_host" />
+      </div>
+      <div>
+        <label>Usuario SSH</label>
+        <input name="ssh_user" />
+      </div>
+      <div>
+        <label>Puerto SSH</label>
+        <input name="ssh_port" type="number" min="1" max="65535" />
+      </div>
+      <div>
+        <label>Ruta llave SSH</label>
+        <input name="ssh_key_path" />
       </div>
       <div>
         <label>Timeout (s)</label>
@@ -611,6 +725,8 @@ let editingFirewallId = null;
 let pluginsCache = [];
 let proxytrapPolicies = [];
 let editingPolicyIndex = null;
+let portDetectorRules = [];
+let editingPortRuleIndex = null;
 let ipBlockChart = null;
 const editModal = document.getElementById('edit-modal');
 const editForm = document.getElementById('edit-form');
@@ -668,6 +784,14 @@ function defaultProxytrapPolicies() {
   ];
 }
 
+function defaultPortDetectorRules() {
+  return [
+    { protocol: 'tcp', ports: [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 993, 995, 3306, 5432, 6379, 8080], severity: 'alto' },
+    { protocol: 'tcp', start: 5900, end: 5903, severity: 'medio' },
+    { protocol: 'udp', ports: [53, 123], severity: 'medio' },
+  ];
+}
+
 async function loadPlugins() {
   const res = await fetch('/api/plugins');
   const data = await res.json();
@@ -688,6 +812,10 @@ async function loadPlugins() {
     toggleCustomHtml();
     const message = document.getElementById('proxytrap-policy-message');
     if (message) message.textContent = 'Reglas cargadas desde configuración.';
+  }
+  const portdetector = data.find(p => p.name === 'portdetector');
+  if (portdetector && portdetector.config) {
+    setPortDetectorForm(portdetector.config);
   }
   loadProxyTrapStats();
 }
@@ -736,6 +864,158 @@ function resetProxytrapDefaults() {
   renderProxytrapPolicies();
   const msg = document.getElementById('proxytrap-policy-message');
   if (msg) msg.textContent = 'Restauradas reglas por defecto (admin.*, phpmyadmin.*, cpanel.*).';
+}
+
+function setPortDetectorForm(config) {
+  const form = document.getElementById('portdetector-form');
+  form.enabled.checked = Boolean(config.enabled);
+  form.default_severity.value = config.default_severity || 'medio';
+  portDetectorRules = (config.rules && config.rules.length) ? config.rules : defaultPortDetectorRules();
+  renderPortDetectorRules();
+  const warning = document.getElementById('portdetector-warning');
+  if (warning) warning.style.display = form.enabled.checked ? 'none' : 'inline-flex';
+}
+
+function renderPortDetectorRules() {
+  const tbody = document.getElementById('portdetector-rule-table');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  if (!portDetectorRules.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="muted">Sin reglas.</td></tr>';
+    return;
+  }
+  portDetectorRules.forEach((rule, index) => {
+    const detail = rule.port ? `Puerto ${rule.port}`
+      : (rule.ports && rule.ports.length ? `Lista: ${rule.ports.join(', ')}`
+      : (rule.start && rule.end ? `Rango ${rule.start}-${rule.end}` : ''));
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${rule.protocol || 'tcp'}</td>
+      <td>${detail}</td>
+      <td>${rule.severity || 'medio'}</td>
+      <td style="text-align:right; display:flex; gap:8px; justify-content:flex-end;">
+        <button class="secondary" type="button" onclick="editPortDetectorRule(${index})">Editar</button>
+        <button class="secondary" type="button" onclick="deletePortDetectorRule(${index})">Quitar</button>
+      </td>`;
+    tbody.appendChild(row);
+  });
+}
+
+function togglePortRange() {
+  const form = document.getElementById('portdetector-rule-form');
+  const mode = form.mode.value;
+  const rangeWrapper = document.getElementById('portdetector-range-wrapper');
+  const portWrapper = document.getElementById('portdetector-port-wrapper');
+  const portsInput = form.ports;
+  const startInput = form.start;
+  const endInput = form.end;
+  if (mode === 'range') {
+    rangeWrapper.style.display = 'block';
+    portWrapper.style.display = 'none';
+    portsInput.value = '';
+  } else {
+    rangeWrapper.style.display = 'none';
+    portWrapper.style.display = 'block';
+    startInput.value = '';
+    endInput.value = '';
+  }
+}
+
+function submitPortDetectorRule(event) {
+  event.preventDefault();
+  const form = event.target;
+  const payload = Object.fromEntries(new FormData(form));
+  const rule = {
+    protocol: payload.protocol || 'tcp',
+    severity: payload.severity || 'medio',
+  };
+
+  if (payload.mode === 'range') {
+    rule.start = Number(payload.start || 0);
+    rule.end = Number(payload.end || 0);
+  } else if (payload.mode === 'list') {
+    rule.ports = (payload.ports || '')
+      .split(',')
+      .map(p => Number(p.trim()))
+      .filter(n => !Number.isNaN(n) && n > 0);
+  } else {
+    rule.port = Number(payload.ports || 0);
+  }
+
+  if (editingPortRuleIndex !== null) {
+    portDetectorRules[editingPortRuleIndex] = rule;
+  } else {
+    portDetectorRules.push(rule);
+  }
+  editingPortRuleIndex = null;
+  form.reset();
+  form.mode.value = payload.mode || 'port';
+  togglePortRange();
+  renderPortDetectorRules();
+  const msg = document.getElementById('portdetector-rule-message');
+  if (msg) msg.textContent = 'Regla guardada. Recuerda pulsar "Guardar configuración" para aplicar.';
+}
+
+function editPortDetectorRule(index) {
+  const rule = portDetectorRules[index];
+  if (!rule) return;
+  const form = document.getElementById('portdetector-rule-form');
+  form.protocol.value = rule.protocol || 'tcp';
+  form.severity.value = rule.severity || 'medio';
+  if (rule.start && rule.end) {
+    form.mode.value = 'range';
+    form.start.value = rule.start;
+    form.end.value = rule.end;
+    form.ports.value = '';
+  } else if (rule.ports && rule.ports.length) {
+    form.mode.value = 'list';
+    form.ports.value = rule.ports.join(',');
+  } else {
+    form.mode.value = 'port';
+    form.ports.value = rule.port || '';
+  }
+  togglePortRange();
+  editingPortRuleIndex = index;
+  const msg = document.getElementById('portdetector-rule-message');
+  if (msg) msg.textContent = 'Editando regla. Guarda para mantener los cambios.';
+}
+
+function deletePortDetectorRule(index) {
+  portDetectorRules.splice(index, 1);
+  editingPortRuleIndex = null;
+  renderPortDetectorRules();
+  const msg = document.getElementById('portdetector-rule-message');
+  if (msg) msg.textContent = 'Regla eliminada localmente.';
+}
+
+async function submitPortDetector(event) {
+  event.preventDefault();
+  const form = event.target;
+  const payload = Object.fromEntries(new FormData(form));
+  payload.enabled = form.enabled.checked;
+  payload.default_severity = payload.default_severity || 'medio';
+  payload.rules = portDetectorRules;
+  const message = document.getElementById('portdetector-message');
+  message.textContent = 'Guardando...';
+  try {
+    const res = await fetch('/api/plugins/portdetector', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      message.textContent = payload.enabled ? 'Port Detector activo.' : 'Port Detector deshabilitado.';
+      message.style.color = '#67e8f9';
+      loadPlugins();
+    } else {
+      const data = await res.json();
+      message.textContent = data.detail || 'No se pudo guardar la configuración.';
+      message.style.color = '#fca5a5';
+    }
+  } catch (error) {
+    message.textContent = 'Error al guardar la configuración.';
+    message.style.color = '#fca5a5';
+  }
 }
 
 function submitProxytrapPolicy(event) {
@@ -933,6 +1213,7 @@ function buildPayload(form) {
   payload.verify_ssl = form.verify_ssl.checked;
   payload.apply_changes = form.apply_changes ? form.apply_changes.checked : true;
   payload.timeout = parseFloat(payload.timeout || '5');
+  payload.ssh_port = payload.ssh_port ? Number(payload.ssh_port) : 22;
   return payload;
 }
 
@@ -943,6 +1224,10 @@ function setFormValues(form, cfg) {
   form.alias_name.value = cfg.alias_name || '';
   form.api_key.value = cfg.api_key || '';
   form.api_secret.value = cfg.api_secret || '';
+  form.ssh_host.value = cfg.ssh_host || '';
+  form.ssh_user.value = cfg.ssh_user || '';
+  form.ssh_port.value = cfg.ssh_port ?? 22;
+  form.ssh_key_path.value = cfg.ssh_key_path || '';
   form.timeout.value = cfg.timeout ?? 5;
   form.verify_ssl.checked = Boolean(cfg.verify_ssl);
   if (form.apply_changes) {
@@ -1509,9 +1794,12 @@ document.getElementById('whitelist-form').addEventListener('submit', submitWhite
 document.getElementById('blocking-settings').addEventListener('submit', submitBlockingSettings);
 document.getElementById('proxytrap-form').addEventListener('submit', submitProxytrap);
 document.getElementById('proxytrap-policy-form').addEventListener('submit', submitProxytrapPolicy);
+document.getElementById('portdetector-form').addEventListener('submit', submitPortDetector);
+document.getElementById('portdetector-rule-form').addEventListener('submit', submitPortDetectorRule);
 document.querySelectorAll('.block-fw-select').forEach(select => {
   select.addEventListener('change', handleFirewallChange);
 });
+togglePortRange();
 editForm.addEventListener('submit', submitEdit);
 editModal.addEventListener('click', (event) => {
   if (event.target === editModal) {

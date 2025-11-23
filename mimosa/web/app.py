@@ -1,6 +1,7 @@
 """Aplicación FastAPI que sirve el dashboard y el panel de control."""
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
@@ -16,7 +17,13 @@ from mimosa.core.api import FirewallGateway
 from mimosa.core.blocking import BlockEntry, BlockManager
 from mimosa.core.firewall import DummyFirewall
 from mimosa.core.offenses import OffenseRecord, OffenseStore
-from mimosa.core.plugins import PluginConfigStore, ProxyTrapConfig
+from mimosa.core.plugins import (
+    PluginConfigStore,
+    PortDetectorConfig,
+    PortDetectorRule,
+    ProxyTrapConfig,
+)
+from mimosa.core.portdetector import PortDetectorService
 from mimosa.core.proxytrap import ProxyTrapService
 from mimosa.core.rules import OffenseEvent, OffenseRule, OffenseRuleStore, RuleManager
 from mimosa.web.config import (
@@ -31,7 +38,7 @@ class FirewallInput(BaseModel):
     """Payload para crear y probar conexiones con firewalls."""
 
     name: str
-    type: Literal["dummy", "pfsense", "opnsense"]
+    type: Literal["dummy", "pfsense", "opnsense", "ssh_iptables"]
     base_url: str | None = None
     api_key: str | None = None
     api_secret: str | None = None
@@ -39,6 +46,10 @@ class FirewallInput(BaseModel):
     verify_ssl: bool = True
     timeout: float = 5.0
     apply_changes: bool = True
+    ssh_host: str | None = None
+    ssh_user: str | None = None
+    ssh_key_path: str | None = None
+    ssh_port: int = 22
 
 
 class BlockInput(BaseModel):
@@ -72,6 +83,25 @@ class ProxyTrapInput(BaseModel):
     response_type: Literal["silence", "404", "custom"] = "404"
     custom_html: str | None = None
     domain_policies: List[ProxyTrapDomainInput] = Field(default_factory=list)
+
+
+class PortDetectorRuleInput(BaseModel):
+    """Regla de configuración para Port Detector."""
+
+    protocol: Literal["tcp", "udp"] = "tcp"
+    severity: str = "medio"
+    port: int | None = None
+    ports: List[int] | None = None
+    start: int | None = None
+    end: int | None = None
+
+
+class PortDetectorInput(BaseModel):
+    """Configuración expuesta para el plugin Port Detector."""
+
+    enabled: bool = False
+    default_severity: str = "medio"
+    rules: List[PortDetectorRuleInput] = Field(default_factory=list)
 
 
 class OffenseInput(BaseModel):
@@ -135,6 +165,12 @@ def create_app(
     gateway_cache: Dict[str, FirewallGateway] = {}
 
     proxytrap_service = ProxyTrapService(
+        offense_store,
+        block_manager,
+        rule_store,
+        gateway_factory=lambda: _select_gateway(),
+    )
+    portdetector_service = PortDetectorService(
         offense_store,
         block_manager,
         rule_store,
@@ -208,6 +244,7 @@ def create_app(
 
     def _serialize_plugins() -> List[Dict[str, object]]:
         proxytrap_config = plugin_store.get_proxytrap()
+        portdetector_config = plugin_store.get_port_detector()
         return [
             {"name": "dummy", "enabled": True},
             {
@@ -215,9 +252,15 @@ def create_app(
                 "enabled": proxytrap_config.enabled,
                 "config": proxytrap_config.__dict__,
             },
+            {
+                "name": "portdetector",
+                "enabled": portdetector_config.enabled,
+                "config": asdict(portdetector_config),
+            },
         ]
 
     proxytrap_service.apply_config(plugin_store.get_proxytrap())
+    portdetector_service.apply_config(plugin_store.get_port_detector())
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
@@ -273,6 +316,21 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc))
         plugin_store.update_proxytrap(config)
         return config.__dict__
+
+    @app.put("/api/plugins/portdetector")
+    def update_port_detector_settings(payload: PortDetectorInput) -> Dict[str, object]:
+        rules = [PortDetectorRule(**rule.model_dump()) for rule in payload.rules]
+        config = PortDetectorConfig(
+            enabled=payload.enabled,
+            default_severity=payload.default_severity,
+            rules=rules,
+        )
+        try:
+            portdetector_service.apply_config(config)
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        plugin_store.update_port_detector(config)
+        return asdict(config)
 
     @app.get("/api/settings/blocking")
     def blocking_settings() -> Dict[str, int]:

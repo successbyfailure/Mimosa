@@ -19,6 +19,28 @@ DEFAULT_PROXYTRAP_POLICIES = [
     {"pattern": "cpanel.*", "severity": "alto"},
 ]
 
+COMMON_SERVICE_PORTS = [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 993, 995, 3306, 5432, 6379, 8080]
+
+
+@dataclass
+class PortDetectorRule:
+    """Regla de escucha asociada a un puerto o rango."""
+
+    protocol: str = "tcp"
+    severity: str = "medio"
+    port: int | None = None
+    ports: List[int] = field(default_factory=list)
+    start: int | None = None
+    end: int | None = None
+
+
+def _default_port_rules() -> List[PortDetectorRule]:
+    return [
+        PortDetectorRule(protocol="tcp", severity="alto", ports=list(COMMON_SERVICE_PORTS)),
+        PortDetectorRule(protocol="tcp", severity="medio", start=5900, end=5903),
+        PortDetectorRule(protocol="udp", severity="medio", ports=[53, 123]),
+    ]
+
 
 @dataclass
 class DummyPluginConfig:
@@ -43,6 +65,16 @@ class ProxyTrapConfig:
     )
 
 
+@dataclass
+class PortDetectorConfig:
+    """Opciones del plugin Port Detector."""
+
+    name: str = "portdetector"
+    enabled: bool = False
+    default_severity: str = "medio"
+    rules: List[PortDetectorRule] = field(default_factory=_default_port_rules)
+
+
 class PluginConfigStore:
     """Almacena configuraciones de plugins en un fichero JSON."""
 
@@ -57,7 +89,12 @@ class PluginConfigStore:
     def _bootstrap_defaults(self) -> None:
         dummy = asdict(DummyPluginConfig())
         proxytrap = asdict(ProxyTrapConfig())
-        self._plugins = {dummy["name"]: dummy, proxytrap["name"]: proxytrap}
+        portdetector = asdict(PortDetectorConfig())
+        self._plugins = {
+            dummy["name"]: dummy,
+            proxytrap["name"]: proxytrap,
+            portdetector["name"]: portdetector,
+        }
         self._save()
 
     def _load(self) -> None:
@@ -88,6 +125,28 @@ class PluginConfigStore:
 
     def update_proxytrap(self, payload: ProxyTrapConfig) -> ProxyTrapConfig:
         self._plugins[payload.name] = asdict(payload)
+        self._save()
+        return payload
+
+    def get_port_detector(self) -> PortDetectorConfig:
+        config = self._plugins.get("portdetector")
+        if not config:
+            instance = PortDetectorConfig()
+            self._plugins[instance.name] = asdict(instance)
+            self._save()
+            return instance
+        loaded_rules = []
+        for entry in config.get("rules", []):
+            loaded_rules.append(PortDetectorRule(**entry))
+        return PortDetectorConfig(
+            enabled=bool(config.get("enabled", False)),
+            default_severity=config.get("default_severity", "medio"),
+            rules=loaded_rules or _default_port_rules(),
+        )
+
+    def update_port_detector(self, payload: PortDetectorConfig) -> PortDetectorConfig:
+        sanitized = asdict(payload)
+        self._plugins[payload.name] = sanitized
         self._save()
         return payload
 
