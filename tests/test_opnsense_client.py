@@ -4,7 +4,7 @@ import unittest
 
 import httpx
 
-from mimosa.core.pfsense import OPNsenseClient
+from mimosa.core.sense import OPNsenseClient
 
 
 class OPNsenseClientTests(unittest.TestCase):

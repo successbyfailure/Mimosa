@@ -41,7 +41,7 @@ Mimosa incluye una pequeña aplicación FastAPI para consultar métricas y gesti
    ```python
    from mimosa.core.api import CoreAPI
    from mimosa.core.blocking import BlockManager
-   from mimosa.core.pfsense import OPNsenseClient, PFSenseClient
+   from mimosa.core.sense import OPNsenseClient, PFSenseClient
 
    # Para pfSense (pfRest)
    firewall = PFSenseClient(
