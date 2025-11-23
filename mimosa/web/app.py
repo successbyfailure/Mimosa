@@ -58,6 +58,7 @@ class BlockInput(BaseModel):
     ip: str
     reason: str | None = None
     duration_minutes: int | None = None
+    sync_with_firewall: bool = True
 
 
 class BlockingSettingsInput(BaseModel):
@@ -529,6 +530,7 @@ def create_app(
             payload.ip,
             payload.reason or "Añadido manualmente",
             payload.duration_minutes,
+            sync_with_firewall=payload.sync_with_firewall,
         )
         duration_minutes = None
         if entry.expires_at:
@@ -552,6 +554,7 @@ def create_app(
             "reason": payload.reason or "",
             "duration_minutes": duration_minutes,
             "synced_with_firewall": should_sync,
+            "sync_with_firewall": payload.sync_with_firewall,
         }
 
     @app.delete("/api/firewalls/{config_id}/blocks/{ip}", status_code=204)

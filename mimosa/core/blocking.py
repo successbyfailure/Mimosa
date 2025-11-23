@@ -23,6 +23,7 @@ class BlockEntry:
     active: bool = True
     synced_at: Optional[datetime] = None
     removed_at: Optional[datetime] = None
+    sync_with_firewall: bool = True
 
     def to_dict(self) -> Dict[str, object]:
         payload = asdict(self)
@@ -74,7 +75,7 @@ class BlockManager:
         with self._connection() as conn:
             rows = conn.execute(
                 """
-                SELECT id, ip, reason, source, created_at, expires_at, active, synced_at, removed_at
+                SELECT id, ip, reason, source, created_at, expires_at, active, synced_at, removed_at, sync_with_firewall
                 FROM blocks
                 ORDER BY datetime(created_at) DESC;
                 """
@@ -90,6 +91,7 @@ class BlockManager:
                 active=bool(row[6]),
                 synced_at=datetime.fromisoformat(row[7]) if row[7] else None,
                 removed_at=datetime.fromisoformat(row[8]) if row[8] else None,
+                sync_with_firewall=bool(row[9]) if len(row) > 9 else True,
             )
             self._history.append(entry)
             if entry.active and (not entry.expires_at or entry.expires_at > datetime.utcnow()):
@@ -125,7 +127,15 @@ class BlockManager:
             )
 
     # Operaciones principales ------------------------------------------------------
-    def add(self, ip: str, reason: str, duration_minutes: Optional[int] = None, *, source: str = "manual") -> BlockEntry:
+    def add(
+        self,
+        ip: str,
+        reason: str,
+        duration_minutes: Optional[int] = None,
+        *,
+        source: str = "manual",
+        sync_with_firewall: bool = True,
+    ) -> BlockEntry:
         """Añade un bloqueo en memoria y devuelve la entrada creada."""
 
         now = datetime.utcnow()
@@ -134,10 +144,17 @@ class BlockManager:
         with self._connection() as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO blocks (ip, reason, source, created_at, expires_at, active)
-                VALUES (?, ?, ?, ?, ?, 1);
+                INSERT INTO blocks (ip, reason, source, created_at, expires_at, active, sync_with_firewall)
+                VALUES (?, ?, ?, ?, ?, 1, ?);
                 """,
-                (ip, reason, source, now.isoformat(), expires_at.isoformat() if expires_at else None),
+                (
+                    ip,
+                    reason,
+                    source,
+                    now.isoformat(),
+                    expires_at.isoformat() if expires_at else None,
+                    int(sync_with_firewall),
+                ),
             )
             entry_id = cursor.lastrowid
         entry = BlockEntry(
@@ -147,6 +164,7 @@ class BlockManager:
             created_at=now,
             expires_at=expires_at,
             source=source,
+            sync_with_firewall=sync_with_firewall,
         )
         self._blocks[ip] = entry
         self._history.append(entry)
@@ -309,6 +327,9 @@ class BlockManager:
         self._should_sync = lambda ip: not checker(ip)
 
     def should_sync(self, ip: str) -> bool:
+        entry = self._blocks.get(ip)
+        if entry and not entry.sync_with_firewall:
+            return False
         try:
             return bool(self._should_sync(ip))
         except Exception:

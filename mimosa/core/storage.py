@@ -81,6 +81,7 @@ def ensure_database(path: Path | str = DEFAULT_DB_PATH) -> Path:
                 active INTEGER NOT NULL DEFAULT 1,
                 synced_at TEXT,
                 removed_at TEXT,
+                sync_with_firewall INTEGER NOT NULL DEFAULT 1,
                 FOREIGN KEY(ip) REFERENCES ip_profiles(ip)
             );
             """
@@ -97,6 +98,11 @@ def ensure_database(path: Path | str = DEFAULT_DB_PATH) -> Path:
             ON blocks(ip);
             """
         )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(blocks);")}
+        if "sync_with_firewall" not in columns:
+            conn.execute(
+                "ALTER TABLE blocks ADD COLUMN sync_with_firewall INTEGER NOT NULL DEFAULT 1;"
+            )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS whitelist (

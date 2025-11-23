@@ -382,6 +382,10 @@
         <input name="reason" placeholder="Escalada manual desde ofensas" />
         <label>Duración (min)</label>
         <input name="duration_minutes" type="number" min="0" placeholder="60" />
+        <label style="display:flex; gap:8px; align-items:center;">
+          <input type="checkbox" name="sync_with_firewall" checked style="width:auto;" />
+          Enviar bloqueo al firewall
+        </label>
         <button type="submit" style="margin-top:12px;">Añadir a la lista</button>
         <div id="offense-block-message" class="muted"></div>
       </form>
@@ -520,6 +524,10 @@
             <label>Duración (min)</label>
             <input name="duration_minutes" type="number" min="0" placeholder="60" />
           </div>
+          <label style="display:flex; gap:8px; align-items:center;">
+            <input type="checkbox" name="sync_with_firewall" checked style="width:auto;" />
+            Enviar bloqueo al firewall
+          </label>
           <button type="submit">Añadir a la lista</button>
           <div id="block-message" class="muted"></div>
         </form>
@@ -1540,6 +1548,8 @@ async function submitBlockForm(event, messageId) {
   event.preventDefault();
   const form = event.target;
   const payload = Object.fromEntries(new FormData(form));
+  const syncCheckbox = form.querySelector('input[name="sync_with_firewall"]');
+  payload.sync_with_firewall = syncCheckbox ? !!syncCheckbox.checked : true;
   const message = document.getElementById(messageId);
   message.textContent = '';
   if (!selectedFirewallId) {
@@ -1559,8 +1569,11 @@ async function submitBlockForm(event, messageId) {
       body: JSON.stringify(payload)
     });
     if (res.ok) {
+      const data = await res.json();
       form.reset();
-      message.textContent = 'Entrada añadida correctamente.';
+      message.textContent = data.synced_with_firewall
+        ? 'Entrada añadida y enviada al firewall.'
+        : 'Entrada guardada solo en la base de datos.';
       refreshBlocks();
     } else {
       message.textContent = 'No se pudo añadir la entrada.';
