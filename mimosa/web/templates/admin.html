@@ -996,6 +996,7 @@ async function submitPortDetector(event) {
   payload.default_severity = payload.default_severity || 'medio';
   payload.rules = portDetectorRules;
   const message = document.getElementById('portdetector-message');
+  message.style.color = '#94a3b8';
   message.textContent = 'Guardando...';
   try {
     const res = await fetch('/api/plugins/portdetector', {
@@ -1009,7 +1010,20 @@ async function submitPortDetector(event) {
       loadPlugins();
     } else {
       const data = await res.json();
-      message.textContent = data.detail || 'No se pudo guardar la configuración.';
+      const detail = typeof data.detail === 'string'
+        ? data.detail
+        : (data.detail?.message || 'No se pudo guardar la configuración.');
+      const failedPorts = Array.isArray(data.failed_ports)
+        ? data.failed_ports
+        : (Array.isArray(data.detail?.failed_ports) ? data.detail.failed_ports : []);
+      if (failedPorts.length) {
+        const list = failedPorts
+          .map(entry => `<span style="color:#fca5a5;">${entry.port}</span>`)
+          .join(', ');
+        message.innerHTML = `${detail}<div style="margin-top:4px;">Puertos con error: ${list}</div>`;
+      } else {
+        message.textContent = detail;
+      }
       message.style.color = '#fca5a5';
     }
   } catch (error) {

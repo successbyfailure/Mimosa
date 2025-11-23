@@ -18,6 +18,26 @@ from mimosa.core.plugins import PortDetectorConfig, PortDetectorRule
 from mimosa.core.rules import OffenseEvent, OffenseRule, OffenseRuleStore, RuleManager
 
 
+class PortBindingError(OSError):
+    """Error al iniciar listeners de puertos.
+
+    Incluye una lista de puertos que no pudieron abrirse junto con el
+    protocolo y el error original.
+    """
+
+    def __init__(self, failures: List[Tuple[str, int, OSError]]):
+        self.failures = failures
+        ports = ", ".join(f"{proto}:{port}" for proto, port, _ in failures)
+        super().__init__(f"No se pudieron abrir los puertos: {ports}")
+
+    @property
+    def failed_ports(self) -> List[Dict[str, object]]:
+        return [
+            {"protocol": proto, "port": port, "message": str(exc)}
+            for proto, port, exc in self.failures
+        ]
+
+
 class PortDetectorService:
     """Gestiona listeners TCP/UDP y registra ofensas entrantes."""
 
@@ -56,7 +76,7 @@ class PortDetectorService:
         with self._lock:
             self.stop()
             self._stop_event.clear()
-            errors: List[OSError] = []
+            errors: List[Tuple[str, int, OSError]] = []
             for protocol, port, severity in self._expand_rules(self.config.rules):
                 try:
                     if protocol == "udp":
@@ -64,10 +84,10 @@ class PortDetectorService:
                     else:
                         self._start_tcp_listener(port, severity)
                 except OSError as exc:  # pragma: no cover - dependiente del sistema
-                    errors.append(exc)
+                    errors.append((protocol, port, exc))
             if errors:
                 self.stop()
-                raise errors[0]
+                raise PortBindingError(errors)
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -201,4 +221,4 @@ class PortDetectorService:
                 yield port
 
 
-__all__ = ["PortDetectorService"]
+__all__ = ["PortBindingError", "PortDetectorService"]
