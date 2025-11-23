@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from mimosa.core.firewall import DummyFirewall, SSHIptablesFirewall
-from mimosa.core.pfsense import OPNsenseClient, PFSenseClient
+from mimosa.core.sense import OPNsenseClient, PFSenseClient
 from mimosa.core.api import FirewallGateway
 
 

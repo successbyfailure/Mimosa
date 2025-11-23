@@ -3,7 +3,7 @@ import unittest
 
 import httpx
 
-from mimosa.core.pfsense import PFSenseClient
+from mimosa.core.sense import PFSenseClient
 
 
 class PFSenseClientTests(unittest.TestCase):
