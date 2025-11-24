@@ -23,11 +23,9 @@ from mimosa.core.plugins import (
     PortDetectorConfig,
     PortDetectorRule,
     ProxyTrapConfig,
-    ReverseProxySettings,
 )
 from mimosa.core.portdetector import PortBindingError, PortDetectorService
 from mimosa.core.proxytrap import ProxyTrapService
-from mimosa.core.reverseproxy import ReverseProxyManager
 from mimosa.core.rules import OffenseEvent, OffenseRule, OffenseRuleStore, RuleManager
 from mimosa.web.config import (
     FirewallConfig,
@@ -76,16 +74,6 @@ class BlockInput(BaseModel):
     sync_with_firewall: bool = True
 
 
-class PortForwardInput(BaseModel):
-    """Solicitud de publicación de puertos hacia Mimosa."""
-
-    ports: List[int]
-    protocol: Literal["tcp", "udp"] = "tcp"
-    target_ip: str
-    description: str | None = None
-    interface: str = "wan"
-
-
 class BlockingSettingsInput(BaseModel):
     """Configuración del gestor de bloqueos."""
 
@@ -100,18 +88,6 @@ class ProxyTrapDomainInput(BaseModel):
     severity: str = "alto"
 
 
-class ReverseProxyInput(BaseModel):
-    """Configuración del proxy reverso usado por ProxyTrap."""
-
-    enabled: bool = False
-    provider: Literal["npm"] = "npm"
-    api_url: str | None = None
-    api_token: str | None = None
-    forward_ip: str | None = None
-    forward_port: int = 8081
-    forward_scheme: Literal["http", "https"] = "http"
-
-
 class ProxyTrapInput(BaseModel):
     """Configuración expuesta para el plugin ProxyTrap."""
 
@@ -121,7 +97,6 @@ class ProxyTrapInput(BaseModel):
     response_type: Literal["silence", "404", "custom"] = "404"
     custom_html: str | None = None
     trap_hosts: List[str] = Field(default_factory=list)
-    reverse_proxy: ReverseProxyInput = Field(default_factory=ReverseProxyInput)
     domain_policies: List[ProxyTrapDomainInput] = Field(default_factory=list)
 
 
@@ -206,14 +181,11 @@ def create_app(
     rule_store = rule_store or OffenseRuleStore(db_path=offense_store.db_path)
     plugin_store = PluginConfigStore()
     gateway_cache: Dict[str, FirewallGateway] = {}
-    reverse_proxy_manager = ReverseProxyManager()
-
     proxytrap_service = ProxyTrapService(
         offense_store,
         block_manager,
         rule_store,
         gateway_factory=lambda: _select_gateway(),
-        reverse_proxy_manager=reverse_proxy_manager,
     )
     portdetector_service = PortDetectorService(
         offense_store,
@@ -354,9 +326,6 @@ def create_app(
 
     @app.put("/api/plugins/proxytrap")
     def update_proxytrap_settings(payload: ProxyTrapInput) -> Dict[str, object]:
-        reverse_proxy = ReverseProxySettings(
-            **payload.reverse_proxy.model_dump()
-        )
         config = ProxyTrapConfig(
             enabled=payload.enabled,
             port=payload.port,
@@ -364,7 +333,6 @@ def create_app(
             response_type=payload.response_type,
             custom_html=payload.custom_html,
             trap_hosts=payload.trap_hosts,
-            reverse_proxy=reverse_proxy,
             domain_policies=[
                 policy.model_dump() for policy in payload.domain_policies
             ],
@@ -548,20 +516,6 @@ def create_app(
         temporary_config = FirewallConfig.new(**payload.model_dump())
         return check_firewall_status(temporary_config)
 
-    @app.get("/api/firewalls/{config_id}/services")
-    def list_firewall_services(config_id: str) -> Dict[str, object]:
-        _, gateway = _get_firewall(config_id)
-        try:
-            services = gateway.list_services()
-        except NotImplementedError:
-            raise HTTPException(
-                status_code=501,
-                detail="El firewall no expone la lista de servicios",
-            )
-        except httpx.HTTPStatusError as exc:
-            raise HTTPException(status_code=502, detail=str(exc))
-        return {"items": services}
-
     @app.get("/api/firewalls/{config_id}/aliases")
     def list_firewall_aliases(config_id: str) -> Dict[str, object]:
         config, gateway = _get_firewall(config_id)
@@ -588,65 +542,6 @@ def create_app(
             "port_entries": port_entries,
         }
 
-    @app.post("/api/firewalls/{config_id}/port_forwards")
-    def create_port_forwards(config_id: str, payload: PortForwardInput) -> Dict[str, object]:
-        _, gateway = _get_firewall(config_id)
-        normalized_ports = sorted({int(port) for port in payload.ports if port})
-        try:
-            services = gateway.list_services()
-        except NotImplementedError:
-            raise HTTPException(
-                status_code=501,
-                detail="Este firewall no soporta gestión de NAT",
-            )
-        except httpx.HTTPStatusError as exc:
-            raise HTTPException(status_code=502, detail=str(exc))
-
-        conflicts: List[Dict[str, object]] = []
-        already_present: List[int] = []
-        created: List[int] = []
-
-        for port in normalized_ports:
-            match = next(
-                (
-                    svc
-                    for svc in services
-                    if svc.get("port") == port and svc.get("protocol") == payload.protocol
-                ),
-                None,
-            )
-            if match and match.get("target") == payload.target_ip:
-                already_present.append(port)
-                continue
-            if match and match.get("target") != payload.target_ip:
-                conflicts.append(match)
-                continue
-
-            try:
-                gateway.add_port(
-                    target_ip=payload.target_ip,
-                    port=port,
-                    protocol=payload.protocol,
-                    description=payload.description,
-                    interface=payload.interface,
-                )
-                created.append(port)
-            except NotImplementedError:
-                raise HTTPException(
-                    status_code=501,
-                    detail="Este firewall no soporta gestión de NAT",
-                )
-            except httpx.HTTPStatusError as exc:
-                raise HTTPException(status_code=502, detail=str(exc))
-
-        return {
-            "result": {
-                "created": created,
-                "conflicts": conflicts,
-                "already_present": already_present,
-            }
-        }
-
     @app.get("/api/firewalls/{config_id}/blocks")
     def list_firewall_blocks(config_id: str) -> Dict[str, object]:
         config, gateway = _get_firewall(config_id)
@@ -662,24 +557,6 @@ def create_app(
             "items": items,
             "database": [_serialize_block(block) for block in block_manager.list()],
             "sync": sync_info,
-        }
-
-    @app.get("/api/firewalls/{config_id}/block_rule_stats")
-    def firewall_block_rule_stats(config_id: str, interface: str = "wan") -> Dict[str, object]:
-        config, gateway = _get_firewall(config_id)
-        try:
-            stats = gateway.block_rule_stats(interface=interface)
-        except NotImplementedError:
-            raise HTTPException(
-                status_code=501,
-                detail="El firewall no expone estadísticas de regla via API",
-            )
-        except httpx.HTTPStatusError as exc:
-            raise HTTPException(status_code=502, detail=str(exc))
-        return {
-            "alias": config.alias_name,
-            "interface": interface,
-            **stats,
         }
 
     @app.post("/api/firewalls/{config_id}/blocks", status_code=201)
@@ -725,19 +602,6 @@ def create_app(
         except httpx.HTTPStatusError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         block_manager.remove(ip)
-
-    @app.post("/api/firewalls/{config_id}/flush_states")
-    def flush_firewall_states(config_id: str) -> Dict[str, object]:
-        _, gateway = _get_firewall(config_id)
-        try:
-            return gateway.flush_states()
-        except NotImplementedError:
-            raise HTTPException(
-                status_code=501,
-                detail="El firewall no permite resetear estados desde la API",
-            )
-        except httpx.HTTPStatusError as exc:
-            raise HTTPException(status_code=502, detail=str(exc))
 
     @app.post("/api/firewalls/{config_id}/setup")
     def setup_firewall(config_id: str) -> Dict[str, str]:

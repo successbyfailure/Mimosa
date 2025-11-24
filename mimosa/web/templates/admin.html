@@ -194,43 +194,6 @@
         </div>
         <label>Dominios trampa (uno por línea)</label>
         <textarea name="trap_hosts" rows="3" placeholder="admin.midominio.com&#10;vpn.midominio.com"></textarea>
-        <div class="card" style="margin-top:12px; background: rgba(255,255,255,.03); border:1px dashed rgba(255,255,255,.08);">
-          <div class="flex space" style="align-items:flex-start;">
-            <div>
-              <h4 style="margin:0;">Gestión de proxy reverso</h4>
-              <div class="muted">Actualmente soporta Nginx Proxy Manager vía API.</div>
-            </div>
-            <label style="display:flex; gap:8px; align-items:center;">
-              <input type="checkbox" name="reverse_proxy_enabled" style="width:auto;" />
-              Crear entradas automáticamente
-            </label>
-          </div>
-          <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px;">
-            <div>
-              <label>URL API</label>
-              <input name="reverse_proxy_url" placeholder="https://proxy.local" />
-            </div>
-            <div>
-              <label>Token API</label>
-              <input name="reverse_proxy_token" placeholder="Bearer..." />
-            </div>
-            <div>
-              <label>IP destino</label>
-              <input name="reverse_proxy_forward_ip" placeholder="127.0.0.1" />
-            </div>
-            <div>
-              <label>Puerto destino</label>
-              <input name="reverse_proxy_forward_port" type="number" min="1" max="65535" value="8081" />
-            </div>
-            <div>
-              <label>Esquema</label>
-              <select name="reverse_proxy_scheme">
-                <option value="http">HTTP</option>
-                <option value="https">HTTPS</option>
-              </select>
-            </div>
-          </div>
-        </div>
         <button type="submit" style="margin-top:12px;">Guardar configuración</button>
         <div id="proxytrap-message" class="muted"></div>
       </form>
@@ -409,31 +372,6 @@
     </div>
   </section>
 
-  <section class="card space">
-    <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
-      <div>
-        <h3 style="margin:0">Puertos NAT en WAN</h3>
-        <div class="muted">Listado de reglas de NAT activas hacia Mimosa en la interfaz WAN.</div>
-      </div>
-      <button class="secondary" onclick="loadFirewallServices()">Actualizar</button>
-    </div>
-    <div id="port-forward-message" class="muted" style="margin-bottom:8px;"></div>
-    <div style="max-height:260px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
-      <table>
-        <thead>
-          <tr>
-            <th>Puerto</th>
-            <th>Protocolo</th>
-            <th>Destino</th>
-            <th>Descripción</th>
-          </tr>
-        </thead>
-        <tbody id="fw-services-table">
-          <tr><td colspan="4" class="muted">Selecciona un firewall para revisar la NAT.</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
 </section>
 
 <section id="tab-offenses" class="tab-panel">
@@ -634,18 +572,6 @@
       </div>
     </div>
 
-    <div class="card" style="margin-top:16px;">
-      <div class="flex space" style="margin-bottom:8px; gap:10px; flex-wrap: wrap; align-items: center;">
-        <h3 style="margin:0">Regla de bloqueo en el firewall</h3>
-        <div class="flex" style="gap:8px; flex-wrap: wrap; align-items: center;">
-          <input id="block-rule-interface" placeholder="wan" style="max-width:120px;" />
-          <button class="secondary" onclick="loadBlockRuleStats()">Consultar</button>
-          <button class="secondary" onclick="flushFirewallStates()">Reset estados</button>
-        </div>
-      </div>
-      <div id="block-rule-message" class="muted"></div>
-      <div id="block-rule-stats" class="muted">Selecciona un firewall y pulsa Consultar para ver las estadísticas de la regla.</div>
-    </div>
   </section>
 </section>
 
@@ -836,7 +762,6 @@ function switchTab(tab) {
   if (tab === 'whitelist') loadWhitelist();
   if (tab === 'firewall') {
     loadFirewallAliases();
-    loadFirewallServices();
   }
   if (tab === 'config') {
     loadBlockingSettings();
@@ -952,13 +877,6 @@ function setProxyTrapForm(config) {
   form.response_type.value = config.response_type || '404';
   form.custom_html.value = config.custom_html || '';
   form.trap_hosts.value = (config.trap_hosts || []).join('\n');
-  const reverse = config.reverse_proxy || {};
-  form.reverse_proxy_enabled.checked = Boolean(reverse.enabled);
-  form.reverse_proxy_url.value = reverse.api_url || '';
-  form.reverse_proxy_token.value = reverse.api_token || '';
-  form.reverse_proxy_forward_ip.value = reverse.forward_ip || '';
-  form.reverse_proxy_forward_port.value = reverse.forward_port || 8081;
-  form.reverse_proxy_scheme.value = reverse.forward_scheme || 'http';
   proxytrapPolicies = (config.domain_policies && config.domain_policies.length)
     ? config.domain_policies
     : defaultProxytrapPolicies();
@@ -1189,15 +1107,6 @@ async function submitProxytrap(event) {
     .split(/\n|,/)
     .map(entry => entry.trim())
     .filter(Boolean);
-  payload.reverse_proxy = {
-    enabled: form.reverse_proxy_enabled.checked,
-    provider: 'npm',
-    api_url: payload.reverse_proxy_url || null,
-    api_token: payload.reverse_proxy_token || null,
-    forward_ip: payload.reverse_proxy_forward_ip || null,
-    forward_port: Number(payload.reverse_proxy_forward_port || payload.port),
-    forward_scheme: payload.reverse_proxy_scheme || 'http'
-  };
   if (payload.response_type !== 'custom') {
     payload.custom_html = null;
   }
@@ -1301,7 +1210,6 @@ async function loadFirewalls() {
   }
 
   renderBlockSelectors();
-  loadFirewallServices();
 }
 
 async function deleteFirewall(id) {
@@ -1569,153 +1477,6 @@ async function loadFirewallAliases() {
   }
 }
 
-function renderServiceTable(items, emptyText = 'Sin servicios conocidos.') {
-  const tbody = document.getElementById('fw-services-table');
-  if (!tbody) return;
-  tbody.innerHTML = '';
-  if (!items || !items.length) {
-    tbody.innerHTML = `<tr><td colspan="4" class="muted">${emptyText}</td></tr>`;
-    return;
-  }
-  items.forEach(entry => {
-    const row = document.createElement('tr');
-    row.innerHTML = `
-      <td>${entry.port ?? '-'}</td>
-      <td>${(entry.protocol || 'tcp').toUpperCase()}</td>
-      <td>${entry.target || '-'}</td>
-      <td>${entry.description || ''}</td>`;
-    tbody.appendChild(row);
-  });
-}
-
-async function loadFirewallServices() {
-  const message = document.getElementById('port-forward-message');
-  if (!selectedFirewallId) {
-    renderServiceTable([], 'Configura un firewall para revisar la NAT.');
-    if (message) {
-      message.textContent = 'Configura un firewall para revisar los servicios publicados.';
-      message.style.color = '';
-    }
-    return;
-  }
-  try {
-    const res = await fetch(`/api/firewalls/${selectedFirewallId}/services`);
-    if (!res.ok) {
-      renderServiceTable([], 'Sin servicios conocidos.');
-      const detail = await res.json().catch(() => null);
-      const text = detail?.detail || 'No se pudieron consultar los servicios.';
-      if (message) {
-        message.textContent = text;
-        message.style.color = '#fca5a5';
-      }
-      return;
-    }
-    const data = await res.json();
-    const wanServices = (data.items || []).filter(service => {
-      const iface = String(service.interface || 'wan').toLowerCase();
-      return iface === 'wan';
-    });
-    renderServiceTable(
-      wanServices,
-      'Sin reglas NAT registradas en la interfaz WAN.',
-    );
-    if (message) {
-      message.textContent = wanServices.length
-        ? 'Mostrando reglas de NAT activas en WAN.'
-        : 'Sin reglas NAT en WAN.';
-      message.style.color = '';
-    }
-  } catch (error) {
-    renderServiceTable([], 'Error al consultar los servicios.');
-    if (message) {
-      message.textContent = 'Error al cargar servicios.';
-      message.style.color = '#fca5a5';
-    }
-  }
-}
-
-function extractPortsFromRules(rules) {
-  if (!Array.isArray(rules)) return [];
-  const ports = new Set();
-  rules.forEach(rule => {
-    if (rule.port) ports.add(Number(rule.port));
-    if (Array.isArray(rule.ports)) rule.ports.forEach(p => ports.add(Number(p)));
-    if (rule.start && rule.end) {
-      const start = Number(rule.start);
-      const end = Number(rule.end);
-      const low = Math.min(start, end);
-      const high = Math.max(start, end);
-      for (let p = low; p <= high && p - low < 200; p += 1) {
-        ports.add(p);
-      }
-    }
-  });
-  return Array.from(ports).sort((a, b) => a - b);
-}
-
-function prefillPortsFromDetector() {
-  const input = document.querySelector('#port-forward-form input[name="ports"]');
-  if (!input) return;
-  const ports = extractPortsFromRules(portDetectorRules || []);
-  if (!ports.length) {
-    input.value = '';
-    const msg = document.getElementById('port-forward-message');
-    if (msg) msg.textContent = 'No hay reglas en Port Detector para extraer puertos.';
-    return;
-  }
-  input.value = ports.join(',');
-  const msg = document.getElementById('port-forward-message');
-  if (msg) msg.textContent = 'Puertos precargados desde Port Detector.';
-}
-
-async function submitPortForwards(event) {
-  event.preventDefault();
-  if (!selectedFirewallId) {
-    const msg = document.getElementById('port-forward-message');
-    if (msg) msg.textContent = 'Configura y selecciona un firewall antes de publicar puertos.';
-    return;
-  }
-  const form = event.target;
-  const payload = Object.fromEntries(new FormData(form));
-  const ports = (payload.ports || '')
-    .split(',')
-    .map(p => Number(p.trim()))
-    .filter(p => !Number.isNaN(p) && p > 0);
-  const message = document.getElementById('port-forward-message');
-  message.textContent = 'Publicando puertos...';
-  payload.target_ip = payload.target_ip || window.location.hostname || '127.0.0.1';
-  payload.ports = ports;
-  payload.interface = payload.interface || 'wan';
-  if (payload.description === '') delete payload.description;
-  try {
-    const res = await fetch(`/api/firewalls/${selectedFirewallId}/port_forwards`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    if (!res.ok) {
-      const detail = await res.json().catch(() => null);
-      message.textContent = detail?.detail || 'No se pudieron crear las reglas de NAT.';
-      message.style.color = '#fca5a5';
-      return;
-    }
-    const data = await res.json();
-    const result = data.result || {};
-    const created = (result.created || []).join(', ');
-    const conflicts = result.conflicts || [];
-    const already = (result.already_present || []).join(', ');
-    let summary = created ? `Creados: ${created}. ` : '';
-    if (already) summary += `Ya existían: ${already}. `;
-    if (conflicts.length) summary += `Conflictos: ${conflicts.map(c => c.port || '').join(', ')}`;
-    message.textContent = summary || 'Sin cambios.';
-    message.style.color = '#67e8f9';
-    loadFirewallServices();
-  } catch (error) {
-    message.textContent = 'Error al publicar puertos.';
-    message.style.color = '#fca5a5';
-  }
-}
-
 function updateBlockTableMessage(message) {
   const tbody = document.getElementById('block-table');
   tbody.innerHTML = `<tr><td colspan="2" class="muted">${message}</td></tr>`;
@@ -1724,7 +1485,6 @@ function updateBlockTableMessage(message) {
 async function refreshBlocks() {
   loadDatabaseBlocks();
   loadBlockHistory();
-  loadBlockRuleStats();
   if (!selectedFirewallId) {
     updateBlockTableMessage('Configura un firewall para ver las listas.');
     return;
@@ -1805,77 +1565,6 @@ async function loadBlockHistory() {
   }
 }
 
-function updateBlockRuleMessage(message, color = '') {
-  const msg = document.getElementById('block-rule-message');
-  msg.textContent = message;
-  msg.style.color = color;
-}
-
-async function loadBlockRuleStats() {
-  const statsEl = document.getElementById('block-rule-stats');
-  const interfaceInput = document.getElementById('block-rule-interface');
-  const iface = (interfaceInput?.value || 'wan').trim() || 'wan';
-  if (interfaceInput && !interfaceInput.value) interfaceInput.value = iface;
-  updateBlockRuleMessage('');
-
-  if (!selectedFirewallId) {
-    statsEl.textContent = 'Configura un firewall para consultar la regla.';
-    return;
-  }
-
-  statsEl.textContent = 'Consultando datos de la regla...';
-  try {
-    const res = await fetch(`/api/firewalls/${selectedFirewallId}/block_rule_stats?interface=${encodeURIComponent(iface)}`);
-    const data = await res.json();
-    if (!res.ok) {
-      updateBlockRuleMessage(data.detail || 'No se pudieron recuperar las estadísticas.', '#fca5a5');
-      statsEl.textContent = '';
-      return;
-    }
-    if (data.supported === false) {
-      updateBlockRuleMessage(data.message || 'Regla no soportada en este firewall.', '#fca5a5');
-      statsEl.textContent = '';
-      return;
-    }
-
-    const ruleLabel = data.rule || 'Regla no localizada';
-    const states = typeof data.states === 'number' ? data.states : 0;
-    const matches = data.matches ?? 0;
-    const uuid = data.uuid || 'Desconocido';
-
-    statsEl.innerHTML = `
-      <div><strong>Alias:</strong> ${data.alias || '-'} (${data.interface})</div>
-      <div><strong>Regla:</strong> ${ruleLabel}</div>
-      <div><strong>UUID:</strong> ${uuid}</div>
-      <div><strong>Estados activos:</strong> ${states}</div>
-      <div class="muted">Coincidencias encontradas: ${matches}</div>
-    `;
-  } catch (error) {
-    updateBlockRuleMessage('Error al consultar las estadísticas de la regla.', '#fca5a5');
-    statsEl.textContent = '';
-  }
-}
-
-async function flushFirewallStates() {
-  if (!selectedFirewallId) {
-    updateBlockRuleMessage('Selecciona un firewall antes de resetear estados.', '#fca5a5');
-    return;
-  }
-  updateBlockRuleMessage('Reseteando estados activos...');
-  try {
-    const res = await fetch(`/api/firewalls/${selectedFirewallId}/flush_states`, { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok) {
-      updateBlockRuleMessage(data.detail || 'No se pudieron limpiar los estados.', '#fca5a5');
-      return;
-    }
-    updateBlockRuleMessage(data.message || data.status || 'Estados reiniciados.', '#c0e2ff');
-    loadBlockRuleStats();
-  } catch (error) {
-    updateBlockRuleMessage('Error al resetear los estados.', '#fca5a5');
-  }
-}
-
 function handleFirewallChange(event) {
   selectedFirewallId = event.target.value;
   document.querySelectorAll('.block-fw-select').forEach(select => {
@@ -1884,7 +1573,6 @@ function handleFirewallChange(event) {
     }
   });
   refreshBlocks();
-  loadFirewallServices();
   loadFirewallAliases();
 }
 
