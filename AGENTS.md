@@ -25,6 +25,7 @@ Mimosa es un núcleo de defensa para homelabs que coordina bloqueos temporales c
 ## Documentación de APIs
 - pfSense (pfrest): https://pfrest.org/
 - OPNsense: https://docs.opnsense.org/development/api.html
+- Documentos de referencia locales para las APIs de pfSense/OPNsense: consulta `reference_docs/api-pfsense.md` y `reference_docs/api-opnsense.md`.
 
 ## Convenciones de contribución
 - Sigue el estilo Python del proyecto (módulos `mimosa/`); evita capturar excepciones en torno a imports.
