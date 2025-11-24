@@ -608,6 +608,27 @@ def create_app(
         temporary_config = FirewallConfig.new(**payload.model_dump())
         return check_firewall_status(temporary_config)
 
+    @app.get("/api/firewalls/{config_id}/block_rule_stats")
+    def firewall_block_rule_stats(config_id: str) -> Dict[str, object]:
+        _, gateway = _get_firewall(config_id)
+        try:
+            return gateway.block_rule_stats()
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Stats no soportadas para este firewall")
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @app.post("/api/firewalls/{config_id}/flush_states")
+    def firewall_flush_states(config_id: str) -> Dict[str, str]:
+        _, gateway = _get_firewall(config_id)
+        try:
+            gateway.flush_states()
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Flush no soportado para este firewall")
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"status": "ok"}
+
     @app.get("/api/firewalls/{config_id}/aliases")
     def list_firewall_aliases(config_id: str) -> Dict[str, object]:
         config, gateway = _get_firewall(config_id)

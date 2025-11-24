@@ -131,3 +131,13 @@ class FirewallGateway:
 
         raise NotImplementedError
 
+    def block_rule_stats(self) -> Dict[str, object]:
+        """Devuelve estadísticas de reglas de bloqueo en el firewall."""
+
+        raise NotImplementedError
+
+    def flush_states(self) -> None:
+        """Fuerza un flush de estados en el firewall remoto."""
+
+        raise NotImplementedError
+
