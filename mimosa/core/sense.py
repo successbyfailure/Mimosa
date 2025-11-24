@@ -656,7 +656,7 @@ class OPNsenseClient(_BaseSenseClient):
         payload = {"address": desired, "descr": "Mimosa port"}
         self._request(
             "POST",
-            f"/api/v1/firewall/alias/{alias_name}/address",
+            f"firewall/alias/{alias_name}/address",
             json=payload,
         )
         return True
@@ -670,7 +670,7 @@ class OPNsenseClient(_BaseSenseClient):
 
         self._request(
             "DELETE",
-            f"/api/v1/firewall/alias/{alias_name}/address/{desired}",
+            f"firewall/alias/{alias_name}/address/{desired}",
         )
         return True
 
@@ -689,7 +689,7 @@ class OPNsenseClient(_BaseSenseClient):
         payload = {"address": desired, "descr": "Mimosa port"}
         self._request(
             "POST",
-            f"/api/v1/firewall/alias/{alias_name}/address",
+            f"firewall/alias/{alias_name}/address",
             json=payload,
         )
         return True
@@ -703,7 +703,7 @@ class OPNsenseClient(_BaseSenseClient):
 
         self._request(
             "DELETE",
-            f"/api/v1/firewall/alias/{alias_name}/address/{desired}",
+            f"firewall/alias/{alias_name}/address/{desired}",
         )
         return True
 
@@ -723,10 +723,87 @@ class OPNsenseClient(_BaseSenseClient):
 class PFSenseClient(_BaseSenseClient):
     """Cliente HTTP para pfSense usando la API pfRest.
 
-    pfRest expone endpoints bajo ``/api/v1`` para gestionar alias.
-    Requiere un API key y secret configurados en el paquete pfRest,
-    enviados como cabeceras ``X-API-KEY`` y ``X-API-SECRET``.
+    pfRest expone endpoints bajo ``/api/v1`` para gestionar alias, aunque
+    algunas instalaciones publican la API bajo prefijos diferentes (p.ej.
+    ``/rest`` o ``/restapi/v1``). Este cliente detecta automáticamente el
+    prefijo válido cuando recibe un 404 y vuelve a intentar la petición con
+    las variantes conocidas.
+
+    Requiere un API key y secret configurados en el paquete pfRest, enviados
+    como cabeceras ``X-API-KEY`` y ``X-API-SECRET``.
     """
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        api_secret: str,
+        alias_name: str = "mimosa_blocklist",
+        *,
+        verify_ssl: bool = True,
+        timeout: float = 10.0,
+        client: Optional[httpx.Client] = None,
+        apply_changes: bool = True,
+    ) -> None:
+        self.api_prefix = "/api/v1"
+        self._api_prefix_candidates = ["/api/v1", "/rest", "/rest/api", "/rest/v1", "/restapi/v1"]
+        self._prefix_validated = False
+        super().__init__(
+            base_url,
+            api_key,
+            api_secret,
+            alias_name,
+            verify_ssl=verify_ssl,
+            timeout=timeout,
+            client=client,
+            apply_changes=apply_changes,
+        )
+
+    @staticmethod
+    def _normalize_prefix(prefix: str) -> str:
+        normalized = prefix.strip() or "/api/v1"
+        if not normalized.startswith("/"):
+            normalized = f"/{normalized}"
+        return normalized.rstrip("/")
+
+    def _path(self, route: str, *, prefix: str | None = None) -> str:
+        normalized_route = route if route.startswith("/") else f"/{route}"
+        normalized_prefix = self._normalize_prefix(prefix or self.api_prefix)
+        return f"{normalized_prefix}{normalized_route}"
+
+    def _request(self, method: str, path: str, **kwargs) -> httpx.Response:  # type: ignore[override]
+        route = path.lstrip("/")
+        prefixes = [self._normalize_prefix(p) for p in self._api_prefix_candidates]
+        if self.api_prefix not in prefixes:
+            prefixes.insert(0, self._normalize_prefix(self.api_prefix))
+
+        last_error: httpx.HTTPStatusError | None = None
+        for candidate in prefixes:
+            full_path = self._path(route, prefix=candidate)
+            try:
+                response = self._client.request(
+                    method, f"{self.base_url}{full_path}", **kwargs
+                )
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                should_retry = (
+                    not self._prefix_validated
+                    and exc.response.status_code == 404
+                    and candidate != prefixes[-1]
+                )
+                if not should_retry:
+                    raise
+                continue
+
+            if candidate != self.api_prefix:
+                self.api_prefix = candidate
+            self._prefix_validated = True
+            return response
+
+        if last_error:
+            raise last_error
+        raise RuntimeError("No se pudo completar la petición a pfSense")
 
     def _build_client(
         self,
@@ -745,7 +822,7 @@ class PFSenseClient(_BaseSenseClient):
 
     def _alias_exists(self, alias_name: str) -> bool:
         try:
-            self._request("GET", f"/api/v1/firewall/alias/{alias_name}")
+            self._request("GET", f"firewall/alias/{alias_name}")
             return True
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
@@ -759,28 +836,26 @@ class PFSenseClient(_BaseSenseClient):
             "descr": description,
             "addresses": [],
         }
-        self._request("POST", "/api/v1/firewall/alias", json=payload)
+        self._request("POST", "firewall/alias", json=payload)
 
     def _block_ip_backend(self, ip: str, reason: str) -> None:
         payload = {"address": ip, "descr": reason or ""}
         self._request(
-            "POST", f"/api/v1/firewall/alias/{self.alias_name}/address", json=payload
+            "POST", f"firewall/alias/{self.alias_name}/address", json=payload
         )
 
     def _unblock_ip_backend(self, ip: str) -> None:
-        self._request(
-            "DELETE", f"/api/v1/firewall/alias/{self.alias_name}/address/{ip}"
-        )
+        self._request("DELETE", f"firewall/alias/{self.alias_name}/address/{ip}")
 
     def _list_table_backend(self) -> List[str]:
         try:
-            response = self._request("GET", f"/api/v1/firewall/alias/{self.alias_name}")
+            response = self._request("GET", f"firewall/alias/{self.alias_name}")
         except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
             if exc.response.status_code == 404:
                 created = self._ensure_alias_exists()
                 if created:
                     self._apply_changes_if_enabled()
-                response = self._request("GET", f"/api/v1/firewall/alias/{self.alias_name}")
+                response = self._request("GET", f"firewall/alias/{self.alias_name}")
             else:
                 raise
         data = response.json()
@@ -794,7 +869,7 @@ class PFSenseClient(_BaseSenseClient):
 
     def _list_alias_values(self, alias_name: str) -> List[str]:
         try:
-            response = self._request("GET", f"/api/v1/firewall/alias/{alias_name}")
+            response = self._request("GET", f"firewall/alias/{alias_name}")
         except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
             if exc.response.status_code == 404:
                 return []
@@ -846,11 +921,11 @@ class PFSenseClient(_BaseSenseClient):
 
     @property
     def _status_endpoint(self) -> str:
-        return "/api/v1/status/system"
+        return "status/system"
 
     @property
     def _apply_endpoint(self) -> str:
-        return "/api/v1/diagnostics/filter/reload"
+        return "diagnostics/filter/reload"
 
     def check_connection(self) -> None:
         """Comprueba conectividad y detecta credenciales inválidas."""
@@ -865,7 +940,7 @@ class PFSenseClient(_BaseSenseClient):
             raise
 
     def _list_port_forwards(self) -> List[Dict[str, object]]:
-        response = self._request("GET", "/api/v1/firewall/nat/port_forward")
+        response = self._request("GET", "firewall/nat/port_forward")
         data = response.json()
         items = data.get("data") if isinstance(data, dict) else data
         if not isinstance(items, list):
@@ -914,7 +989,7 @@ class PFSenseClient(_BaseSenseClient):
             "description": description or f"Mimosa {protocol}:{port}",
             "natreflection": "enable",
         }
-        self._request("POST", "/api/v1/firewall/nat/port_forward", json=payload)
+        self._request("POST", "firewall/nat/port_forward", json=payload)
 
     def _delete_port_forward(
         self, *, port: int, protocol: str, interface: str
@@ -933,7 +1008,5 @@ class PFSenseClient(_BaseSenseClient):
         if not match or not match.get("id"):
             return False
 
-        self._request(
-            "DELETE", f"/api/v1/firewall/nat/port_forward/{match['id']}"
-        )
+        self._request("DELETE", f"firewall/nat/port_forward/{match['id']}")
         return True
