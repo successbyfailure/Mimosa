@@ -208,11 +208,17 @@ def check_firewall_status(config: FirewallConfig) -> Dict[str, str | bool]:
         "type": config.type,
         "online": False,
         "message": "",
+        "alias_ready": False,
+        "alias_created": False,
+        "applied_changes": False,
     }
     try:
-        gateway.check_connection()
-        status["online"] = True
-        status["message"] = "Conexión OK"
+        info = gateway.get_status()
+        status["online"] = bool(info.get("available"))
+        status["alias_ready"] = bool(info.get("alias_ready"))
+        status["alias_created"] = bool(info.get("alias_created"))
+        status["applied_changes"] = bool(info.get("applied_changes"))
+        status["message"] = "Conexión OK" if status["online"] else "No disponible"
     except Exception as exc:  # pragma: no cover - logging superficial
         status["online"] = False
         status["message"] = str(exc)

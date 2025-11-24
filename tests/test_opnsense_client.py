@@ -17,6 +17,11 @@ class OPNsenseClientTests(unittest.TestCase):
         self.fallback_after_delete_404 = False
 
         def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/api/core/firmware/info":
+                response = httpx.Response(200, json={"status": "ok"})
+                self.requests.append((request.method, request.url.path, response.status_code))
+                return response
+
             if request.url.path == f"/api/firewall/alias/searchItem":
                 rows = (
                     [{"name": self.alias_name, "uuid": "alias-uuid"}]
@@ -230,6 +235,15 @@ class OPNsenseClientTests(unittest.TestCase):
 
         apply_calls = [req for req in self.requests if req[1] == "/api/firewall/filter/apply"]
         self.assertEqual(len(apply_calls), 0)
+
+    def test_get_status_reports_alias_preparation(self) -> None:
+        status = self.firewall.get_status()
+
+        self.assertTrue(status.get("available"))
+        self.assertTrue(status.get("alias_ready"))
+        self.assertTrue(status.get("alias_created"))
+        self.assertTrue(status.get("applied_changes"))
+        self.assertIn(("POST", "/api/firewall/filter/apply", 200), self.requests)
 
     def test_live_opnsense_calls_use_environment(self) -> None:
         base_url = os.getenv("OPNSENSE_BASE_URL") or os.getenv("OPNSENSE_URL")
