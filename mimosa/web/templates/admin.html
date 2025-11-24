@@ -298,8 +298,8 @@
           <button type="submit">Guardar configuración</button>
         </form>
         <div id="portdetector-message" class="muted" style="margin-top:4px;"></div>
-        <div class="muted" style="margin-top:8px;">Configura reglas por puerto, lista o rango con severidades personalizadas.</div>
-        <form id="portdetector-rule-form" class="grid" style="grid-template-columns: 1fr 1fr 1fr auto; gap: 10px; align-items:end; margin-top:10px;">
+        <div class="muted" style="margin-top:8px;">Configura reglas por lista de puertos con severidades personalizadas.</div>
+        <form id="portdetector-rule-form" class="grid" style="grid-template-columns: 1fr 2fr 1fr auto; gap: 10px; align-items:end; margin-top:10px;">
           <div>
             <label>Protocolo</label>
             <select name="protocol">
@@ -307,24 +307,9 @@
               <option value="udp">UDP</option>
             </select>
           </div>
-          <div>
-            <label>Tipo</label>
-            <select name="mode" onchange="togglePortRange()">
-              <option value="port">Puerto</option>
-              <option value="list">Lista</option>
-              <option value="range">Rango</option>
-            </select>
-          </div>
           <div id="portdetector-port-wrapper">
-            <label>Puerto o lista (coma)</label>
-            <input name="ports" placeholder="22,80,443" />
-          </div>
-          <div id="portdetector-range-wrapper" style="display:none; grid-column: span 1;">
-            <label>Rango</label>
-            <div class="grid" style="grid-template-columns: 1fr 1fr; gap:6px;">
-              <input name="start" type="number" min="1" max="65535" placeholder="8000" />
-              <input name="end" type="number" min="1" max="65535" placeholder="8100" />
-            </div>
+            <label>Puertos (coma o espacio)</label>
+            <input name="ports" placeholder="22, 80, 443" />
           </div>
           <div>
             <label>Severidad</label>
@@ -809,9 +794,33 @@ function defaultProxytrapPolicies() {
 function defaultPortDetectorRules() {
   return [
     { protocol: 'tcp', ports: [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 993, 995, 3306, 5432, 6379, 8080], severity: 'alto' },
-    { protocol: 'tcp', start: 5900, end: 5903, severity: 'medio' },
+    { protocol: 'tcp', ports: [5900, 5901, 5902, 5903], severity: 'medio' },
     { protocol: 'udp', ports: [53, 123], severity: 'medio' },
   ];
+}
+
+function normalizePortRule(rule) {
+  const normalizedPorts = Array.isArray(rule.ports) ? rule.ports : [];
+  if (!normalizedPorts.length && rule.port) {
+    normalizedPorts.push(Number(rule.port));
+  }
+  if (!normalizedPorts.length && rule.start && rule.end) {
+    const start = Number(rule.start);
+    const end = Number(rule.end);
+    if (!Number.isNaN(start) && !Number.isNaN(end) && end >= start) {
+      for (let p = start; p <= end; p += 1) {
+        normalizedPorts.push(p);
+      }
+    }
+  }
+  const ports = [...new Set(normalizedPorts)]
+    .map(n => Number(n))
+    .filter(n => !Number.isNaN(n) && n > 0 && n <= 65535);
+  return {
+    protocol: rule.protocol || 'tcp',
+    severity: rule.severity || 'medio',
+    ports,
+  };
 }
 
 async function loadPlugins() {
@@ -900,7 +909,8 @@ function setPortDetectorForm(config) {
   const form = document.getElementById('portdetector-form');
   form.enabled.checked = Boolean(config.enabled);
   form.default_severity.value = config.default_severity || 'medio';
-  portDetectorRules = (config.rules && config.rules.length) ? config.rules : defaultPortDetectorRules();
+  const rules = (config.rules && config.rules.length) ? config.rules : defaultPortDetectorRules();
+  portDetectorRules = rules.map(normalizePortRule);
   renderPortDetectorRules();
   const warning = document.getElementById('portdetector-warning');
   if (warning) warning.style.display = form.enabled.checked ? 'none' : 'inline-flex';
@@ -915,9 +925,9 @@ function renderPortDetectorRules() {
     return;
   }
   portDetectorRules.forEach((rule, index) => {
-    const detail = rule.port ? `Puerto ${rule.port}`
-      : (rule.ports && rule.ports.length ? `Lista: ${rule.ports.join(', ')}`
-      : (rule.start && rule.end ? `Rango ${rule.start}-${rule.end}` : ''));
+    const detail = (rule.ports && rule.ports.length)
+      ? `Puertos: ${rule.ports.join(', ')}`
+      : 'Sin puertos';
     const row = document.createElement('tr');
     row.innerHTML = `
       <td>${rule.protocol || 'tcp'}</td>
@@ -931,45 +941,24 @@ function renderPortDetectorRules() {
   });
 }
 
-function togglePortRange() {
-  const form = document.getElementById('portdetector-rule-form');
-  const mode = form.mode.value;
-  const rangeWrapper = document.getElementById('portdetector-range-wrapper');
-  const portWrapper = document.getElementById('portdetector-port-wrapper');
-  const portsInput = form.ports;
-  const startInput = form.start;
-  const endInput = form.end;
-  if (mode === 'range') {
-    rangeWrapper.style.display = 'block';
-    portWrapper.style.display = 'none';
-    portsInput.value = '';
-  } else {
-    rangeWrapper.style.display = 'none';
-    portWrapper.style.display = 'block';
-    startInput.value = '';
-    endInput.value = '';
-  }
-}
-
 function submitPortDetectorRule(event) {
   event.preventDefault();
   const form = event.target;
   const payload = Object.fromEntries(new FormData(form));
+  const ports = (payload.ports || '')
+    .split(/[\s,]+/)
+    .map(p => Number(p.trim()))
+    .filter(n => !Number.isNaN(n) && n > 0);
   const rule = {
     protocol: payload.protocol || 'tcp',
     severity: payload.severity || 'medio',
+    ports,
   };
 
-  if (payload.mode === 'range') {
-    rule.start = Number(payload.start || 0);
-    rule.end = Number(payload.end || 0);
-  } else if (payload.mode === 'list') {
-    rule.ports = (payload.ports || '')
-      .split(',')
-      .map(p => Number(p.trim()))
-      .filter(n => !Number.isNaN(n) && n > 0);
-  } else {
-    rule.port = Number(payload.ports || 0);
+  if (!rule.ports.length) {
+    const msg = document.getElementById('portdetector-rule-message');
+    if (msg) msg.textContent = 'Añade al menos un puerto válido.';
+    return;
   }
 
   if (editingPortRuleIndex !== null) {
@@ -979,8 +968,6 @@ function submitPortDetectorRule(event) {
   }
   editingPortRuleIndex = null;
   form.reset();
-  form.mode.value = payload.mode || 'port';
-  togglePortRange();
   renderPortDetectorRules();
   const msg = document.getElementById('portdetector-rule-message');
   if (msg) msg.textContent = 'Regla guardada. Recuerda pulsar "Guardar configuración" para aplicar.';
@@ -992,19 +979,9 @@ function editPortDetectorRule(index) {
   const form = document.getElementById('portdetector-rule-form');
   form.protocol.value = rule.protocol || 'tcp';
   form.severity.value = rule.severity || 'medio';
-  if (rule.start && rule.end) {
-    form.mode.value = 'range';
-    form.start.value = rule.start;
-    form.end.value = rule.end;
-    form.ports.value = '';
-  } else if (rule.ports && rule.ports.length) {
-    form.mode.value = 'list';
-    form.ports.value = rule.ports.join(',');
-  } else {
-    form.mode.value = 'port';
-    form.ports.value = rule.port || '';
-  }
-  togglePortRange();
+  form.ports.value = (rule.ports && rule.ports.length)
+    ? rule.ports.join(', ')
+    : '';
   editingPortRuleIndex = index;
   const msg = document.getElementById('portdetector-rule-message');
   if (msg) msg.textContent = 'Editando regla. Guarda para mantener los cambios.';
@@ -2056,7 +2033,6 @@ document.getElementById('portdetector-rule-form').addEventListener('submit', sub
 document.querySelectorAll('.block-fw-select').forEach(select => {
   select.addEventListener('change', handleFirewallChange);
 });
-togglePortRange();
 editForm.addEventListener('submit', submitEdit);
 editModal.addEventListener('click', (event) => {
   if (event.target === editModal) {
