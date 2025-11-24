@@ -20,12 +20,9 @@
 
 <section id="tab-config" class="tab-panel active">
   <section class="card space">
-    <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
-      <div>
-        <h2 style="margin:0 0 12px">Gestor de bloqueos</h2>
-        <div class="muted">Configura la duración por defecto y la frecuencia de sincronización con el firewall.</div>
-      </div>
-      <span class="pill warn">Revisa que el firewall no caduca los bloqueos automáticamente</span>
+    <div style="margin-bottom:12px;">
+      <h2 style="margin:0 0 12px">Gestor de bloqueos</h2>
+      <div class="muted">Configura la duración por defecto y la frecuencia de sincronización con el firewall.</div>
     </div>
     <form id="blocking-settings" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
       <div>
@@ -111,7 +108,7 @@
     <div id="form-message" class="muted" style="margin-top:10px;"></div>
   </section>
 
-  <p class="muted" style="margin-top:-6px; margin-bottom:18px;">
+  <p class="muted" style="margin:8px 0 18px;">
     Cuando está activo <strong>Recargar reglas tras cambios</strong>, Mimosa invoca el endpoint de apply/reload del firewall
     después de crear alias y modificar entradas. Desactívalo solo en entornos de prueba para evitar aplicar cambios reales.
   </p>
@@ -139,73 +136,6 @@
         <tr><td colspan="6" class="muted">Cargando...</td></tr>
       </tbody>
     </table>
-  </section>
-
-  <section class="card space">
-    <div class="flex space" style="align-items:flex-end; gap:10px;">
-      <div>
-        <h3 style="margin:0">Servicios en producción</h3>
-        <div class="muted">Listado de reglas NAT/port-forward ya presentes en el firewall.</div>
-      </div>
-      <div style="display:flex; gap:8px; align-items:center;">
-        <select id="service-fw-select" class="block-fw-select" style="min-width:220px;"></select>
-        <button class="secondary" type="button" onclick="loadFirewallServices()">Actualizar</button>
-      </div>
-    </div>
-    <div style="overflow:auto; max-height:260px; margin-top:10px;">
-      <table>
-        <thead>
-          <tr>
-            <th>Puerto</th>
-            <th>Protocolo</th>
-            <th>Destino</th>
-            <th>Descripción</th>
-          </tr>
-        </thead>
-        <tbody id="fw-services-table">
-          <tr><td colspan="4" class="muted">Sin datos.</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="card space">
-    <div class="flex space" style="align-items:flex-start;">
-      <div>
-        <h3 style="margin:0">Publicar puertos hacia Mimosa</h3>
-        <div class="muted">Crea reglas de NAT en el firewall para reenviar los puertos declarados.</div>
-      </div>
-    </div>
-    <form id="port-forward-form" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:12px; align-items:end;" onsubmit="submitPortForwards(event)">
-      <div>
-        <label>Destino (IP Mimosa)</label>
-        <input name="target_ip" placeholder="127.0.0.1" />
-      </div>
-      <div>
-        <label>Protocolo</label>
-        <select name="protocol">
-          <option value="tcp" selected>TCP</option>
-          <option value="udp">UDP</option>
-        </select>
-      </div>
-      <div>
-        <label>Puertos (coma)</label>
-        <input name="ports" placeholder="8081,8443" />
-      </div>
-      <div>
-        <label>Descripción</label>
-        <input name="description" placeholder="Mimosa honeypots" />
-      </div>
-      <div>
-        <label>Interfaz</label>
-        <input name="interface" value="wan" />
-      </div>
-      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-        <button type="button" class="secondary" onclick="prefillPortsFromDetector()">Usar puertos Port Detector</button>
-        <button type="submit">Publicar puertos</button>
-      </div>
-    </form>
-    <div id="port-forward-message" class="muted" style="margin-top:8px;"></div>
   </section>
 </section>
 
