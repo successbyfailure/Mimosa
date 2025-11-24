@@ -468,7 +468,11 @@
         <h2 style="margin:0">Gestor de bloqueos</h2>
         <div class="muted">Consulta y modifica las listas de bloqueo locales y en el firewall.</div>
       </div>
-      <div class="flex" style="gap:8px;">
+      <div class="flex" style="gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+        <label style="display:flex; gap:8px; align-items:center; padding:8px 12px; border:1px solid rgba(255,255,255,.08); border-radius:10px; background: rgba(255,255,255,.02);">
+          <input type="checkbox" id="global-sync-toggle" checked style="width:auto;" />
+          <span>Enviar bloqueos al firewall</span>
+        </label>
         <select id="block-fw-select" class="block-fw-select" style="min-width:220px"></select>
         <button class="secondary" onclick="refreshBlocks()">Actualizar</button>
       </div>
@@ -509,10 +513,6 @@
             <label>Duración (min)</label>
             <input name="duration_minutes" type="number" min="0" placeholder="60" />
           </div>
-          <label style="display:flex; gap:8px; align-items:center;">
-            <input type="checkbox" name="sync_with_firewall" checked style="width:auto;" />
-            Enviar bloqueo al firewall
-          </label>
           <button type="submit">Añadir a la lista</button>
           <div id="block-message" class="muted"></div>
         </form>
@@ -737,6 +737,24 @@ let ipBlockChart = null;
 const editModal = document.getElementById('edit-modal');
 const editForm = document.getElementById('edit-form');
 document.getElementById('block-rule-interface').value = 'wan';
+const syncPreferenceKey = 'mimosa_sync_with_firewall';
+
+function getGlobalSyncPreference() {
+  const toggle = document.getElementById('global-sync-toggle');
+  return toggle ? !!toggle.checked : true;
+}
+
+function loadGlobalSyncPreference() {
+  const toggle = document.getElementById('global-sync-toggle');
+  if (!toggle) return;
+  const stored = localStorage.getItem(syncPreferenceKey);
+  if (stored !== null) {
+    toggle.checked = stored === 'true';
+  }
+  toggle.addEventListener('change', () => {
+    localStorage.setItem(syncPreferenceKey, toggle.checked);
+  });
+}
 
 function switchTab(tab) {
   document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
@@ -1676,8 +1694,7 @@ async function submitBlockForm(event, messageId) {
   event.preventDefault();
   const form = event.target;
   const payload = Object.fromEntries(new FormData(form));
-  const syncCheckbox = form.querySelector('input[name="sync_with_firewall"]');
-  payload.sync_with_firewall = syncCheckbox ? !!syncCheckbox.checked : true;
+  payload.sync_with_firewall = getGlobalSyncPreference();
   const message = document.getElementById(messageId);
   message.textContent = '';
   if (!selectedFirewallId) {
@@ -1828,7 +1845,7 @@ async function blockOffense(ip, description) {
   const payload = {
     ip,
     reason: description || 'Escalada manual desde ofensas',
-    sync_with_firewall: true
+    sync_with_firewall: getGlobalSyncPreference()
   };
   try {
     const res = await fetch(`/api/firewalls/${selectedFirewallId}/blocks`, {
@@ -2041,6 +2058,7 @@ editModal.addEventListener('click', (event) => {
 });
 
 // Cargas iniciales
+loadGlobalSyncPreference();
 loadBlockingSettings();
 loadFirewalls();
 loadDatabaseBlocks();
