@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 import httpx
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -523,9 +523,10 @@ def create_app(
         saved = rule_store.add(rule)
         return _serialize_rule(saved)
 
-    @app.delete("/api/rules/{rule_id}", status_code=204)
-    def delete_rule(rule_id: int) -> None:
+    @app.delete("/api/rules/{rule_id}", status_code=204, response_class=Response)
+    def delete_rule(rule_id: int) -> Response:
         rule_store.delete(rule_id)
+        return Response(status_code=204)
 
     @app.get("/api/ips")
     def list_ips(limit: int = 100) -> List[Dict[str, object]]:
@@ -575,9 +576,10 @@ def create_app(
             "created_at": entry.created_at.isoformat(),
         }
 
-    @app.delete("/api/whitelist/{entry_id}", status_code=204)
-    def delete_whitelist(entry_id: int) -> None:
+    @app.delete("/api/whitelist/{entry_id}", status_code=204, response_class=Response)
+    def delete_whitelist(entry_id: int) -> Response:
         offense_store.delete_whitelist(entry_id)
+        return Response(status_code=204)
 
     @app.get("/api/blocks")
     def list_database_blocks(include_expired: bool = False) -> List[Dict[str, object]]:
@@ -609,12 +611,13 @@ def create_app(
         gateway_cache.pop(config_id, None)
         return updated
 
-    @app.delete("/api/firewalls/{config_id}", status_code=204)
-    def delete_firewall(config_id: str) -> None:
+    @app.delete("/api/firewalls/{config_id}", status_code=204, response_class=Response)
+    def delete_firewall(config_id: str) -> Response:
         if not config_store.get(config_id):
             raise HTTPException(status_code=404, detail="Firewall no encontrado")
         config_store.delete(config_id)
         gateway_cache.pop(config_id, None)
+        return Response(status_code=204)
 
     @app.get("/api/firewalls/status")
     def firewall_status() -> List[Dict[str, str | bool]]:
@@ -726,8 +729,12 @@ def create_app(
             "sync_with_firewall": payload.sync_with_firewall,
         }
 
-    @app.delete("/api/firewalls/{config_id}/blocks/{ip}", status_code=204)
-    def delete_firewall_block(config_id: str, ip: str) -> None:
+    @app.delete(
+        "/api/firewalls/{config_id}/blocks/{ip}",
+        status_code=204,
+        response_class=Response,
+    )
+    def delete_firewall_block(config_id: str, ip: str) -> Response:
         _, gateway = _get_firewall(config_id)
         try:
             gateway.ensure_ready()
@@ -735,6 +742,7 @@ def create_app(
         except httpx.HTTPStatusError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         block_manager.remove(ip)
+        return Response(status_code=204)
 
     @app.post("/api/firewalls/{config_id}/setup")
     def setup_firewall(config_id: str) -> Dict[str, str]:
