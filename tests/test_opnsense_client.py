@@ -7,6 +7,12 @@ import httpx
 from mimosa.core.sense import OPNsenseClient
 
 
+def _as_bool(value: str | None, default: bool = True) -> bool:
+    if value is None:
+        return default
+    return value.lower() not in {"0", "false", "no"}
+
+
 class OPNsenseClientTests(unittest.TestCase):
     def setUp(self) -> None:
         self.alias_created = False
@@ -273,26 +279,15 @@ class OPNsenseClientTests(unittest.TestCase):
             firewall.unblock_ip(test_ip)
 
     def test_live_opnsense_calls_use_test_environment(self) -> None:
-        if os.getenv("TEST_FIREWALL_TYPE", "").lower() != "opnsense":
-            self.skipTest("Entorno de pruebas OPNsense no configurado")
-
-        base_url = os.getenv("TEST_FIREWALL_BASE_URL")
-        api_key = os.getenv("TEST_FIREWALL_API_KEY")
-        api_secret = os.getenv("TEST_FIREWALL_API_SECRET")
-        alias_name = os.getenv("TEST_FIREWALL_ALIAS_NAME", "mimosa_blocklist")
-        verify_ssl = os.getenv("TEST_FIREWALL_VERIFY_SSL", "true").lower() not in {
-            "0",
-            "false",
-            "no",
-        }
-        apply_changes = os.getenv("TEST_FIREWALL_APPLY_CHANGES", "false").lower() not in {
-            "0",
-            "false",
-            "no",
-        }
+        base_url = os.getenv("TEST_FIREWALL_OPNSENSE_BASE_URL")
+        api_key = os.getenv("TEST_FIREWALL_OPNSENSE_API_KEY")
+        api_secret = os.getenv("TEST_FIREWALL_OPNSENSE_API_SECRET")
+        alias_name = os.getenv("TEST_FIREWALL_OPNSENSE_ALIAS_NAME", "mimosa_blocklist")
+        verify_ssl = _as_bool(os.getenv("TEST_FIREWALL_OPNSENSE_VERIFY_SSL"), True)
+        apply_changes = _as_bool(os.getenv("TEST_FIREWALL_APPLY_CHANGES"), False)
         timeout_str = os.getenv("TEST_FIREWALL_TIMEOUT")
         timeout = float(timeout_str) if timeout_str else 10.0
-        test_ip = os.getenv("TEST_FIREWALL_TEST_IP", "198.51.100.251")
+        test_ip = os.getenv("TEST_FIREWALL_OPNSENSE_TEST_IP", "198.51.100.251")
 
         if not base_url or not api_key or not api_secret:
             self.skipTest("Entorno de pruebas OPNsense incompleto")

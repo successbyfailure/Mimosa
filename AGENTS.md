@@ -38,3 +38,10 @@ Mimosa es un núcleo de defensa para homelabs que coordina bloqueos temporales c
 ## Testing
 - Tests disponibles en `tests/`; ejecútalos con `pytest` cuando modifiques lógica.
 - Si añades endpoints o UI, indica cómo verificaste (comandos o capturas) en el PR.
+- Para activar pruebas reales contra firewalls, el entorno de CI puede exponer algunas variables. Las pruebas se ejecutan solo si
+  las variables del firewall correspondiente están presentes:
+  - OPNsense: `TEST_FIREWALL_OPNSENSE_BASE_URL`, `TEST_FIREWALL_OPNSENSE_API_KEY`, `TEST_FIREWALL_OPNSENSE_API_SECRET`,
+    `TEST_FIREWALL_OPNSENSE_ALIAS_NAME`, `TEST_FIREWALL_OPNSENSE_VERIFY_SSL`.
+  - pfSense: `TEST_FIREWALL_PFSENSE_BASE_URL`, `TEST_FIREWALL_PFSENSE_API_KEY`, `TEST_FIREWALL_PFSENSE_ALIAS_NAME`,
+    `TEST_FIREWALL_PFSENSE_VERIFY_SSL`.
+  - Ajustes comunes a ambos: `TEST_FIREWALL_APPLY_CHANGES` y `TEST_FIREWALL_TIMEOUT`.
