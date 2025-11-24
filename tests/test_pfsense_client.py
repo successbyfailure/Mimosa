@@ -143,6 +143,17 @@ class PFSenseClientTests(unittest.TestCase):
         apply_calls = [req for req in self.requests if req[1] == "/api/v1/diagnostics/filter/reload"]
         self.assertEqual(len(apply_calls), 0)
 
+    def test_get_status_reports_alias_creation(self) -> None:
+        self.alias_exists = False
+
+        status = self.firewall.get_status()
+
+        self.assertTrue(status.get("available"))
+        self.assertTrue(status.get("alias_ready"))
+        self.assertTrue(status.get("alias_created"))
+        self.assertTrue(status.get("applied_changes"))
+        self.assertTrue(self.alias_exists)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -68,6 +68,38 @@ class _BaseSenseClient(FirewallGateway):
 
         return self.list_table()
 
+    def apply_changes(self) -> None:
+        """Aplica/reload los cambios pendientes en el firewall remoto."""
+
+        self._request("POST", self._apply_endpoint)
+
+    def get_status(self) -> Dict[str, object]:
+        """Comprueba conectividad y prepara alias requeridos.
+
+        Devuelve un diccionario con detalles de disponibilidad y si se han
+        preparado recursos (alias) durante la llamada.
+        """
+
+        status: Dict[str, object] = {
+            "available": False,
+            "alias_ready": False,
+            "alias_created": False,
+            "applied_changes": False,
+        }
+
+        self.check_connection()
+        status["available"] = True
+
+        alias_created = self._ensure_alias_exists()
+        status["alias_ready"] = True
+        status["alias_created"] = alias_created
+
+        if alias_created and self._apply_changes:
+            self.apply_changes()
+            status["applied_changes"] = True
+
+        return status
+
     @property
     def _status_endpoint(self) -> str:
         """Endpoint usado para validar la conectividad del cliente."""
@@ -82,9 +114,7 @@ class _BaseSenseClient(FirewallGateway):
     def ensure_ready(self) -> None:
         """Intenta garantizar que el alias de bloqueos exista antes de usarlo."""
 
-        created = self._ensure_alias_exists()
-        if created:
-            self._apply_changes_if_enabled()
+        self.get_status()
 
     def create_alias(self, *, name: str, alias_type: str, description: str) -> None:
         """Crea un alias del tipo indicado."""
@@ -227,7 +257,7 @@ class _BaseSenseClient(FirewallGateway):
     def _apply_changes_if_enabled(self) -> None:
         if not self._apply_changes:
             return
-        self._request("POST", self._apply_endpoint)
+        self.apply_changes()
 
 
 class OPNsenseClient(_BaseSenseClient):

@@ -85,6 +85,17 @@ class CoreAPI:
 class FirewallGateway:
     """Interfaz mínima requerida por el núcleo para operar con el firewall."""
 
+    def apply_changes(self) -> None:
+        """Aplica los cambios pendientes en el firewall remoto."""
+
+        raise NotImplementedError
+
+    def get_status(self) -> dict:
+        """Devuelve información básica de disponibilidad y preparación."""
+
+        self.check_connection()
+        return {"available": True}
+
     def block_ip(self, ip: str, reason: str, duration_minutes: int | None = None) -> None:
         raise NotImplementedError
 
@@ -97,12 +108,12 @@ class FirewallGateway:
     def ensure_ready(self) -> None:
         """Prepara los recursos necesarios para operar (alias, tablas, etc.).
 
-        La implementación por defecto sólo verifica conectividad. Las
-        integraciones concretas pueden sobreescribir este método para crear
-        automáticamente la infraestructura necesaria.
+        La implementación por defecto reutiliza :meth:`get_status` para validar
+        conectividad. Integraciones concretas pueden sobreescribir este método
+        para crear automáticamente la infraestructura necesaria.
         """
 
-        self.check_connection()
+        self.get_status()
 
     def check_connection(self) -> None:
         """Verifica conectividad con el firewall remoto.

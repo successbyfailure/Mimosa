@@ -28,10 +28,17 @@ class DummyFirewall(FirewallGateway):
             self._blocked.remove(ip)
         print(f"[FIREWALL] Desbloqueando {ip}")
 
+    def apply_changes(self) -> None:
+        return None
+
     def check_connection(self) -> None:
         """Dummy siempre responde como disponible."""
 
         return None
+
+    def get_status(self) -> dict:
+        self.check_connection()
+        return {"available": True, "alias_ready": True}
 
     def ensure_ready(self) -> None:
         """No requiere preparación adicional en el modo dummy."""
@@ -111,6 +118,9 @@ class SSHIptablesFirewall(FirewallGateway):
         )
         self._execute(cmd)
 
+    def apply_changes(self) -> None:
+        return None
+
     def check_connection(self) -> None:
         self._execute("sudo iptables -L -n")
 
@@ -121,6 +131,11 @@ class SSHIptablesFirewall(FirewallGateway):
             f"sudo iptables -I INPUT 1 -j {self.chain}"
         )
         self._execute(setup)
+
+    def get_status(self) -> dict:
+        self.check_connection()
+        self.ensure_ready()
+        return {"available": True, "alias_ready": True}
 
     def add_port(
         self,
