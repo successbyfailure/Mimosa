@@ -146,52 +146,6 @@ class _BaseSenseClient(FirewallGateway):
 
         raise NotImplementedError
 
-    def add_port(
-        self,
-        *,
-        target_ip: str,
-        port: int,
-        protocol: str = "tcp",
-        description: str | None = None,
-        interface: str = "wan",
-    ) -> None:
-        self._create_port_forward(
-            port=port,
-            protocol=protocol,
-            target_ip=target_ip,
-            description=description,
-            interface=interface,
-        )
-
-        alias_changed = False
-        try:
-            alias_changed = self._add_port_to_alias(int(port), protocol=protocol)
-        except NotImplementedError:
-            alias_changed = False
-
-        if alias_changed or self._apply_changes:
-            self._apply_changes_if_enabled()
-
-    def remove_port(
-        self, port: int, *, protocol: str = "tcp", interface: str = "wan"
-    ) -> None:
-        removed_rule = False
-        try:
-            removed_rule = self._delete_port_forward(
-                port=int(port), protocol=protocol, interface=interface
-            )
-        except NotImplementedError:
-            removed_rule = False
-
-        alias_changed = False
-        try:
-            alias_changed = self._remove_port_from_alias(int(port), protocol=protocol)
-        except NotImplementedError:
-            alias_changed = False
-
-        if (removed_rule or alias_changed) and self._apply_changes:
-            self._apply_changes_if_enabled()
-
     def get_ports(self) -> Dict[str, List[int]]:
         ports_by_protocol: Dict[str, List[int]] = {}
         for protocol in ("tcp", "udp"):
@@ -210,9 +164,6 @@ class _BaseSenseClient(FirewallGateway):
             ports_by_protocol[protocol] = sorted(set(normalized))
 
         return ports_by_protocol
-
-    def list_services(self) -> List[Dict[str, object]]:
-        return self._list_port_forwards()
 
     def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         url = f"{self.base_url}{path}"
@@ -245,47 +196,6 @@ class _BaseSenseClient(FirewallGateway):
         Devuelve ``True`` si se ha solicitado la creación del alias
         (permitiendo lanzar un reload del firewall) o ``False`` si ya
         existía.
-        """
-
-        raise NotImplementedError
-
-    def _list_port_forwards(self) -> List[Dict[str, object]]:
-        """Devuelve las reglas de NAT/port-forward conocidas."""
-
-        raise NotImplementedError
-
-    def _create_port_forward(
-        self,
-        *,
-        port: int,
-        protocol: str,
-        target_ip: str,
-        description: str | None,
-        interface: str,
-    ) -> None:
-        """Crea una regla de NAT que apunte a Mimosa."""
-
-        raise NotImplementedError
-
-    def _delete_port_forward(
-        self, *, port: int, protocol: str, interface: str
-    ) -> bool:
-        """Elimina la regla de NAT asociada al puerto indicado."""
-
-        raise NotImplementedError
-
-    def _add_port_to_alias(self, port: int, *, protocol: str) -> bool:
-        """Añade un puerto al alias de Mimosa.
-
-        Devuelve ``True`` si se modificó el alias.
-        """
-
-        raise NotImplementedError
-
-    def _remove_port_from_alias(self, port: int, *, protocol: str) -> bool:
-        """Elimina un puerto del alias de Mimosa.
-
-        Devuelve ``True`` si se modificó el alias.
         """
 
         raise NotImplementedError
@@ -392,65 +302,6 @@ class OPNsenseClient(_BaseSenseClient):
                 json={"address": address},
             )
 
-    def block_rule_stats(self, *, interface: str = "wan") -> Dict[str, object]:
-        response = self._request(
-            "GET",
-            "/api/firewall/filter/search_rule",
-            params={"interface": interface, "show_all": "1"},
-        )
-        data = response.json()
-        rows = data.get("rows", []) if isinstance(data, dict) else []
-        matches: List[Dict[str, object]] = []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            haystack = " ".join(
-                str(value) for value in row.values() if value is not None
-            )
-            if self.alias_name in haystack:
-                matches.append(row)
-
-        if not matches:
-            return {"supported": True, "matches": 0, "states": 0, "rule": None, "uuid": None}
-
-        best = max(matches, key=lambda item: int(item.get("states") or 0))
-        return {
-            "supported": True,
-            "matches": len(matches),
-            "states": int(best.get("states") or 0),
-            "rule": best.get("descr") or best.get("tracker") or best.get("uuid"),
-            "uuid": best.get("uuid") or best.get("tracker"),
-        }
-
-    def _add_port_to_alias(self, port: int, *, protocol: str) -> bool:
-        desired = str(int(port))
-        alias_name = self._ports_alias_name_for(protocol)
-        current = set(self._list_alias_values(alias_name))
-        if desired in current:
-            return False
-
-        self._ensure_ports_alias_exists(protocol)
-        self._request(
-            "POST",
-            f"/api/firewall/alias_util/add/{alias_name}",
-            json={"address": desired},
-        )
-        return True
-
-    def _remove_port_from_alias(self, port: int, *, protocol: str) -> bool:
-        desired = str(int(port))
-        alias_name = self._ports_alias_name_for(protocol)
-        current = set(self._list_alias_values(alias_name))
-        if desired not in current:
-            return False
-
-        self._request(
-            "POST",
-            f"/api/firewall/alias_util/delete/{alias_name}",
-            json={"address": desired},
-        )
-        return True
-
     def _list_ports_alias(self, protocol: str) -> List[str | int]:
         alias_name = self._ports_alias_name_for(protocol)
         return self._list_alias_values(alias_name)
@@ -475,127 +326,6 @@ class OPNsenseClient(_BaseSenseClient):
         if isinstance(data, list):
             return [str(item.get("address", item)) if isinstance(item, dict) else str(item) for item in data if item]
         return []
-
-    def _list_port_forwards(self) -> List[Dict[str, object]]:
-        data = self._search_nat_rules()
-        rows = data.get("rows", []) if isinstance(data, dict) else []
-        services: List[Dict[str, object]] = []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            raw_port = (
-                row.get("dstbeginport")
-                or row.get("destination_port")
-                or row.get("destination_port_start")
-                or row.get("dstport")
-            )
-            if not raw_port:
-                continue
-            try:
-                port = int(str(raw_port).split(":")[0])
-            except ValueError:
-                continue
-            services.append(
-                {
-                    "id": row.get("uuid") or row.get("tracker") or row.get("id"),
-                    "description": row.get("descr") or row.get("description"),
-                    "port": port,
-                    "protocol": (row.get("protocol") or row.get("proto") or "tcp").lower(),
-                    "interface": row.get("interface") or row.get("if"),
-                    "target": row.get("target")
-                    or row.get("natip")
-                    or row.get("redirect_targetip"),
-                }
-            )
-        return services
-
-    def _search_nat_rules(self) -> Dict[str, object]:
-        """Recupera reglas NAT probando las variantes de endpoint conocidas."""
-
-        endpoints = [
-            # Confirmed in the upstream core API tree
-            "/api/firewall/filter/searchRule",
-            "/api/firewall/source_nat/searchRule",
-        ]
-
-        last_exc: httpx.HTTPStatusError | None = None
-        for endpoint in endpoints:
-            try:
-                response = self._request("GET", endpoint)
-                return response.json()
-            except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
-                last_exc = exc
-                if exc.response.status_code == 404:
-                    continue
-                raise
-
-        if last_exc:
-            raise last_exc
-
-        return {}
-
-    def _create_port_forward(
-        self,
-        *,
-        port: int,
-        protocol: str,
-        target_ip: str,
-        description: str | None,
-        interface: str,
-    ) -> None:
-        payload = {
-            "nat": {
-                "interface": interface,
-                "proto": protocol,
-                "src": {"any": "1"},
-                "dst": {"any": "1", "port": str(port)},
-                "redirect_targetip": target_ip,
-                "redirect_targetport": str(port),
-                "descr": description or f"Mimosa {protocol}:{port}",
-                "natreflection": "enable",
-                "top": "yes",
-            }
-        }
-        try:
-            self._request("POST", "/api/firewall/nat/addNAT", json=payload)
-        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
-            if exc.response.status_code == 404:
-                self._request("POST", "/api/firewall/nat/addPortForward", json=payload)
-            else:
-                raise
-
-    def _delete_port_forward(
-        self, *, port: int, protocol: str, interface: str
-    ) -> bool:
-        desired_protocol = protocol.lower()
-        match = next(
-            (
-                svc
-                for svc in self._list_port_forwards()
-                if svc.get("port") == int(port)
-                and svc.get("protocol") == desired_protocol
-                and (svc.get("interface") in {None, interface})
-            ),
-            None,
-        )
-        if not match or not match.get("id"):
-            return False
-
-        try:
-            self._request("POST", f"/api/firewall/nat/delNAT/{match['id']}")
-        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
-            if exc.response.status_code == 404:
-                self._request(
-                    "POST", f"/api/firewall/nat/delPortForward/{match['id']}"
-                )
-            else:
-                raise
-        return True
-
-    def flush_states(self) -> Dict[str, object]:
-        response = self._request("POST", "/api/core/diagnostics/flushState")
-        payload = response.json()
-        return payload if isinstance(payload, dict) else {"status": "ok"}
 
     def _list_table_backend(self) -> List[str]:
         try:
@@ -642,68 +372,6 @@ class OPNsenseClient(_BaseSenseClient):
             name=alias_name,
             alias_type="port",
             description="Mimosa published ports",
-        )
-        return True
-
-    def _add_port_to_alias(self, port: int, *, protocol: str) -> bool:
-        desired = str(int(port))
-        alias_name = self._ports_alias_name_for(protocol)
-        current = set(self._list_alias_values(alias_name))
-        if desired in current:
-            return False
-
-        self._ensure_ports_alias_exists(protocol)
-        payload = {"address": desired, "descr": "Mimosa port"}
-        self._request(
-            "POST",
-            f"firewall/alias/{alias_name}/address",
-            json=payload,
-        )
-        return True
-
-    def _remove_port_from_alias(self, port: int, *, protocol: str) -> bool:
-        desired = str(int(port))
-        alias_name = self._ports_alias_name_for(protocol)
-        current = set(self._list_alias_values(alias_name))
-        if desired not in current:
-            return False
-
-        self._request(
-            "DELETE",
-            f"firewall/alias/{alias_name}/address/{desired}",
-        )
-        return True
-
-    def _list_ports_alias(self, protocol: str) -> List[str | int]:
-        alias_name = self._ports_alias_name_for(protocol)
-        return self._list_alias_values(alias_name)
-
-    def _add_port_to_alias(self, port: int, *, protocol: str) -> bool:
-        desired = str(int(port))
-        alias_name = self._ports_alias_name_for(protocol)
-        current = set(self._list_alias_values(alias_name))
-        if desired in current:
-            return False
-
-        self._ensure_ports_alias_exists(protocol)
-        payload = {"address": desired, "descr": "Mimosa port"}
-        self._request(
-            "POST",
-            f"firewall/alias/{alias_name}/address",
-            json=payload,
-        )
-        return True
-
-    def _remove_port_from_alias(self, port: int, *, protocol: str) -> bool:
-        desired = str(int(port))
-        alias_name = self._ports_alias_name_for(protocol)
-        current = set(self._list_alias_values(alias_name))
-        if desired not in current:
-            return False
-
-        self._request(
-            "DELETE",
-            f"firewall/alias/{alias_name}/address/{desired}",
         )
         return True
 
@@ -938,75 +606,3 @@ class PFSenseClient(_BaseSenseClient):
                     "Las credenciales de pfRest no son válidas o carecen de permisos"
                 ) from exc
             raise
-
-    def _list_port_forwards(self) -> List[Dict[str, object]]:
-        response = self._request("GET", "firewall/nat/port_forward")
-        data = response.json()
-        items = data.get("data") if isinstance(data, dict) else data
-        if not isinstance(items, list):
-            return []
-        services: List[Dict[str, object]] = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            raw_port = item.get("destination_port") or item.get("dstport")
-            try:
-                port = int(str(raw_port).split(":")[0]) if raw_port else None
-            except ValueError:
-                port = None
-            if not port:
-                continue
-            services.append(
-                {
-                    "id": item.get("tracker") or item.get("id"),
-                    "description": item.get("descr") or item.get("description"),
-                    "port": port,
-                    "protocol": (item.get("protocol") or item.get("proto") or "tcp").lower(),
-                    "interface": item.get("interface"),
-                    "target": item.get("target")
-                    or item.get("local-port")
-                    or item.get("redirect_targetip"),
-                }
-            )
-        return services
-
-    def _create_port_forward(
-        self,
-        *,
-        port: int,
-        protocol: str,
-        target_ip: str,
-        description: str | None,
-        interface: str,
-    ) -> None:
-        payload = {
-            "interface": interface,
-            "protocol": protocol,
-            "source": {"address": "any"},
-            "destination": {"address": "any", "port": str(port)},
-            "target": target_ip,
-            "local-port": str(port),
-            "description": description or f"Mimosa {protocol}:{port}",
-            "natreflection": "enable",
-        }
-        self._request("POST", "firewall/nat/port_forward", json=payload)
-
-    def _delete_port_forward(
-        self, *, port: int, protocol: str, interface: str
-    ) -> bool:
-        desired_protocol = protocol.lower()
-        match = next(
-            (
-                svc
-                for svc in self._list_port_forwards()
-                if svc.get("port") == int(port)
-                and svc.get("protocol") == desired_protocol
-                and (svc.get("interface") in {None, interface})
-            ),
-            None,
-        )
-        if not match or not match.get("id"):
-            return False
-
-        self._request("DELETE", f"firewall/nat/port_forward/{match['id']}")
-        return True

@@ -126,46 +126,8 @@ class FirewallGateway:
 
         self.list_blocks()
 
-    def block_rule_stats(self, *, interface: str = "wan") -> dict:
-        """Devuelve estadísticas de la regla de bloqueo principal."""
-
-        raise NotImplementedError
-
-    def flush_states(self) -> dict:
-        """Resetea los estados activos del firewall."""
-
-        raise NotImplementedError
-
-    def add_port(
-        self,
-        *,
-        target_ip: str,
-        port: int,
-        protocol: str = "tcp",
-        description: str | None = None,
-        interface: str = "wan",
-    ) -> None:
-        """Publica un puerto hacia el destino indicado."""
-
-        raise NotImplementedError
-
-    def remove_port(
-        self,
-        port: int,
-        *,
-        protocol: str = "tcp",
-        interface: str = "wan",
-    ) -> None:
-        """Retira un puerto previamente publicado."""
-
-        raise NotImplementedError
-
     def get_ports(self) -> Dict[str, List[int]]:
         """Devuelve el contenido de los alias de puertos publicados."""
 
         raise NotImplementedError
 
-    def list_services(self) -> List[dict]:
-        """Lista reglas NAT/servicios existentes."""
-
-        raise NotImplementedError
