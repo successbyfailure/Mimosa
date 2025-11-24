@@ -141,6 +141,34 @@ class PFSenseClientTests(unittest.TestCase):
 
         client.close()
 
+    def test_check_connection_falls_back_to_rest_prefix_on_404(self) -> None:
+        seen: list[tuple[str, int]] = []
+
+        def rest_handler(request: httpx.Request) -> httpx.Response:
+            seen.append((request.url.path, request.method))
+            if request.url.path == "/api/v1/status/system":
+                return httpx.Response(404, json={"error": "missing"})
+            if request.url.path == "/rest/status/system":
+                return httpx.Response(200, json={"status": "ok"})
+            return httpx.Response(500, json={"error": "unexpected"})
+
+        client = httpx.Client(
+            transport=httpx.MockTransport(rest_handler), base_url="http://fw"
+        )
+        firewall = PFSenseClient(
+            base_url="http://fw",
+            api_key="apikey",
+            api_secret="apisecret",
+            alias_name="mimosa_blocklist",
+            client=client,
+        )
+
+        firewall.check_connection()
+        client.close()
+
+        self.assertIn(("/api/v1/status/system", "GET"), seen)
+        self.assertIn(("/rest/status/system", "GET"), seen)
+
     def test_block_and_unblock_trigger_reload(self) -> None:
         self.firewall.block_ip("203.0.113.20")
         self.firewall.unblock_ip("203.0.113.20")
