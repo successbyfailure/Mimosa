@@ -22,6 +22,7 @@ Ejemplo minimal para ejecutarlo en la misma red/stack que NPM:
 ```yaml
 services:
   mimosanpm-agent:
+    image: ghcr.io/successbyfailure/mimosanpm-agent:latest
     build: .
     restart: unless-stopped
     env_file: .env
