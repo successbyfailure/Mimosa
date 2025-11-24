@@ -549,14 +549,9 @@ def create_app(
     @app.post("/api/firewalls/{config_id}/port_forwards")
     def create_port_forwards(config_id: str, payload: PortForwardInput) -> Dict[str, object]:
         _, gateway = _get_firewall(config_id)
+        normalized_ports = sorted({int(port) for port in payload.ports if port})
         try:
-            result = gateway.ensure_port_forwards(
-                target_ip=payload.target_ip,
-                ports=payload.ports,
-                protocol=payload.protocol,
-                description=payload.description,
-                interface=payload.interface,
-            )
+            services = gateway.list_services()
         except NotImplementedError:
             raise HTTPException(
                 status_code=501,
@@ -564,7 +559,51 @@ def create_app(
             )
         except httpx.HTTPStatusError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
-        return {"result": result}
+
+        conflicts: List[Dict[str, object]] = []
+        already_present: List[int] = []
+        created: List[int] = []
+
+        for port in normalized_ports:
+            match = next(
+                (
+                    svc
+                    for svc in services
+                    if svc.get("port") == port and svc.get("protocol") == payload.protocol
+                ),
+                None,
+            )
+            if match and match.get("target") == payload.target_ip:
+                already_present.append(port)
+                continue
+            if match and match.get("target") != payload.target_ip:
+                conflicts.append(match)
+                continue
+
+            try:
+                gateway.add_port(
+                    target_ip=payload.target_ip,
+                    port=port,
+                    protocol=payload.protocol,
+                    description=payload.description,
+                    interface=payload.interface,
+                )
+                created.append(port)
+            except NotImplementedError:
+                raise HTTPException(
+                    status_code=501,
+                    detail="Este firewall no soporta gestión de NAT",
+                )
+            except httpx.HTTPStatusError as exc:
+                raise HTTPException(status_code=502, detail=str(exc))
+
+        return {
+            "result": {
+                "created": created,
+                "conflicts": conflicts,
+                "already_present": already_present,
+            }
+        }
 
     @app.get("/api/firewalls/{config_id}/blocks")
     def list_firewall_blocks(config_id: str) -> Dict[str, object]:

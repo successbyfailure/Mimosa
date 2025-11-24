@@ -125,16 +125,32 @@ class FirewallGateway:
 
         raise NotImplementedError
 
-    def ensure_port_forwards(
+    def add_port(
         self,
         *,
         target_ip: str,
-        ports: List[int],
+        port: int,
         protocol: str = "tcp",
         description: str | None = None,
         interface: str = "wan",
-    ) -> dict:
-        """Publica puertos hacia un destino concreto."""
+    ) -> None:
+        """Publica un puerto hacia el destino indicado."""
+
+        raise NotImplementedError
+
+    def remove_port(
+        self,
+        port: int,
+        *,
+        protocol: str = "tcp",
+        interface: str = "wan",
+    ) -> None:
+        """Retira un puerto previamente publicado."""
+
+        raise NotImplementedError
+
+    def get_ports(self) -> List[int]:
+        """Devuelve el contenido del alias de puertos publicados."""
 
         raise NotImplementedError
 
