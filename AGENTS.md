@@ -22,6 +22,10 @@ Mimosa es un núcleo de defensa para homelabs que coordina bloqueos temporales c
 - Las credenciales de pfSense/OPNsense se leen del entorno (ver `env.example`).
 - pfSense se comprueba vía `/api/v1/status/system`; si responde 401/403, revisa permisos o claves.
 
+## Documentación de APIs
+- pfSense (pfrest): https://pfrest.org/
+- OPNsense: https://docs.opnsense.org/development/api.html
+
 ## Convenciones de contribución
 - Sigue el estilo Python del proyecto (módulos `mimosa/`); evita capturar excepciones en torno a imports.
 - Commits: mensajes en modo imperativo y conciso. Incluye pruebas ejecutadas en la descripción del PR.
