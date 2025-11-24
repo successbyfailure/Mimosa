@@ -13,6 +13,14 @@ Mimosa esta pensado para correr en una mv detras de un firewall pfSense o OpnSen
  - Reverse proxy trap
    El proxy reverso de la red le envia a mimosa las conexiones a dominos no registrados como dominios de produccion. Cuando una ip intenta acceder a algun dominio tipo admin.midominio se genera una ofensa.
 
+### MimosaNPM
+Agente ligero pensado para correr en la misma pila Docker que Nginx Proxy Manager, con acceso al volumen de logs y a la API. El agente analiza peticiones a dominios inexistentes y envía alertas a Mimosa vía HTTP/HTTPS:
+
+- Configura el plugin y el secreto compartido desde `/admin` en la tarjeta MimosaNPM.
+- Envía un `POST` a `/api/plugins/mimosanpm/ingest` con cabecera `X-Mimosa-Token` y un cuerpo JSON con `alerts` (ip origen, host solicitado, ruta, user-agent y estado opcional).
+- Mimosa registra las ofensas y ejecuta las reglas configuradas para aplicar bloqueos temporales si procede.
+- El agente remoto vive en `mimosanpm-agent/` con su propio `docker-compose.yml` y `env.example` para desplegarlo junto a NPM.
+
 ## Dasboard de estadisticas:
 Mimosa tiene un servidor web para servir un dashboard con estadisticas de ofensas y bloqueos
 

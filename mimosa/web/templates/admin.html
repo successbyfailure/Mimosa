@@ -153,7 +153,7 @@
   </section>
 
   <div class="grid" style="grid-template-columns: 1.25fr 1fr; gap: 18px; align-items:start;">
-    <div class="grid" style="grid-template-rows: auto auto auto; gap: 18px;">
+    <div class="grid" style="grid-template-rows: auto auto auto auto; gap: 18px;">
       <form id="proxytrap-form" class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
         <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
           <div>
@@ -300,6 +300,45 @@
           </table>
         </div>
       </div>
+
+      <form id="mimosanpm-form" class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+        <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
+          <div>
+            <h3 style="margin-top:0">MimosaNPM</h3>
+            <div class="muted">Agente remoto para Nginx Proxy Manager.</div>
+          </div>
+          <span class="pill warn" style="display:none;" id="mimosanpm-warning">Deshabilitado</span>
+        </div>
+        <p class="muted" style="margin-top:4px;">Despliega el agente MimosaNPM junto a NPM (acceso API + logs) y envía alertas HTTP/S hacia este endpoint.</p>
+        <label style="display:flex; gap:8px; align-items:center;">
+          <input type="checkbox" name="enabled" style="width:auto;" />
+          Habilitar recepción de alertas MimosaNPM
+        </label>
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px; align-items:end;">
+          <div>
+            <label>Severidad por defecto</label>
+            <select name="default_severity">
+              <option value="bajo">Bajo</option>
+              <option value="medio">Medio</option>
+              <option value="alto" selected>Alto</option>
+            </select>
+          </div>
+          <div>
+            <label>Secreto compartido (X-Mimosa-Token)</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input name="shared_secret" placeholder="Secreto para el agente" />
+              <input type="hidden" name="rotate_secret" value="false" />
+              <button type="button" class="secondary" onclick="rotateMimosaNpmSecret()">Rotar</button>
+            </div>
+          </div>
+          <div>
+            <label>Endpoint de ingestión</label>
+            <input id="mimosanpm-endpoint" readonly value="" />
+          </div>
+        </div>
+        <button type="submit" style="margin-top:12px;">Guardar configuración</button>
+        <div id="mimosanpm-message" class="muted"></div>
+      </form>
     </div>
 
     <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
@@ -864,6 +903,10 @@ async function loadPlugins() {
   if (portdetector && portdetector.config) {
     setPortDetectorForm(portdetector.config);
   }
+  const mimosanpm = data.find(p => p.name === 'mimosanpm');
+  if (mimosanpm && mimosanpm.config) {
+    setMimosaNpmForm(mimosanpm.config);
+  }
   loadProxyTrapStats();
 }
 
@@ -922,6 +965,36 @@ function setPortDetectorForm(config) {
   renderPortDetectorRules();
   const warning = document.getElementById('portdetector-warning');
   if (warning) warning.style.display = form.enabled.checked ? 'none' : 'inline-flex';
+}
+
+function setMimosaNpmForm(config) {
+  const form = document.getElementById('mimosanpm-form');
+  if (!form) return;
+  form.enabled.checked = Boolean(config.enabled);
+  form.default_severity.value = config.default_severity || 'alto';
+  form.shared_secret.value = config.shared_secret || '';
+  form.rotate_secret.value = 'false';
+  const warning = document.getElementById('mimosanpm-warning');
+  if (warning) warning.style.display = form.enabled.checked ? 'none' : 'inline-flex';
+  updateMimosaNpmEndpoint();
+}
+
+function updateMimosaNpmEndpoint() {
+  const input = document.getElementById('mimosanpm-endpoint');
+  if (!input) return;
+  input.value = `${window.location.origin}/api/plugins/mimosanpm/ingest`;
+}
+
+function rotateMimosaNpmSecret() {
+  const form = document.getElementById('mimosanpm-form');
+  if (!form) return;
+  form.rotate_secret.value = 'true';
+  form.shared_secret.value = '';
+  const msg = document.getElementById('mimosanpm-message');
+  if (msg) {
+    msg.textContent = 'El secreto se regenerará al guardar.';
+    msg.style.color = '#fbbf24';
+  }
 }
 
 function renderPortDetectorRules() {
@@ -1123,6 +1196,46 @@ async function submitProxytrap(event) {
   } catch (error) {
     message.textContent = 'Error al guardar la configuración.';
     message.style.color = '#fca5a5';
+  }
+}
+
+async function submitMimosaNpm(event) {
+  event.preventDefault();
+  const form = event.target;
+  const payload = Object.fromEntries(new FormData(form));
+  payload.enabled = form.enabled.checked;
+  payload.rotate_secret = payload.rotate_secret === 'true';
+  const message = document.getElementById('mimosanpm-message');
+  if (message) {
+    message.textContent = 'Guardando configuración...';
+    message.style.color = '';
+  }
+  try {
+    const res = await fetch('/api/plugins/mimosanpm', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (message) {
+        message.textContent = payload.enabled ? 'MimosaNPM activo.' : 'MimosaNPM deshabilitado.';
+        message.style.color = '#67e8f9';
+      }
+      setMimosaNpmForm(data);
+      loadPlugins();
+    } else {
+      const detail = await res.json().catch(() => null);
+      if (message) {
+        message.textContent = detail?.detail || 'No se pudo guardar la configuración.';
+        message.style.color = '#fca5a5';
+      }
+    }
+  } catch (error) {
+    if (message) {
+      message.textContent = 'Error al guardar la configuración.';
+      message.style.color = '#fca5a5';
+    }
   }
 }
 
@@ -1926,6 +2039,7 @@ document.getElementById('proxytrap-form').addEventListener('submit', submitProxy
 document.getElementById('proxytrap-policy-form').addEventListener('submit', submitProxytrapPolicy);
 document.getElementById('portdetector-form').addEventListener('submit', submitPortDetector);
 document.getElementById('portdetector-rule-form').addEventListener('submit', submitPortDetectorRule);
+document.getElementById('mimosanpm-form').addEventListener('submit', submitMimosaNpm);
 document.querySelectorAll('.block-fw-select').forEach(select => {
   select.addEventListener('change', handleFirewallChange);
 });
