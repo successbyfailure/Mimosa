@@ -408,6 +408,32 @@
       </div>
     </div>
   </section>
+
+  <section class="card space">
+    <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
+      <div>
+        <h3 style="margin:0">Puertos NAT en WAN</h3>
+        <div class="muted">Listado de reglas de NAT activas hacia Mimosa en la interfaz WAN.</div>
+      </div>
+      <button class="secondary" onclick="loadFirewallServices()">Actualizar</button>
+    </div>
+    <div id="port-forward-message" class="muted" style="margin-bottom:8px;"></div>
+    <div style="max-height:260px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
+      <table>
+        <thead>
+          <tr>
+            <th>Puerto</th>
+            <th>Protocolo</th>
+            <th>Destino</th>
+            <th>Descripción</th>
+          </tr>
+        </thead>
+        <tbody id="fw-services-table">
+          <tr><td colspan="4" class="muted">Selecciona un firewall para revisar la NAT.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
 </section>
 
 <section id="tab-offenses" class="tab-panel">
@@ -808,7 +834,10 @@ function switchTab(tab) {
   if (tab === 'offenses') { loadOffenses(); loadRules(); }
   if (tab === 'ips') loadIps();
   if (tab === 'whitelist') loadWhitelist();
-  if (tab === 'firewall') loadFirewallAliases();
+  if (tab === 'firewall') {
+    loadFirewallAliases();
+    loadFirewallServices();
+  }
   if (tab === 'config') {
     loadBlockingSettings();
     loadFirewalls();
@@ -1512,12 +1541,12 @@ async function loadFirewallAliases() {
   }
 }
 
-function renderServiceTable(items) {
+function renderServiceTable(items, emptyText = 'Sin servicios conocidos.') {
   const tbody = document.getElementById('fw-services-table');
   if (!tbody) return;
   tbody.innerHTML = '';
   if (!items || !items.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="muted">Sin servicios conocidos.</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="4" class="muted">${emptyText}</td></tr>`;
     return;
   }
   items.forEach(entry => {
@@ -1534,25 +1563,46 @@ function renderServiceTable(items) {
 async function loadFirewallServices() {
   const message = document.getElementById('port-forward-message');
   if (!selectedFirewallId) {
-    renderServiceTable([]);
-    if (message) message.textContent = 'Configura un firewall para revisar los servicios publicados.';
+    renderServiceTable([], 'Configura un firewall para revisar la NAT.');
+    if (message) {
+      message.textContent = 'Configura un firewall para revisar los servicios publicados.';
+      message.style.color = '';
+    }
     return;
   }
   try {
     const res = await fetch(`/api/firewalls/${selectedFirewallId}/services`);
     if (!res.ok) {
-      renderServiceTable([]);
+      renderServiceTable([], 'Sin servicios conocidos.');
       const detail = await res.json().catch(() => null);
       const text = detail?.detail || 'No se pudieron consultar los servicios.';
-      if (message) message.textContent = text;
+      if (message) {
+        message.textContent = text;
+        message.style.color = '#fca5a5';
+      }
       return;
     }
     const data = await res.json();
-    renderServiceTable(data.items || []);
-    if (message) message.textContent = '';
+    const wanServices = (data.items || []).filter(service => {
+      const iface = String(service.interface || 'wan').toLowerCase();
+      return iface === 'wan';
+    });
+    renderServiceTable(
+      wanServices,
+      'Sin reglas NAT registradas en la interfaz WAN.',
+    );
+    if (message) {
+      message.textContent = wanServices.length
+        ? 'Mostrando reglas de NAT activas en WAN.'
+        : 'Sin reglas NAT en WAN.';
+      message.style.color = '';
+    }
   } catch (error) {
-    renderServiceTable([]);
-    if (message) message.textContent = 'Error al cargar servicios.';
+    renderServiceTable([], 'Error al consultar los servicios.');
+    if (message) {
+      message.textContent = 'Error al cargar servicios.';
+      message.style.color = '#fca5a5';
+    }
   }
 }
 
