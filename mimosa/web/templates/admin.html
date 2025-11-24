@@ -192,8 +192,6 @@
           <label>HTML personalizado</label>
           <textarea name="custom_html" rows="4" placeholder="&lt;h1&gt;No permitido&lt;/h1&gt;"></textarea>
         </div>
-        <label>Dominios trampa (uno por línea)</label>
-        <textarea name="trap_hosts" rows="3" placeholder="admin.midominio.com&#10;vpn.midominio.com"></textarea>
         <button type="submit" style="margin-top:12px;">Guardar configuración</button>
         <div id="proxytrap-message" class="muted"></div>
       </form>
@@ -876,7 +874,6 @@ function setProxyTrapForm(config) {
   form.default_severity.value = config.default_severity || 'alto';
   form.response_type.value = config.response_type || '404';
   form.custom_html.value = config.custom_html || '';
-  form.trap_hosts.value = (config.trap_hosts || []).join('\n');
   proxytrapPolicies = (config.domain_policies && config.domain_policies.length)
     ? config.domain_policies
     : defaultProxytrapPolicies();
@@ -1103,10 +1100,6 @@ async function submitProxytrap(event) {
   payload.enabled = form.enabled.checked;
   payload.port = Number(payload.port || 8081);
   payload.domain_policies = proxytrapPolicies;
-  payload.trap_hosts = (payload.trap_hosts || '')
-    .split(/\n|,/)
-    .map(entry => entry.trim())
-    .filter(Boolean);
   if (payload.response_type !== 'custom') {
     payload.custom_html = null;
   }
