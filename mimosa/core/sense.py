@@ -33,11 +33,15 @@ class _BaseSenseClient(FirewallGateway):
         sanitized_url = base_url.rstrip("/")
         self.base_url = sanitized_url
         self.alias_name = alias_name
-        self.ports_alias_name = "mimosa_ports"
+        self.ports_alias_names = {"tcp": "mimosa_ports_tcp", "udp": "mimosa_ports_udp"}
         self._client = client or self._build_client(
             sanitized_url, api_key, api_secret, verify_ssl, timeout
         )
         self._apply_changes = apply_changes
+
+    def _ports_alias_name_for(self, protocol: str) -> str:
+        normalized = (protocol or "tcp").lower()
+        return self.ports_alias_names.get(normalized, self.ports_alias_names["tcp"])
 
     def block_ip(
         self, ip: str, reason: str = "", duration_minutes: Optional[int] = None
@@ -84,8 +88,6 @@ class _BaseSenseClient(FirewallGateway):
             "available": False,
             "alias_ready": False,
             "alias_created": False,
-            "ports_alias_ready": False,
-            "ports_alias_created": False,
             "applied_changes": False,
         }
 
@@ -96,14 +98,26 @@ class _BaseSenseClient(FirewallGateway):
         status["alias_ready"] = True
         status["alias_created"] = alias_created
 
-        ports_alias_created = False
+        ports_status: Dict[str, Dict[str, bool]] = {}
         try:
-            ports_alias_created = self._ensure_ports_alias_exists()
-            status["ports_alias_ready"] = True
-            status["ports_alias_created"] = ports_alias_created
+            for protocol in ("tcp", "udp"):
+                created = self._ensure_ports_alias_exists(protocol)
+                ports_status[protocol] = {"ready": True, "created": created}
         except NotImplementedError:
-            status["ports_alias_ready"] = False
-            status["ports_alias_created"] = False
+            ports_status = {
+                protocol: {"ready": False, "created": False}
+                for protocol in ("tcp", "udp")
+            }
+
+        status["ports_alias_status"] = ports_status
+        status["ports_alias_ready"] = all(
+            entry.get("ready") for entry in ports_status.values()
+        )
+        status["ports_alias_created"] = any(
+            entry.get("created") for entry in ports_status.values()
+        )
+
+        ports_alias_created = status["ports_alias_created"]
 
         if (alias_created or ports_alias_created) and self._apply_changes:
             self.apply_changes()
@@ -151,7 +165,7 @@ class _BaseSenseClient(FirewallGateway):
 
         alias_changed = False
         try:
-            alias_changed = self._add_port_to_alias(int(port))
+            alias_changed = self._add_port_to_alias(int(port), protocol=protocol)
         except NotImplementedError:
             alias_changed = False
 
@@ -171,25 +185,31 @@ class _BaseSenseClient(FirewallGateway):
 
         alias_changed = False
         try:
-            alias_changed = self._remove_port_from_alias(int(port))
+            alias_changed = self._remove_port_from_alias(int(port), protocol=protocol)
         except NotImplementedError:
             alias_changed = False
 
         if (removed_rule or alias_changed) and self._apply_changes:
             self._apply_changes_if_enabled()
 
-    def get_ports(self) -> List[int]:
-        try:
-            ports = self._list_ports_alias()
-        except NotImplementedError:
-            return []
-        normalized: List[int] = []
-        for value in ports:
+    def get_ports(self) -> Dict[str, List[int]]:
+        ports_by_protocol: Dict[str, List[int]] = {}
+        for protocol in ("tcp", "udp"):
             try:
-                normalized.append(int(value))
-            except (TypeError, ValueError):
+                ports = self._list_ports_alias(protocol)
+            except NotImplementedError:
+                ports_by_protocol[protocol] = []
                 continue
-        return sorted(set(normalized))
+
+            normalized: List[int] = []
+            for value in ports:
+                try:
+                    normalized.append(int(value))
+                except (TypeError, ValueError):
+                    continue
+            ports_by_protocol[protocol] = sorted(set(normalized))
+
+        return ports_by_protocol
 
     def list_services(self) -> List[Dict[str, object]]:
         return self._list_port_forwards()
@@ -254,7 +274,7 @@ class _BaseSenseClient(FirewallGateway):
 
         raise NotImplementedError
 
-    def _add_port_to_alias(self, port: int) -> bool:
+    def _add_port_to_alias(self, port: int, *, protocol: str) -> bool:
         """Añade un puerto al alias de Mimosa.
 
         Devuelve ``True`` si se modificó el alias.
@@ -262,7 +282,7 @@ class _BaseSenseClient(FirewallGateway):
 
         raise NotImplementedError
 
-    def _remove_port_from_alias(self, port: int) -> bool:
+    def _remove_port_from_alias(self, port: int, *, protocol: str) -> bool:
         """Elimina un puerto del alias de Mimosa.
 
         Devuelve ``True`` si se modificó el alias.
@@ -270,7 +290,7 @@ class _BaseSenseClient(FirewallGateway):
 
         raise NotImplementedError
 
-    def _list_ports_alias(self) -> List[str | int]:
+    def _list_ports_alias(self, protocol: str) -> List[str | int]:
         """Devuelve los valores actuales del alias de puertos."""
 
         raise NotImplementedError
@@ -331,24 +351,7 @@ class OPNsenseClient(_BaseSenseClient):
             }
         }
 
-        try:
-            # API moderna (24.7+)
-            self._request("POST", "/api/firewall/alias/addItem", json=payload)
-            return
-        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
-            if exc.response.status_code != 404:
-                raise
-
-        legacy_payload = {
-            "name": name,
-            "type": "port" if alias_type == "port" else "network",
-            "content": "",
-            "description": description,
-            "enabled": "1",
-        }
-
-        self._request("POST", "/api/firewall/alias_util/add", json=legacy_payload)
-        self._request("GET", f"/api/firewall/alias_util/list/{name}")
+        self._request("POST", "/api/firewall/alias/addItem", json=payload)
 
     def _block_ip_backend(self, ip: str, reason: str) -> None:
         response = self._request(
@@ -419,35 +422,38 @@ class OPNsenseClient(_BaseSenseClient):
             "uuid": best.get("uuid") or best.get("tracker"),
         }
 
-    def _add_port_to_alias(self, port: int) -> bool:
+    def _add_port_to_alias(self, port: int, *, protocol: str) -> bool:
         desired = str(int(port))
-        current = set(self._list_alias_values(self.ports_alias_name))
+        alias_name = self._ports_alias_name_for(protocol)
+        current = set(self._list_alias_values(alias_name))
         if desired in current:
             return False
 
-        self._ensure_ports_alias_exists()
+        self._ensure_ports_alias_exists(protocol)
         self._request(
             "POST",
-            f"/api/firewall/alias_util/add/{self.ports_alias_name}",
+            f"/api/firewall/alias_util/add/{alias_name}",
             json={"address": desired},
         )
         return True
 
-    def _remove_port_from_alias(self, port: int) -> bool:
+    def _remove_port_from_alias(self, port: int, *, protocol: str) -> bool:
         desired = str(int(port))
-        current = set(self._list_alias_values(self.ports_alias_name))
+        alias_name = self._ports_alias_name_for(protocol)
+        current = set(self._list_alias_values(alias_name))
         if desired not in current:
             return False
 
         self._request(
             "POST",
-            f"/api/firewall/alias_util/delete/{self.ports_alias_name}",
+            f"/api/firewall/alias_util/delete/{alias_name}",
             json={"address": desired},
         )
         return True
 
-    def _list_ports_alias(self) -> List[str | int]:
-        return self._list_alias_values(self.ports_alias_name)
+    def _list_ports_alias(self, protocol: str) -> List[str | int]:
+        alias_name = self._ports_alias_name_for(protocol)
+        return self._list_alias_values(alias_name)
 
     def _list_alias_values(self, alias_name: str) -> List[str]:
         try:
@@ -510,8 +516,6 @@ class OPNsenseClient(_BaseSenseClient):
             # Confirmed in the upstream core API tree
             "/api/firewall/filter/searchRule",
             "/api/firewall/source_nat/searchRule",
-            # Legacy endpoints kept for compatibility where available
-            "/api/firewall/nat/searchNAT",
         ]
 
         last_exc: httpx.HTTPStatusError | None = None
@@ -629,46 +633,83 @@ class OPNsenseClient(_BaseSenseClient):
         )
         return True
 
-    def _ensure_ports_alias_exists(self) -> bool:
-        if self._alias_exists(self.ports_alias_name):
+    def _ensure_ports_alias_exists(self, protocol: str) -> bool:
+        alias_name = self._ports_alias_name_for(protocol)
+        if self._alias_exists(alias_name):
             return False
 
         self.create_alias(
-            name=self.ports_alias_name,
+            name=alias_name,
             alias_type="port",
             description="Mimosa published ports",
         )
         return True
 
-    def _add_port_to_alias(self, port: int) -> bool:
+    def _add_port_to_alias(self, port: int, *, protocol: str) -> bool:
         desired = str(int(port))
-        current = set(self._list_alias_values(self.ports_alias_name))
+        alias_name = self._ports_alias_name_for(protocol)
+        current = set(self._list_alias_values(alias_name))
         if desired in current:
             return False
 
-        self._ensure_ports_alias_exists()
+        self._ensure_ports_alias_exists(protocol)
         payload = {"address": desired, "descr": "Mimosa port"}
         self._request(
             "POST",
-            f"/api/v1/firewall/alias/{self.ports_alias_name}/address",
+            f"/api/v1/firewall/alias/{alias_name}/address",
             json=payload,
         )
         return True
 
-    def _remove_port_from_alias(self, port: int) -> bool:
+    def _remove_port_from_alias(self, port: int, *, protocol: str) -> bool:
         desired = str(int(port))
-        current = set(self._list_alias_values(self.ports_alias_name))
+        alias_name = self._ports_alias_name_for(protocol)
+        current = set(self._list_alias_values(alias_name))
         if desired not in current:
             return False
 
         self._request(
             "DELETE",
-            f"/api/v1/firewall/alias/{self.ports_alias_name}/address/{desired}",
+            f"/api/v1/firewall/alias/{alias_name}/address/{desired}",
         )
         return True
 
-    def _list_ports_alias(self) -> List[str | int]:
-        return self._list_alias_values(self.ports_alias_name)
+    def _list_ports_alias(self, protocol: str) -> List[str | int]:
+        alias_name = self._ports_alias_name_for(protocol)
+        return self._list_alias_values(alias_name)
+
+    def _add_port_to_alias(self, port: int, *, protocol: str) -> bool:
+        desired = str(int(port))
+        alias_name = self._ports_alias_name_for(protocol)
+        current = set(self._list_alias_values(alias_name))
+        if desired in current:
+            return False
+
+        self._ensure_ports_alias_exists(protocol)
+        payload = {"address": desired, "descr": "Mimosa port"}
+        self._request(
+            "POST",
+            f"/api/v1/firewall/alias/{alias_name}/address",
+            json=payload,
+        )
+        return True
+
+    def _remove_port_from_alias(self, port: int, *, protocol: str) -> bool:
+        desired = str(int(port))
+        alias_name = self._ports_alias_name_for(protocol)
+        current = set(self._list_alias_values(alias_name))
+        if desired not in current:
+            return False
+
+        self._request(
+            "DELETE",
+            f"/api/v1/firewall/alias/{alias_name}/address/{desired}",
+        )
+        return True
+
+    def _list_ports_alias(self, protocol: str) -> List[str | int]:
+        alias_name = self._ports_alias_name_for(protocol)
+        return self._list_alias_values(alias_name)
 
     @property
     def _status_endpoint(self) -> str:
@@ -791,12 +832,13 @@ class PFSenseClient(_BaseSenseClient):
         )
         return True
 
-    def _ensure_ports_alias_exists(self) -> bool:
-        if self._alias_exists(self.ports_alias_name):
+    def _ensure_ports_alias_exists(self, protocol: str) -> bool:
+        alias_name = self._ports_alias_name_for(protocol)
+        if self._alias_exists(alias_name):
             return False
 
         self.create_alias(
-            name=self.ports_alias_name,
+            name=alias_name,
             alias_type="port",
             description="Mimosa published ports",
         )
