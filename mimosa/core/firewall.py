@@ -12,6 +12,7 @@ class DummyFirewall(FirewallGateway):
 
     def __init__(self) -> None:
         self._blocked: List[str] = []
+        self._ports: List[int] = []
 
     def block_ip(self, ip: str, reason: str, duration_minutes: int | None = None) -> None:
         if ip not in self._blocked:
@@ -37,17 +38,28 @@ class DummyFirewall(FirewallGateway):
 
         return None
 
-    def ensure_port_forwards(
+    def add_port(
         self,
         *,
         target_ip: str,
-        ports: List[int],
+        port: int,
         protocol: str = "tcp",
         description: str | None = None,
         interface: str = "wan",
-    ) -> dict:
-        _ = target_ip, description, interface
-        return {"created": ports, "conflicts": [], "already_present": []}
+    ) -> None:
+        _ = target_ip, protocol, description, interface
+        if port not in self._ports:
+            self._ports.append(port)
+
+    def remove_port(
+        self, port: int, *, protocol: str = "tcp", interface: str = "wan"
+    ) -> None:
+        _ = protocol, interface
+        if port in self._ports:
+            self._ports.remove(port)
+
+    def get_ports(self) -> List[int]:
+        return list(self._ports)
 
     def list_services(self) -> List[dict]:
         return []
@@ -110,16 +122,29 @@ class SSHIptablesFirewall(FirewallGateway):
         )
         self._execute(setup)
 
-    def ensure_port_forwards(
+    def add_port(
         self,
         *,
         target_ip: str,
-        ports: List[int],
+        port: int,
         protocol: str = "tcp",
         description: str | None = None,
         interface: str = "wan",
-    ) -> dict:
-        _ = target_ip, ports, protocol, description, interface
+    ) -> None:
+        _ = target_ip, port, protocol, description, interface
+        raise NotImplementedError(
+            "La gestión de NAT no está disponible para SSH + iptables"
+        )
+
+    def remove_port(
+        self, port: int, *, protocol: str = "tcp", interface: str = "wan"
+    ) -> None:
+        _ = port, protocol, interface
+        raise NotImplementedError(
+            "La gestión de NAT no está disponible para SSH + iptables"
+        )
+
+    def get_ports(self) -> List[int]:
         raise NotImplementedError(
             "La gestión de NAT no está disponible para SSH + iptables"
         )

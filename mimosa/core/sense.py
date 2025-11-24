@@ -86,47 +86,60 @@ class _BaseSenseClient(FirewallGateway):
         if created:
             self._apply_changes_if_enabled()
 
-    def ensure_port_forwards(
+    def create_alias(self, *, name: str, alias_type: str, description: str) -> None:
+        """Crea un alias del tipo indicado."""
+
+        raise NotImplementedError
+
+    def add_port(
         self,
         *,
         target_ip: str,
-        ports: List[int],
+        port: int,
         protocol: str = "tcp",
         description: str | None = None,
         interface: str = "wan",
-    ) -> Dict[str, object]:
-        normalized_ports = sorted({int(port) for port in ports if port})
-        existing = self.list_services()
-        conflicts: List[Dict[str, object]] = []
-        already_present: List[int] = []
-        created: List[int] = []
-        configured_ports: List[int] = []
-        for port in normalized_ports:
-            match = next(
-                (svc for svc in existing if svc.get("port") == port and svc.get("protocol") == protocol),
-                None,
-            )
-            if match and match.get("target") == target_ip:
-                already_present.append(port)
-                configured_ports.append(port)
-                continue
-            if match and match.get("target") != target_ip:
-                conflicts.append(match)
-                continue
-            self._create_port_forward(
-                port=port,
-                protocol=protocol,
-                target_ip=target_ip,
-                description=description,
-                interface=interface,
-            )
-            created.append(port)
-            configured_ports.append(port)
-        if created:
-            self._apply_changes_if_enabled()
-        self._sync_ports_alias(configured_ports)
+    ) -> None:
+        self._create_port_forward(
+            port=port,
+            protocol=protocol,
+            target_ip=target_ip,
+            description=description,
+            interface=interface,
+        )
 
-        return {"created": created, "conflicts": conflicts, "already_present": already_present}
+        alias_changed = False
+        try:
+            alias_changed = self._add_port_to_alias(int(port))
+        except NotImplementedError:
+            alias_changed = False
+
+        if alias_changed or self._apply_changes:
+            self._apply_changes_if_enabled()
+
+    def remove_port(
+        self, port: int, *, protocol: str = "tcp", interface: str = "wan"
+    ) -> None:
+        _ = protocol, interface
+        try:
+            changed = self._remove_port_from_alias(int(port))
+        except NotImplementedError:
+            return
+        if changed:
+            self._apply_changes_if_enabled()
+
+    def get_ports(self) -> List[int]:
+        try:
+            ports = self._list_ports_alias()
+        except NotImplementedError:
+            return []
+        normalized: List[int] = []
+        for value in ports:
+            try:
+                normalized.append(int(value))
+            except (TypeError, ValueError):
+                continue
+        return sorted(set(normalized))
 
     def list_services(self) -> List[Dict[str, object]]:
         return self._list_port_forwards()
@@ -184,11 +197,24 @@ class _BaseSenseClient(FirewallGateway):
 
         raise NotImplementedError
 
-    def _update_ports_alias(self, ports: List[int]) -> bool:
-        """Actualiza el alias de puertos publicados hacia Mimosa.
+    def _add_port_to_alias(self, port: int) -> bool:
+        """Añade un puerto al alias de Mimosa.
 
-        Devuelve ``True`` si se solicitó algún cambio en el alias.
+        Devuelve ``True`` si se modificó el alias.
         """
+
+        raise NotImplementedError
+
+    def _remove_port_from_alias(self, port: int) -> bool:
+        """Elimina un puerto del alias de Mimosa.
+
+        Devuelve ``True`` si se modificó el alias.
+        """
+
+        raise NotImplementedError
+
+    def _list_ports_alias(self) -> List[str | int]:
+        """Devuelve los valores actuales del alias de puertos."""
 
         raise NotImplementedError
 
@@ -202,16 +228,6 @@ class _BaseSenseClient(FirewallGateway):
         if not self._apply_changes:
             return
         self._request("POST", self._apply_endpoint)
-
-    def _sync_ports_alias(self, ports: List[int]) -> None:
-        """Sincroniza el alias ``mimosa_ports`` con los puertos configurados."""
-
-        try:
-            changed = self._update_ports_alias(ports)
-        except NotImplementedError:
-            return
-        if changed:
-            self._apply_changes_if_enabled()
 
 
 class OPNsenseClient(_BaseSenseClient):
@@ -237,6 +253,45 @@ class OPNsenseClient(_BaseSenseClient):
             verify=verify_ssl,
             timeout=timeout,
         )
+
+    def _alias_exists(self, alias_name: str) -> bool:
+        try:
+            response = self._request("GET", "/api/firewall/alias/searchItem")
+        except httpx.HTTPStatusError:
+            return False
+        data = response.json()
+        rows = data.get("rows", []) if isinstance(data, dict) else []
+        return any(row.get("name") == alias_name for row in rows)
+
+    def create_alias(self, *, name: str, alias_type: str, description: str) -> None:
+        payload = {
+            "alias": {
+                "name": name,
+                "type": alias_type,
+                "content": "",
+                "description": description,
+                "enabled": "1",
+            }
+        }
+
+        try:
+            # API moderna (24.7+)
+            self._request("POST", "/api/firewall/alias/addItem", json=payload)
+            return
+        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
+            if exc.response.status_code != 404:
+                raise
+
+        legacy_payload = {
+            "name": name,
+            "type": "port" if alias_type == "port" else "network",
+            "content": "",
+            "description": description,
+            "enabled": "1",
+        }
+
+        self._request("POST", "/api/firewall/alias_util/add", json=legacy_payload)
+        self._request("GET", f"/api/firewall/alias_util/list/{name}")
 
     def _block_ip_backend(self, ip: str, reason: str) -> None:
         response = self._request(
@@ -307,28 +362,35 @@ class OPNsenseClient(_BaseSenseClient):
             "uuid": best.get("uuid") or best.get("tracker"),
         }
 
-    def _update_ports_alias(self, ports: List[int]) -> bool:
-        desired = {str(int(port)) for port in ports if port}
+    def _add_port_to_alias(self, port: int) -> bool:
+        desired = str(int(port))
         current = set(self._list_alias_values(self.ports_alias_name))
-        if desired == current:
+        if desired in current:
             return False
 
         self._ensure_ports_alias_exists()
-        try:
-            self._request("POST", f"/api/firewall/alias_util/flush/{self.ports_alias_name}")
-        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
-            if exc.response.status_code != 404:
-                raise
-            self._ensure_ports_alias_exists()
-            self._request("POST", f"/api/firewall/alias_util/flush/{self.ports_alias_name}")
-
-        for port in sorted(desired, key=int):
-            self._request(
-                "POST",
-                f"/api/firewall/alias_util/add/{self.ports_alias_name}",
-                json={"address": port},
-            )
+        self._request(
+            "POST",
+            f"/api/firewall/alias_util/add/{self.ports_alias_name}",
+            json={"address": desired},
+        )
         return True
+
+    def _remove_port_from_alias(self, port: int) -> bool:
+        desired = str(int(port))
+        current = set(self._list_alias_values(self.ports_alias_name))
+        if desired not in current:
+            return False
+
+        self._request(
+            "POST",
+            f"/api/firewall/alias_util/delete/{self.ports_alias_name}",
+            json={"address": desired},
+        )
+        return True
+
+    def _list_ports_alias(self) -> List[str | int]:
+        return self._list_alias_values(self.ports_alias_name)
 
     def _list_alias_values(self, alias_name: str) -> List[str]:
         try:
@@ -445,89 +507,56 @@ class OPNsenseClient(_BaseSenseClient):
         return []
 
     def _ensure_alias_exists(self) -> bool:
-        try:
-            response = self._request("GET", "/api/firewall/alias/searchItem")
-            data = response.json()
-            rows = data.get("rows", []) if isinstance(data, dict) else []
-            if any(row.get("name") == self.alias_name for row in rows):
-                return False
-        except httpx.HTTPStatusError:
-            pass
+        if self._alias_exists(self.alias_name):
+            return False
 
-        payload = {
-            "alias": {
-                "name": self.alias_name,
-                "type": "host",
-                "content": "",
-                "description": "Mimosa blocklist",
-                "enabled": "1",
-            }
-        }
-
-        try:
-            # API moderna (24.7+) documentada en
-            # https://docs.opnsense.org/development/api/core/firewall.html
-            self._request("POST", "/api/firewall/alias/addItem", json=payload)
-            return True
-        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
-            if exc.response.status_code != 404:
-                raise
-
-        # Compatibilidad con instalaciones antiguas donde alias_util sigue
-        # siendo el punto de entrada para crear alias vacíos.
-        legacy_payload = {
-            "name": self.alias_name,
-            "type": "network",
-            "content": "",
-            "description": "Mimosa blocklist",
-            "enabled": "1",
-        }
-
-        self._request("POST", "/api/firewall/alias_util/add", json=legacy_payload)
-
-        # Si el alias aún no existe, es posible que el listado falle por un 404
-        # inicial. Reintentamos tras haber solicitado la creación.
-        self._request("GET", f"/api/firewall/alias_util/list/{self.alias_name}")
+        self.create_alias(
+            name=self.alias_name,
+            alias_type="host",
+            description="Mimosa blocklist",
+        )
         return True
 
     def _ensure_ports_alias_exists(self) -> bool:
-        try:
-            response = self._request("GET", "/api/firewall/alias/searchItem")
-            data = response.json()
-            rows = data.get("rows", []) if isinstance(data, dict) else []
-            if any(row.get("name") == self.ports_alias_name for row in rows):
-                return False
-        except httpx.HTTPStatusError:
-            pass
+        if self._alias_exists(self.ports_alias_name):
+            return False
 
-        payload = {
-            "alias": {
-                "name": self.ports_alias_name,
-                "type": "port",
-                "content": "",
-                "description": "Mimosa published ports",
-                "enabled": "1",
-            }
-        }
-
-        try:
-            self._request("POST", "/api/firewall/alias/addItem", json=payload)
-            return True
-        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
-            if exc.response.status_code != 404:
-                raise
-
-        legacy_payload = {
-            "name": self.ports_alias_name,
-            "type": "port",
-            "content": "",
-            "description": "Mimosa published ports",
-            "enabled": "1",
-        }
-
-        self._request("POST", "/api/firewall/alias_util/add", json=legacy_payload)
-        self._request("GET", f"/api/firewall/alias_util/list/{self.ports_alias_name}")
+        self.create_alias(
+            name=self.ports_alias_name,
+            alias_type="port",
+            description="Mimosa published ports",
+        )
         return True
+
+    def _add_port_to_alias(self, port: int) -> bool:
+        desired = str(int(port))
+        current = set(self._list_alias_values(self.ports_alias_name))
+        if desired in current:
+            return False
+
+        self._ensure_ports_alias_exists()
+        payload = {"address": desired, "descr": "Mimosa port"}
+        self._request(
+            "POST",
+            f"/api/v1/firewall/alias/{self.ports_alias_name}/address",
+            json=payload,
+        )
+        return True
+
+    def _remove_port_from_alias(self, port: int) -> bool:
+        desired = str(int(port))
+        current = set(self._list_alias_values(self.ports_alias_name))
+        if desired not in current:
+            return False
+
+        self._request(
+            "DELETE",
+            f"/api/v1/firewall/alias/{self.ports_alias_name}/address/{desired}",
+        )
+        return True
+
+    def _list_ports_alias(self) -> List[str | int]:
+        return self._list_alias_values(self.ports_alias_name)
 
     @property
     def _status_endpoint(self) -> str:
@@ -561,6 +590,24 @@ class PFSenseClient(_BaseSenseClient):
             timeout=timeout,
         )
 
+    def _alias_exists(self, alias_name: str) -> bool:
+        try:
+            self._request("GET", f"/api/v1/firewall/alias/{alias_name}")
+            return True
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return False
+            raise
+
+    def create_alias(self, *, name: str, alias_type: str, description: str) -> None:
+        payload = {
+            "name": name,
+            "type": alias_type,
+            "descr": description,
+            "addresses": [],
+        }
+        self._request("POST", "/api/v1/firewall/alias", json=payload)
+
     def _block_ip_backend(self, ip: str, reason: str) -> None:
         payload = {"address": ip, "descr": reason or ""}
         self._request(
@@ -592,42 +639,20 @@ class PFSenseClient(_BaseSenseClient):
             return [item.get("address", item) if isinstance(item, dict) else item for item in data]
         return []
 
-    def _ensure_alias_exists(self) -> bool:
+    def _list_alias_values(self, alias_name: str) -> List[str]:
         try:
-            self._request("GET", f"/api/v1/firewall/alias/{self.alias_name}")
-            return False
+            response = self._request("GET", f"/api/v1/firewall/alias/{alias_name}")
         except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
-            if exc.response.status_code != 404:
-                raise
+            if exc.response.status_code == 404:
+                return []
+            raise
 
-        payload = {
-            "name": self.alias_name,
-            "type": "host",
-            "descr": "Mimosa blocklist",
-            "addresses": [],
-        }
-        self._request("POST", "/api/v1/firewall/alias", json=payload)
-        return True
-
-    def _update_ports_alias(self, ports: List[int]) -> bool:
-        desired = {str(int(port)) for port in ports if port}
-        try:
-            response = self._request(
-                "GET", f"/api/v1/firewall/alias/{self.ports_alias_name}"
-            )
-            data = response.json()
-            alias_missing = False
-        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
-            if exc.response.status_code != 404:
-                raise
-            alias_missing = True
-            data = {}
-
-        current_items: List[str] = []
+        data = response.json()
+        values: List[str] = []
         if isinstance(data, dict):
             for key in ("addresses", "items", "data"):
                 if key in data and isinstance(data[key], list):
-                    current_items = [
+                    values = [
                         str(entry.get("address", entry))
                         if isinstance(entry, dict)
                         else str(entry)
@@ -636,39 +661,33 @@ class PFSenseClient(_BaseSenseClient):
                     ]
                     break
         elif isinstance(data, list):
-            current_items = [
+            values = [
                 str(entry.get("address", entry)) if isinstance(entry, dict) else str(entry)
                 for entry in data
                 if entry
             ]
+        return values
 
-        current = set(current_items)
-        if not alias_missing and current == desired:
+    def _ensure_alias_exists(self) -> bool:
+        if self._alias_exists(self.alias_name):
             return False
 
-        if alias_missing:
-            payload = {
-                "name": self.ports_alias_name,
-                "type": "port",
-                "descr": "Mimosa published ports",
-                "addresses": [],
-            }
-            self._request("POST", "/api/v1/firewall/alias", json=payload)
-            current = set()
+        self.create_alias(
+            name=self.alias_name,
+            alias_type="host",
+            description="Mimosa blocklist",
+        )
+        return True
 
-        for entry in current - desired:
-            self._request(
-                "DELETE", f"/api/v1/firewall/alias/{self.ports_alias_name}/address/{entry}"
-            )
+    def _ensure_ports_alias_exists(self) -> bool:
+        if self._alias_exists(self.ports_alias_name):
+            return False
 
-        for entry in sorted(desired - current, key=int):
-            payload = {"address": entry, "descr": "Mimosa port"}
-            self._request(
-                "POST",
-                f"/api/v1/firewall/alias/{self.ports_alias_name}/address",
-                json=payload,
-            )
-
+        self.create_alias(
+            name=self.ports_alias_name,
+            alias_type="port",
+            description="Mimosa published ports",
+        )
         return True
 
     @property
