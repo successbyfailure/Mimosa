@@ -2,6 +2,7 @@ version: "3.9"
 
 services:
   mimosanpm-agent:
+    image: ghcr.io/successbyfailure/mimosanpm-agent:latest
     build: .
     env_file: .env
     restart: unless-stopped
