@@ -7,6 +7,7 @@ como para el nuevo plugin "proxytrap".
 from __future__ import annotations
 
 import json
+import secrets
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Dict, List
@@ -76,6 +77,20 @@ class PortDetectorConfig:
     rules: List[PortDetectorRule] = field(default_factory=_default_port_rules)
 
 
+def _generate_secret() -> str:
+    return secrets.token_hex(24)
+
+
+@dataclass
+class MimosaNpmConfig:
+    """Ajustes para el agente externo de Nginx Proxy Manager."""
+
+    name: str = "mimosanpm"
+    enabled: bool = False
+    default_severity: str = "alto"
+    shared_secret: str = field(default_factory=_generate_secret)
+
+
 class PluginConfigStore:
     """Almacena configuraciones de plugins en un fichero JSON."""
 
@@ -91,10 +106,12 @@ class PluginConfigStore:
         dummy = asdict(DummyPluginConfig())
         proxytrap = asdict(ProxyTrapConfig())
         portdetector = asdict(PortDetectorConfig())
+        mimosanpm = asdict(MimosaNpmConfig())
         self._plugins = {
             dummy["name"]: dummy,
             proxytrap["name"]: proxytrap,
             portdetector["name"]: portdetector,
+            mimosanpm["name"]: mimosanpm,
         }
         self._save()
 
@@ -150,6 +167,38 @@ class PluginConfigStore:
 
     def update_port_detector(self, payload: PortDetectorConfig) -> PortDetectorConfig:
         sanitized = asdict(payload)
+        self._plugins[payload.name] = sanitized
+        self._save()
+        return payload
+
+    def generate_secret(self) -> str:
+        """Genera un secreto aleatorio reutilizando el helper interno."""
+
+        return _generate_secret()
+
+    def get_mimosanpm(self) -> MimosaNpmConfig:
+        config = self._plugins.get("mimosanpm")
+        if not config:
+            instance = MimosaNpmConfig()
+            self._plugins[instance.name] = asdict(instance)
+            self._save()
+            return instance
+
+        shared_secret = config.get("shared_secret") or _generate_secret()
+        loaded = MimosaNpmConfig(
+            enabled=bool(config.get("enabled", False)),
+            default_severity=config.get("default_severity", "alto"),
+            shared_secret=str(shared_secret),
+        )
+        # Normaliza y persiste secretos faltantes.
+        self._plugins[loaded.name] = asdict(loaded)
+        self._save()
+        return loaded
+
+    def update_mimosanpm(self, payload: MimosaNpmConfig) -> MimosaNpmConfig:
+        sanitized = asdict(payload)
+        if not sanitized.get("shared_secret"):
+            sanitized["shared_secret"] = _generate_secret()
         self._plugins[payload.name] = sanitized
         self._save()
         return payload

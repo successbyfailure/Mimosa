@@ -1,0 +1,16 @@
+version: "3.9"
+
+services:
+  mimosanpm-agent:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - ./state:/state
+      - /ruta/a/logs/npm:/data/logs:ro
+    networks:
+      - npm_stack
+
+networks:
+  npm_stack:
+    external: true

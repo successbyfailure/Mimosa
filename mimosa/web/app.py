@@ -19,12 +19,14 @@ from mimosa.core.blocking import BlockEntry, BlockManager
 from mimosa.core.firewall import DummyFirewall
 from mimosa.core.offenses import OffenseRecord, OffenseStore
 from mimosa.core.plugins import (
+    MimosaNpmConfig,
     PluginConfigStore,
     PortDetectorConfig,
     PortDetectorRule,
     ProxyTrapConfig,
 )
 from mimosa.core.portdetector import PortBindingError, PortDetectorService
+from mimosa.core.mimosanpm import MimosaNpmAlert, MimosaNpmService
 from mimosa.core.proxytrap import ProxyTrapService
 from mimosa.core.rules import OffenseEvent, OffenseRule, OffenseRuleStore, RuleManager
 from mimosa.web.config import (
@@ -119,6 +121,32 @@ class PortDetectorInput(BaseModel):
     rules: List[PortDetectorRuleInput] = Field(default_factory=list)
 
 
+class MimosaNpmConfigInput(BaseModel):
+    """Config pública del agente MimosaNPM."""
+
+    enabled: bool = False
+    default_severity: str = "alto"
+    shared_secret: str | None = None
+    rotate_secret: bool = False
+
+
+class MimosaNpmAlertInput(BaseModel):
+    """Evento emitido por el agente desplegado junto a NPM."""
+
+    source_ip: str
+    host: str
+    path: Optional[str] = None
+    user_agent: Optional[str] = None
+    severity: Optional[str] = None
+    status_code: Optional[int] = None
+
+
+class MimosaNpmBatchInput(BaseModel):
+    """Permite enviar eventos en lote."""
+
+    alerts: List[MimosaNpmAlertInput] = Field(default_factory=list)
+
+
 class OffenseInput(BaseModel):
     """Payload para crear ofensas manuales desde la UI."""
 
@@ -193,6 +221,12 @@ def create_app(
         rule_store,
         gateway_factory=lambda: _select_gateway(),
     )
+    mimosanpm_service = MimosaNpmService(
+        offense_store,
+        block_manager,
+        rule_store,
+        gateway_factory=lambda: _select_gateway(),
+    )
 
     def _select_gateway() -> FirewallGateway:
         configs = config_store.list()
@@ -262,6 +296,7 @@ def create_app(
     def _serialize_plugins() -> List[Dict[str, object]]:
         proxytrap_config = plugin_store.get_proxytrap()
         portdetector_config = plugin_store.get_port_detector()
+        mimosanpm_config = plugin_store.get_mimosanpm()
         return [
             {"name": "dummy", "enabled": True},
             {
@@ -274,10 +309,16 @@ def create_app(
                 "enabled": portdetector_config.enabled,
                 "config": asdict(portdetector_config),
             },
+            {
+                "name": "mimosanpm",
+                "enabled": mimosanpm_config.enabled,
+                "config": asdict(mimosanpm_config),
+            },
         ]
 
     proxytrap_service.apply_config(plugin_store.get_proxytrap())
     portdetector_service.apply_config(plugin_store.get_port_detector())
+    mimosanpm_service.apply_config(plugin_store.get_mimosanpm())
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
@@ -365,6 +406,53 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc))
         plugin_store.update_port_detector(config)
         return asdict(config)
+
+    @app.put("/api/plugins/mimosanpm")
+    def update_mimosanpm_settings(payload: MimosaNpmConfigInput) -> Dict[str, object]:
+        current = plugin_store.get_mimosanpm()
+        shared_secret = current.shared_secret
+        if payload.shared_secret:
+            shared_secret = payload.shared_secret
+        if payload.rotate_secret or not shared_secret:
+            shared_secret = plugin_store.generate_secret()
+
+        config = MimosaNpmConfig(
+            enabled=payload.enabled,
+            default_severity=payload.default_severity,
+            shared_secret=shared_secret,
+        )
+        mimosanpm_service.apply_config(config)
+        plugin_store.update_mimosanpm(config)
+        return asdict(config)
+
+    @app.post("/api/plugins/mimosanpm/ingest", status_code=202)
+    def ingest_mimosanpm(payload: MimosaNpmBatchInput, request: Request) -> Dict[str, object]:
+        config = plugin_store.get_mimosanpm()
+        if not config.enabled:
+            raise HTTPException(
+                status_code=503,
+                detail="El plugin MimosaNPM está deshabilitado en Mimosa.",
+            )
+
+        token = request.headers.get("X-Mimosa-Token")
+        if not token or token != config.shared_secret:
+            raise HTTPException(status_code=401, detail="Token inválido para MimosaNPM")
+        if not payload.alerts:
+            raise HTTPException(status_code=400, detail="No se enviaron alertas")
+
+        alerts = [
+            MimosaNpmAlert(
+                source_ip=entry.source_ip,
+                requested_host=entry.host,
+                path=entry.path,
+                user_agent=entry.user_agent,
+                severity=entry.severity,
+                status_code=entry.status_code,
+            )
+            for entry in payload.alerts
+        ]
+        accepted = mimosanpm_service.ingest(alerts)
+        return {"accepted": accepted}
 
     @app.get("/api/settings/blocking")
     def blocking_settings() -> Dict[str, int]:
