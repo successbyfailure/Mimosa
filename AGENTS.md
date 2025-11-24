@@ -27,6 +27,14 @@ Mimosa es un núcleo de defensa para homelabs que coordina bloqueos temporales c
 - Commits: mensajes en modo imperativo y conciso. Incluye pruebas ejecutadas en la descripción del PR.
 - Orden sugerido antes de abrir PR: lint/format (si aplica), tests relevantes y verificación manual del dashboard si el cambio afecta UI.
 
+## Versionado
+- La versión fuente vive en `version.json` en la raíz del repo. Cualquier cambio que modifique funcionalidad, UI, esquemas o dependencias debe actualizar este archivo.
+- Incrementa la versión automáticamente según la naturaleza del cambio:
+  - **Mayor** (X.y.z): cambios incompatibles o migraciones obligatorias.
+  - **Menor** (x.Y.z): nuevas funcionalidades, pantallas o endpoints.
+  - **Patch** (x.y.Z): correcciones, pequeños ajustes de UI o documentación.
+- Mantén sincronizado el valor de `version.json` con cualquier lugar donde se muestre la versión (p.ej. metadatos de FastAPI o la UI). No dupliques valores sueltos; lee siempre desde el JSON.
+
 ## Testing
 - Tests disponibles en `tests/`; ejecútalos con `pytest` cuando modifiques lógica.
 - Si añades endpoints o UI, indica cómo verificaste (comandos o capturas) en el PR.

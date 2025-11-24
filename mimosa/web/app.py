@@ -1,6 +1,7 @@
 """Aplicación FastAPI que sirve el dashboard y el panel de control."""
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -34,6 +35,18 @@ from mimosa.web.config import (
     build_firewall_gateway,
     check_firewall_status,
 )
+
+
+def _load_app_version() -> str:
+    """Lee el número de versión desde el archivo compartido de versionado."""
+
+    version_path = Path(__file__).resolve().parents[2] / "version.json"
+    try:
+        data = json.loads(version_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return "0.0.0"
+
+    return str(data.get("version", "0.0.0"))
 
 
 class FirewallInput(BaseModel):
@@ -174,12 +187,15 @@ def create_app(
 ) -> FastAPI:
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
-    app = FastAPI(title="Mimosa UI", version="0.1.0")
+    app_version = _load_app_version()
+    app = FastAPI(title="Mimosa UI", version=app_version)
     app.mount(
         "/static",
         StaticFiles(directory=str(Path(__file__).parent / "static")),
         name="static",
     )
+
+    templates.env.globals["mimosa_version"] = app_version
 
     offense_store = offense_store or OffenseStore()
     block_manager = block_manager or BlockManager(
