@@ -13,6 +13,8 @@
       body { margin: 0; font-family: 'Inter', system-ui, -apple-system, sans-serif; background: radial-gradient(circle at 20% 20%, rgba(56,189,248,.1), transparent 25%), radial-gradient(circle at 80% 0%, rgba(74,222,128,.08), transparent 20%), var(--bg); color: var(--text); min-height: 100vh; }
       header { padding: 24px 32px 8px; display: flex; align-items: center; gap: 12px; }
       header h1 { margin: 0; font-size: 24px; }
+      .brand { display: flex; align-items: center; gap: 8px; }
+      .version { background: rgba(226,232,240,.08); color: #cbd5e1; padding: 4px 10px; border-radius: 10px; font-size: 12px; letter-spacing: .02em; }
       header .tag { background: rgba(56,189,248,.15); color: #67e8f9; padding: 4px 10px; border-radius: 999px; font-size: 12px; letter-spacing: .01em; }
       nav { display: flex; gap: 12px; margin-left: auto; }
       nav a { color: var(--text); text-decoration: none; padding: 8px 12px; border-radius: 12px; transition: background .2s ease; font-weight: 600; }
@@ -48,7 +50,10 @@
   </head>
   <body>
     <header>
-      <h1>🌿 Mimosa</h1>
+      <div class="brand">
+        <h1>🌿 Mimosa</h1>
+        <span class="version">v{{ mimosa_version }}</span>
+      </div>
       <span class="tag">Dashboard + Control</span>
       <nav>
         <a href="/" class="{{ 'active' if request.url.path == '/' else '' }}">Dashboard</a>
