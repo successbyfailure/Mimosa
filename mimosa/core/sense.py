@@ -1,13 +1,10 @@
 """Cliente mínimo para integrar pfSense/OPNsense como firewall remoto.
 
 Proporciona métodos para añadir o eliminar direcciones en una tabla
-(Alias) y consultar su contenido usando la API REST. Opcionalmente
-permite programar una eliminación automática en una duración dada.
+(Alias) y consultar su contenido usando la API REST.
 """
 from __future__ import annotations
 
-import threading
-from datetime import timedelta
 from typing import Dict, List, Optional
 
 import httpx
@@ -17,9 +14,8 @@ from mimosa.core.api import FirewallGateway
 class _BaseSenseClient(FirewallGateway):
     """Base compartida para clientes de pfSense y OPNsense.
 
-    Gestiona la autenticación HTTP básica, el temporizador de expiración
-    opcional y delega en cada implementación concreta los endpoints a
-    invocar.
+    Gestiona la autenticación HTTP básica y delega en cada
+    implementación concreta los endpoints a invocar.
     """
 
     def __init__(
@@ -41,8 +37,6 @@ class _BaseSenseClient(FirewallGateway):
         self._client = client or self._build_client(
             sanitized_url, api_key, api_secret, verify_ssl, timeout
         )
-        self._lock = threading.Lock()
-        self._timers: Dict[str, threading.Timer] = {}
         self._apply_changes = apply_changes
 
     def block_ip(
@@ -50,25 +44,19 @@ class _BaseSenseClient(FirewallGateway):
     ) -> None:
         """Añade una IP al alias configurado.
 
-        Si ``duration_minutes`` es mayor que cero se programa una tarea
-        para eliminar automáticamente la IP tras el periodo indicado
-        usando :func:`unblock_ip`.
+        La duración se gestiona en capas superiores; este cliente solo
+        comunica el bloqueo al firewall remoto y aplica los cambios
+        necesarios.
         """
 
         self._block_ip_backend(ip, reason)
         self._apply_changes_if_enabled()
-        if duration_minutes and duration_minutes > 0:
-            self._schedule_unblock(ip, minutes=duration_minutes)
 
     def unblock_ip(self, ip: str) -> None:
         """Elimina una IP del alias configurado."""
 
         self._unblock_ip_backend(ip)
         self._apply_changes_if_enabled()
-        with self._lock:
-            timer = self._timers.pop(ip, None)
-        if timer:
-            timer.cancel()
 
     def list_table(self) -> List[str]:
         """Devuelve el contenido actual del alias configurado."""
@@ -142,17 +130,6 @@ class _BaseSenseClient(FirewallGateway):
 
     def list_services(self) -> List[Dict[str, object]]:
         return self._list_port_forwards()
-
-    def _schedule_unblock(self, ip: str, *, minutes: int) -> None:
-        delay = timedelta(minutes=minutes).total_seconds()
-        timer = threading.Timer(delay, lambda: self.unblock_ip(ip))
-        with self._lock:
-            existing = self._timers.pop(ip, None)
-            if existing:
-                existing.cancel()
-            self._timers[ip] = timer
-        timer.daemon = True
-        timer.start()
 
     def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         url = f"{self.base_url}{path}"
