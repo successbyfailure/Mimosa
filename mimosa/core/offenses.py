@@ -474,3 +474,19 @@ class OffenseStore:
 
         return {"geo": None, "whois": None, "reverse_dns": reverse_dns}
 
+    def reset(self) -> None:
+        """Limpia ofensas y perfiles almacenados.
+
+        Si la base de datos estuviera corrupta, se elimina el fichero y se
+        vuelve a crear con el esquema esperado.
+        """
+
+        db_path = Path(self.db_path)
+        try:
+            with self._connection() as conn:
+                conn.execute("DELETE FROM offenses;")
+                conn.execute("DELETE FROM ip_profiles;")
+        except sqlite3.DatabaseError:
+            db_path.unlink(missing_ok=True)
+        ensure_database(db_path)
+

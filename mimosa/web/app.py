@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -187,6 +188,7 @@ def create_app(
     block_manager: BlockManager | None = None,
     config_store: FirewallConfigStore | None = None,
     rule_store: OffenseRuleStore | None = None,
+    proxytrap_stats_path: Path | str | None = None,
 ) -> FastAPI:
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -209,11 +211,13 @@ def create_app(
     rule_store = rule_store or OffenseRuleStore(db_path=offense_store.db_path)
     plugin_store = PluginConfigStore()
     gateway_cache: Dict[str, FirewallGateway] = {}
+    proxytrap_stats_path = proxytrap_stats_path or Path("data/proxytrap_stats.json")
     proxytrap_service = ProxyTrapService(
         offense_store,
         block_manager,
         rule_store,
         gateway_factory=lambda: _select_gateway(),
+        stats_path=proxytrap_stats_path,
     )
     portdetector_service = PortDetectorService(
         offense_store,
@@ -328,8 +332,7 @@ def create_app(
     def admin(request: Request):
         return templates.TemplateResponse("admin.html", {"request": request})
 
-    @app.get("/api/stats")
-    def stats() -> Dict[str, Dict[str, object]]:
+    def _stats_payload() -> Dict[str, Dict[str, object]]:
         now = datetime.utcnow()
         seven_days = timedelta(days=7)
         day = timedelta(hours=24)
@@ -360,6 +363,23 @@ def create_app(
                 },
             },
         }
+
+    @app.get("/api/stats")
+    def stats() -> Dict[str, Dict[str, object]]:
+        try:
+            return _stats_payload()
+        except sqlite3.DatabaseError:
+            offense_store.reset()
+            block_manager.reset()
+            proxytrap_service.reset_stats()
+            return _stats_payload()
+
+    @app.post("/api/stats/reset")
+    def reset_stats() -> Dict[str, Dict[str, object]]:
+        offense_store.reset()
+        block_manager.reset()
+        proxytrap_service.reset_stats()
+        return _stats_payload()
 
     @app.get("/api/plugins")
     def plugins() -> List[Dict[str, object]]:
