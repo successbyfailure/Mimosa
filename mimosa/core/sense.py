@@ -84,6 +84,8 @@ class _BaseSenseClient(FirewallGateway):
             "available": False,
             "alias_ready": False,
             "alias_created": False,
+            "ports_alias_ready": False,
+            "ports_alias_created": False,
             "applied_changes": False,
         }
 
@@ -94,7 +96,16 @@ class _BaseSenseClient(FirewallGateway):
         status["alias_ready"] = True
         status["alias_created"] = alias_created
 
-        if alias_created and self._apply_changes:
+        ports_alias_created = False
+        try:
+            ports_alias_created = self._ensure_ports_alias_exists()
+            status["ports_alias_ready"] = True
+            status["ports_alias_created"] = ports_alias_created
+        except NotImplementedError:
+            status["ports_alias_ready"] = False
+            status["ports_alias_created"] = False
+
+        if (alias_created or ports_alias_created) and self._apply_changes:
             self.apply_changes()
             status["applied_changes"] = True
 
@@ -460,8 +471,7 @@ class OPNsenseClient(_BaseSenseClient):
         return []
 
     def _list_port_forwards(self) -> List[Dict[str, object]]:
-        response = self._request("GET", "/api/firewall/nat/searchNAT")
-        data = response.json()
+        data = self._search_nat_rules()
         rows = data.get("rows", []) if isinstance(data, dict) else []
         services: List[Dict[str, object]] = []
         for row in rows:
@@ -492,6 +502,33 @@ class OPNsenseClient(_BaseSenseClient):
                 }
             )
         return services
+
+    def _search_nat_rules(self) -> Dict[str, object]:
+        """Recupera reglas NAT probando las variantes de endpoint conocidas."""
+
+        endpoints = [
+            # Confirmed in the upstream core API tree
+            "/api/firewall/filter/searchRule",
+            "/api/firewall/source_nat/searchRule",
+            # Legacy endpoints kept for compatibility where available
+            "/api/firewall/nat/searchNAT",
+        ]
+
+        last_exc: httpx.HTTPStatusError | None = None
+        for endpoint in endpoints:
+            try:
+                response = self._request("GET", endpoint)
+                return response.json()
+            except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
+                last_exc = exc
+                if exc.response.status_code == 404:
+                    continue
+                raise
+
+        if last_exc:
+            raise last_exc
+
+        return {}
 
     def _create_port_forward(
         self,
