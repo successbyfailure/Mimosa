@@ -1,9 +1,16 @@
 import json
+import os
 import unittest
 
 import httpx
 
 from mimosa.core.sense import PFSenseClient
+
+
+def _as_bool(value: str | None, default: bool = True) -> bool:
+    if value is None:
+        return default
+    return value.lower() not in {"0", "false", "no"}
 
 
 class PFSenseClientTests(unittest.TestCase):
@@ -153,6 +160,39 @@ class PFSenseClientTests(unittest.TestCase):
         self.assertTrue(status.get("alias_created"))
         self.assertTrue(status.get("applied_changes"))
         self.assertTrue(self.alias_exists)
+
+    def test_live_pfsense_calls_use_test_environment(self) -> None:
+        base_url = os.getenv("TEST_FIREWALL_PFSENSE_BASE_URL")
+        api_key = os.getenv("TEST_FIREWALL_PFSENSE_API_KEY")
+        api_secret = os.getenv("TEST_FIREWALL_PFSENSE_API_SECRET", api_key)
+        alias_name = os.getenv("TEST_FIREWALL_PFSENSE_ALIAS_NAME", "mimosa_blocklist")
+        verify_ssl = _as_bool(os.getenv("TEST_FIREWALL_PFSENSE_VERIFY_SSL"), True)
+        apply_changes = _as_bool(os.getenv("TEST_FIREWALL_APPLY_CHANGES"), False)
+        timeout_str = os.getenv("TEST_FIREWALL_TIMEOUT")
+        timeout = float(timeout_str) if timeout_str else 10.0
+        test_ip = os.getenv("TEST_FIREWALL_PFSENSE_TEST_IP", "198.51.100.252")
+
+        if not base_url or not api_key or not api_secret:
+            self.skipTest("Entorno de pruebas pfSense incompleto")
+
+        firewall = PFSenseClient(
+            base_url=base_url,
+            api_key=api_key,
+            api_secret=api_secret,
+            alias_name=alias_name,
+            verify_ssl=verify_ssl,
+            timeout=timeout,
+            apply_changes=apply_changes,
+        )
+
+        firewall.check_connection()
+        firewall.ensure_ready()
+        firewall.block_ip(test_ip, reason="prueba-ci-env")
+        try:
+            blocks = firewall.list_blocks()
+            self.assertIn(test_ip, blocks)
+        finally:
+            firewall.unblock_ip(test_ip)
 
 
 if __name__ == "__main__":

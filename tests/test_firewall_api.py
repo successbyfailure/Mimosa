@@ -29,21 +29,65 @@ def _as_bool(value: str | None, default: bool = True) -> bool:
     return value.lower() not in {"false", "0", "no"}
 
 
-def _env_firewall_payload() -> FirewallInput | None:
+def _opnsense_env_payload() -> FirewallInput | None:
+    base_url = os.getenv("TEST_FIREWALL_OPNSENSE_BASE_URL")
+    api_key = os.getenv("TEST_FIREWALL_OPNSENSE_API_KEY")
+    api_secret = os.getenv("TEST_FIREWALL_OPNSENSE_API_SECRET")
+    if not base_url or not api_key or not api_secret:
+        return None
+    return FirewallInput(
+        name=os.getenv("TEST_FIREWALL_OPNSENSE_NAME", "opnsense-env"),
+        type="opnsense",
+        base_url=base_url,
+        api_key=api_key,
+        api_secret=api_secret,
+        alias_name=os.getenv("TEST_FIREWALL_OPNSENSE_ALIAS_NAME", "mimosa_blocklist"),
+        verify_ssl=_as_bool(os.getenv("TEST_FIREWALL_OPNSENSE_VERIFY_SSL"), True),
+        timeout=float(os.getenv("TEST_FIREWALL_TIMEOUT") or 15),
+        apply_changes=_as_bool(os.getenv("TEST_FIREWALL_APPLY_CHANGES"), True),
+    )
+
+
+def _pfsense_env_payload() -> FirewallInput | None:
+    base_url = os.getenv("TEST_FIREWALL_PFSENSE_BASE_URL")
+    api_key = os.getenv("TEST_FIREWALL_PFSENSE_API_KEY")
+    api_secret = os.getenv("TEST_FIREWALL_PFSENSE_API_SECRET", api_key)
+    if not base_url or not api_key or not api_secret:
+        return None
+    return FirewallInput(
+        name=os.getenv("TEST_FIREWALL_PFSENSE_NAME", "pfsense-env"),
+        type="pfsense",
+        base_url=base_url,
+        api_key=api_key,
+        api_secret=api_secret,
+        alias_name=os.getenv("TEST_FIREWALL_PFSENSE_ALIAS_NAME", "mimosa_blocklist"),
+        verify_ssl=_as_bool(os.getenv("TEST_FIREWALL_PFSENSE_VERIFY_SSL"), True),
+        timeout=float(os.getenv("TEST_FIREWALL_TIMEOUT") or 15),
+        apply_changes=_as_bool(os.getenv("TEST_FIREWALL_APPLY_CHANGES"), True),
+    )
+
+
+def _legacy_env_payload() -> FirewallInput | None:
     base_url = os.getenv("TEST_FIREWALL_BASE_URL")
-    if not base_url:
+    api_key = os.getenv("TEST_FIREWALL_API_KEY")
+    api_secret = os.getenv("TEST_FIREWALL_API_SECRET")
+    if not base_url or not api_key or not api_secret:
         return None
     return FirewallInput(
         name=os.getenv("TEST_FIREWALL_NAME", "env-firewall"),
         type=os.getenv("TEST_FIREWALL_TYPE", "opnsense"),
         base_url=base_url,
-        api_key=os.getenv("TEST_FIREWALL_API_KEY"),
-        api_secret=os.getenv("TEST_FIREWALL_API_SECRET"),
+        api_key=api_key,
+        api_secret=api_secret,
         alias_name=os.getenv("TEST_FIREWALL_ALIAS_NAME", "mimosa_blocklist"),
         verify_ssl=_as_bool(os.getenv("TEST_FIREWALL_VERIFY_SSL"), True),
         timeout=float(os.getenv("TEST_FIREWALL_TIMEOUT") or 15),
         apply_changes=_as_bool(os.getenv("TEST_FIREWALL_APPLY_CHANGES"), True),
     )
+
+
+def _env_firewall_payload() -> FirewallInput | None:
+    return _opnsense_env_payload() or _pfsense_env_payload() or _legacy_env_payload()
 
 
 class FirewallApiTests(unittest.TestCase):
@@ -163,7 +207,7 @@ class FirewallEnvIntegrationTests(unittest.TestCase):
         self._tmp.cleanup()
 
     @unittest.skipUnless(
-        os.getenv("TEST_FIREWALL_BASE_URL"),
+        _env_firewall_payload(),
         "Variables de entorno de firewall no configuradas",
     )
     def test_block_rule_stats_with_env_firewall(self) -> None:
@@ -177,7 +221,7 @@ class FirewallEnvIntegrationTests(unittest.TestCase):
         self.assertIn(stats.status_code, (200, 501))
 
     @unittest.skipUnless(
-        os.getenv("TEST_FIREWALL_BASE_URL"),
+        _env_firewall_payload(),
         "Variables de entorno de firewall no configuradas",
     )
     def test_flush_states_with_env_firewall(self) -> None:
