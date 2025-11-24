@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 
 from fastapi.testclient import TestClient
 
+from conftest import ensure_test_env
 from mimosa.core.blocking import BlockManager
 from mimosa.core.offenses import OffenseStore
 from mimosa.web.app import FirewallInput, create_app
@@ -30,6 +31,15 @@ def _as_bool(value: str | None, default: bool = True) -> bool:
 
 
 def _opnsense_env_payload() -> FirewallInput | None:
+    if not ensure_test_env(
+        [
+            "TEST_FIREWALL_OPNSENSE_BASE_URL",
+            "TEST_FIREWALL_OPNSENSE_API_KEY",
+            "TEST_FIREWALL_OPNSENSE_API_SECRET",
+        ]
+    ):
+        return None
+
     base_url = os.getenv("TEST_FIREWALL_OPNSENSE_BASE_URL")
     api_key = os.getenv("TEST_FIREWALL_OPNSENSE_API_KEY")
     api_secret = os.getenv("TEST_FIREWALL_OPNSENSE_API_SECRET")
@@ -49,6 +59,15 @@ def _opnsense_env_payload() -> FirewallInput | None:
 
 
 def _pfsense_env_payload() -> FirewallInput | None:
+    if not ensure_test_env(
+        [
+            "TEST_FIREWALL_PFSENSE_BASE_URL",
+            "TEST_FIREWALL_PFSENSE_API_KEY",
+            "TEST_FIREWALL_PFSENSE_API_SECRET",
+        ]
+    ):
+        return None
+
     base_url = os.getenv("TEST_FIREWALL_PFSENSE_BASE_URL")
     api_key = os.getenv("TEST_FIREWALL_PFSENSE_API_KEY")
     api_secret = os.getenv("TEST_FIREWALL_PFSENSE_API_SECRET", api_key)
@@ -68,6 +87,15 @@ def _pfsense_env_payload() -> FirewallInput | None:
 
 
 def _legacy_env_payload() -> FirewallInput | None:
+    if not ensure_test_env(
+        [
+            "TEST_FIREWALL_BASE_URL",
+            "TEST_FIREWALL_API_KEY",
+            "TEST_FIREWALL_API_SECRET",
+        ]
+    ):
+        return None
+
     base_url = os.getenv("TEST_FIREWALL_BASE_URL")
     api_key = os.getenv("TEST_FIREWALL_API_KEY")
     api_secret = os.getenv("TEST_FIREWALL_API_SECRET")

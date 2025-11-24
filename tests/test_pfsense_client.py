@@ -4,6 +4,7 @@ import unittest
 
 import httpx
 
+from conftest import ensure_test_env
 from mimosa.core.sense import PFSenseClient
 
 
@@ -162,6 +163,15 @@ class PFSenseClientTests(unittest.TestCase):
         self.assertTrue(self.alias_exists)
 
     def test_live_pfsense_calls_use_test_environment(self) -> None:
+        required_vars = [
+            "TEST_FIREWALL_PFSENSE_BASE_URL",
+            "TEST_FIREWALL_PFSENSE_API_KEY",
+            "TEST_FIREWALL_PFSENSE_API_SECRET",
+        ]
+
+        if not ensure_test_env(required_vars):
+            self.skipTest("Entorno de pruebas pfSense incompleto")
+
         base_url = os.getenv("TEST_FIREWALL_PFSENSE_BASE_URL")
         api_key = os.getenv("TEST_FIREWALL_PFSENSE_API_KEY")
         api_secret = os.getenv("TEST_FIREWALL_PFSENSE_API_SECRET", api_key)
@@ -171,9 +181,6 @@ class PFSenseClientTests(unittest.TestCase):
         timeout_str = os.getenv("TEST_FIREWALL_TIMEOUT")
         timeout = float(timeout_str) if timeout_str else 10.0
         test_ip = os.getenv("TEST_FIREWALL_PFSENSE_TEST_IP", "198.51.100.252")
-
-        if not base_url or not api_key or not api_secret:
-            self.skipTest("Entorno de pruebas pfSense incompleto")
 
         firewall = PFSenseClient(
             base_url=base_url,
