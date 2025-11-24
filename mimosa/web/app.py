@@ -562,6 +562,28 @@ def create_app(
             raise HTTPException(status_code=502, detail=str(exc))
         return {"items": services}
 
+    @app.get("/api/firewalls/{config_id}/aliases")
+    def list_firewall_aliases(config_id: str) -> Dict[str, object]:
+        config, gateway = _get_firewall(config_id)
+        try:
+            gateway.ensure_ready()
+            block_entries = gateway.list_blocks()
+            port_entries = gateway.get_ports()
+        except NotImplementedError:
+            raise HTTPException(
+                status_code=501,
+                detail="El firewall no expone alias a través de la API",
+            )
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+        return {
+            "alias": config.alias_name,
+            "block_entries": block_entries,
+            "ports_alias": getattr(gateway, "ports_alias_name", "mimosa_ports"),
+            "port_entries": port_entries,
+        }
+
     @app.post("/api/firewalls/{config_id}/port_forwards")
     def create_port_forwards(config_id: str, payload: PortForwardInput) -> Dict[str, object]:
         _, gateway = _get_firewall(config_id)
