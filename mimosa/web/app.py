@@ -580,7 +580,11 @@ def create_app(
         return {
             "alias": config.alias_name,
             "block_entries": block_entries,
-            "ports_alias": getattr(gateway, "ports_alias_name", "mimosa_ports"),
+            "ports_aliases": getattr(
+                gateway,
+                "ports_alias_names",
+                {"tcp": "mimosa_ports_tcp", "udp": "mimosa_ports_udp"},
+            ),
             "port_entries": port_entries,
         }
 

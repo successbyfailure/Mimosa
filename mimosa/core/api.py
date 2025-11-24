@@ -3,7 +3,7 @@
 Expone endpoints internos para interacción entre módulos (web, proxy, bot).
 """
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from mimosa.core.blocking import BlockEntry, BlockManager
 from pydantic import BaseModel
@@ -160,8 +160,8 @@ class FirewallGateway:
 
         raise NotImplementedError
 
-    def get_ports(self) -> List[int]:
-        """Devuelve el contenido del alias de puertos publicados."""
+    def get_ports(self) -> Dict[str, List[int]]:
+        """Devuelve el contenido de los alias de puertos publicados."""
 
         raise NotImplementedError
 

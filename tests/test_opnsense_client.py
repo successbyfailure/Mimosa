@@ -19,6 +19,9 @@ class OPNsenseClientTests(unittest.TestCase):
         self.alias_name = "mimosa_blocklist"
         self.requests: list[tuple[str, str, int]] = []
         self.alias_addresses: set[str] = set()
+        self.port_aliases_created: set[str] = set()
+        self.alias_entries: dict[str, set[str]] = {self.alias_name: self.alias_addresses}
+        self.created_aliases: set[str] = set()
         self.fallback_after_additem_404 = False
         self.fallback_after_delete_404 = False
 
@@ -29,11 +32,11 @@ class OPNsenseClientTests(unittest.TestCase):
                 return response
 
             if request.url.path == f"/api/firewall/alias/searchItem":
-                rows = (
-                    [{"name": self.alias_name, "uuid": "alias-uuid"}]
-                    if self.alias_created
-                    else []
-                )
+                rows = []
+                if self.alias_created:
+                    rows.append({"name": self.alias_name, "uuid": "alias-uuid"})
+                for alias_name in sorted(self.port_aliases_created):
+                    rows.append({"name": alias_name, "uuid": f"{alias_name}-uuid"})
                 response = httpx.Response(
                     200,
                     json={
@@ -46,17 +49,19 @@ class OPNsenseClientTests(unittest.TestCase):
                 self.requests.append((request.method, request.url.path, response.status_code))
                 return response
 
-            if request.url.path == f"/api/firewall/alias_util/list/{self.alias_name}":
-                if self.alias_created:
+            if request.url.path.startswith("/api/firewall/alias_util/list/"):
+                alias_name = request.url.path.rsplit("/", maxsplit=1)[-1]
+                entries = self.alias_entries.get(alias_name, set())
+                if alias_name in self.created_aliases or (
+                    alias_name == self.alias_name and self.alias_created
+                ):
                     response = httpx.Response(
                         200,
                         json={
-                            "total": len(self.alias_addresses),
-                            "rowCount": len(self.alias_addresses),
+                            "total": len(entries),
+                            "rowCount": len(entries),
                             "current": 1,
-                            "rows": [
-                                {"ip": address} for address in sorted(self.alias_addresses)
-                            ],
+                            "rows": [{"ip": address} for address in sorted(entries)],
                         },
                     )
                 else:
@@ -70,46 +75,60 @@ class OPNsenseClientTests(unittest.TestCase):
                 else:
                     payload = json.loads(request.content or b"{}")
                     alias = payload.get("alias", {})
-                    self.alias_created = alias.get("name") == self.alias_name
+                    alias_name = alias.get("name")
+                    if alias_name:
+                        self.created_aliases.add(alias_name)
+                        self.alias_entries.setdefault(alias_name, set())
+                        if alias_name == self.alias_name:
+                            self.alias_created = True
+                        else:
+                            self.port_aliases_created.add(alias_name)
                     response = httpx.Response(200, json={"uuid": "alias-uuid"})
                 self.requests.append((request.method, request.url.path, response.status_code))
                 return response
 
-            if request.url.path == "/api/firewall/alias_util/add":
-                payload = json.loads(request.content or b"{}")
-                self.alias_created = payload.get("name") == self.alias_name
-                response = httpx.Response(200, json={"result": "saved"})
-                self.requests.append((request.method, request.url.path, response.status_code))
-                return response
-
-            if request.url.path == f"/api/firewall/alias_util/add/{self.alias_name}":
+            if request.url.path.startswith("/api/firewall/alias_util/add/"):
+                alias_name = request.url.path.rsplit("/", maxsplit=1)[-1]
                 payload = json.loads(request.content or b"{}")
                 ip = payload.get("address")
+                entries = self.alias_entries.setdefault(alias_name, set())
                 if ip:
-                    self.alias_addresses.add(ip)
-                    self.alias_created = True
+                    entries.add(ip)
+                    if alias_name == self.alias_name:
+                        self.alias_addresses.add(ip)
+                        self.alias_created = True
+                    else:
+                        self.port_aliases_created.add(alias_name)
                     response = httpx.Response(200, json={"status": "done"})
                 else:
                     response = httpx.Response(400, json={"status": "failed"})
                 self.requests.append((request.method, request.url.path, response.status_code))
                 return response
 
-            if request.url.path == f"/api/firewall/alias_util/delete/{self.alias_name}":
-                if self.fallback_after_delete_404:
+            if request.url.path.startswith("/api/firewall/alias_util/delete/"):
+                alias_name = request.url.path.rsplit("/", maxsplit=1)[-1]
+                if self.fallback_after_delete_404 and alias_name == self.alias_name:
                     response = httpx.Response(404, json={"error": "missing endpoint"})
                 else:
                     payload = json.loads(request.content or b"{}")
                     ip = payload.get("address")
-                    if ip and ip in self.alias_addresses:
-                        self.alias_addresses.remove(ip)
+                    entries = self.alias_entries.setdefault(alias_name, set())
+                    if ip and ip in entries:
+                        entries.discard(ip)
+                        if alias_name == self.alias_name:
+                            self.alias_addresses.discard(ip)
                         response = httpx.Response(200, json={"status": "done"})
                     else:
                         response = httpx.Response(404, json={"status": "not found"})
                 self.requests.append((request.method, request.url.path, response.status_code))
                 return response
 
-            if request.url.path == f"/api/firewall/alias_util/flush/{self.alias_name}":
-                self.alias_addresses.clear()
+            if request.url.path.startswith("/api/firewall/alias_util/flush/"):
+                alias_name = request.url.path.rsplit("/", maxsplit=1)[-1]
+                entries = self.alias_entries.setdefault(alias_name, set())
+                entries.clear()
+                if alias_name == self.alias_name:
+                    self.alias_addresses.clear()
                 response = httpx.Response(200, json={"status": "done"})
                 self.requests.append((request.method, request.url.path, response.status_code))
                 return response
@@ -160,21 +179,11 @@ class OPNsenseClientTests(unittest.TestCase):
             self.requests,
         )
 
-    def test_falls_back_to_legacy_alias_util_creation(self) -> None:
+    def test_errors_if_alias_creation_endpoint_is_missing(self) -> None:
         self.fallback_after_additem_404 = True
 
-        blocks = self.firewall.list_blocks()
-
-        self.assertTrue(self.alias_created)
-        self.assertEqual(blocks, [])
-        self.assertIn(
-            ("POST", "/api/firewall/alias/addItem", 404),
-            self.requests,
-        )
-        self.assertIn(
-            ("POST", "/api/firewall/alias_util/add", 200),
-            self.requests,
-        )
+        with self.assertRaises(httpx.HTTPStatusError):
+            self.firewall.list_blocks()
 
     def test_block_and_unblock_trigger_reload(self) -> None:
         self.firewall.block_ip("203.0.113.10", reason="prueba")
@@ -225,6 +234,8 @@ class OPNsenseClientTests(unittest.TestCase):
         apply_calls = [req for req in self.requests if req[1] == "/api/firewall/filter/apply"]
         self.assertEqual(len(apply_calls), 1)
         self.assertTrue(self.alias_created)
+        self.assertIn("mimosa_ports_tcp", self.port_aliases_created)
+        self.assertIn("mimosa_ports_udp", self.port_aliases_created)
 
     def test_can_disable_apply_calls_for_tests(self) -> None:
         firewall = OPNsenseClient(
@@ -250,6 +261,8 @@ class OPNsenseClientTests(unittest.TestCase):
         self.assertTrue(status.get("alias_created"))
         self.assertTrue(status.get("applied_changes"))
         self.assertIn(("POST", "/api/firewall/filter/apply", 200), self.requests)
+        self.assertIn("mimosa_ports_tcp", self.port_aliases_created)
+        self.assertIn("mimosa_ports_udp", self.port_aliases_created)
 
     def test_live_opnsense_calls_use_environment(self) -> None:
         base_url = os.getenv("OPNSENSE_BASE_URL") or os.getenv("OPNSENSE_URL")

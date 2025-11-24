@@ -398,10 +398,10 @@
         <div style="max-height:240px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
           <table>
             <thead>
-              <tr><th>Puertos publicados</th></tr>
+              <tr><th>Puerto</th><th>Protocolo</th></tr>
             </thead>
             <tbody id="alias-port-table">
-              <tr><td class="muted">Sin datos.</td></tr>
+              <tr><td colspan="2" class="muted">Sin datos.</td></tr>
             </tbody>
           </table>
         </div>
@@ -1472,18 +1472,18 @@ function renderBlockSelectors() {
   loadFirewallAliases();
 }
 
-function renderAliasPlaceholder(tbodyId, message) {
+function renderAliasPlaceholder(tbodyId, message, columns = 1) {
   const tbody = document.getElementById(tbodyId);
   if (!tbody) return;
-  tbody.innerHTML = `<tr><td class="muted">${message}</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="${columns}" class="muted">${message}</td></tr>`;
 }
 
-function renderAliasEntries(tbodyId, entries, emptyText) {
+function renderAliasEntries(tbodyId, entries, emptyText, columns = 1) {
   const tbody = document.getElementById(tbodyId);
   if (!tbody) return;
   tbody.innerHTML = '';
   if (!entries || !entries.length) {
-    renderAliasPlaceholder(tbodyId, emptyText);
+    renderAliasPlaceholder(tbodyId, emptyText, columns);
     return;
   }
   entries.forEach(entry => {
@@ -1493,9 +1493,35 @@ function renderAliasEntries(tbodyId, entries, emptyText) {
   });
 }
 
+function renderPortAliasEntries(entriesByProtocol, emptyText = 'Alias sin puertos.') {
+  const tbody = document.getElementById('alias-port-table');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  const rows = [];
+  if (entriesByProtocol && typeof entriesByProtocol === 'object') {
+    Object.entries(entriesByProtocol).forEach(([protocol, ports]) => {
+      (ports || []).forEach(port => rows.push({ port: Number(port), protocol: protocol.toUpperCase() }));
+    });
+  }
+
+  if (!rows.length) {
+    renderAliasPlaceholder('alias-port-table', emptyText, 2);
+    return;
+  }
+
+  rows
+    .sort((a, b) => (a.port === b.port ? a.protocol.localeCompare(b.protocol) : a.port - b.port))
+    .forEach(entry => {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${entry.port}</td><td>${entry.protocol}</td>`;
+      tbody.appendChild(row);
+    });
+}
+
 function renderAliasTablesFallback(message) {
   renderAliasPlaceholder('alias-block-table', message);
-  renderAliasPlaceholder('alias-port-table', message);
+  renderAliasPlaceholder('alias-port-table', message, 2);
 }
 
 async function loadFirewallAliases() {
@@ -1526,11 +1552,13 @@ async function loadFirewallAliases() {
     }
 
     renderAliasEntries('alias-block-table', data.block_entries || [], 'Alias sin entradas.');
-    renderAliasEntries('alias-port-table', data.port_entries || [], 'Alias sin puertos.');
+    renderPortAliasEntries(data.port_entries || {}, 'Alias sin puertos.');
     if (statusEl) {
       const aliasLabel = data.alias || '-';
-      const portsAlias = data.ports_alias || 'mimosa_ports';
-      statusEl.textContent = `Alias de bloqueo: ${aliasLabel} · Alias de puertos: ${portsAlias}`;
+      const portsAliases = data.ports_aliases || {};
+      const tcpAlias = portsAliases.tcp || 'mimosa_ports_tcp';
+      const udpAlias = portsAliases.udp || 'mimosa_ports_udp';
+      statusEl.textContent = `Alias de bloqueo: ${aliasLabel} · Puertos TCP: ${tcpAlias} · Puertos UDP: ${udpAlias}`;
     }
   } catch (error) {
     renderAliasTablesFallback('Error al cargar los alias.');

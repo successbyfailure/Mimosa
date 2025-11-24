@@ -1,4 +1,5 @@
 import json
+import json
 import os
 import unittest
 
@@ -19,6 +20,8 @@ class PFSenseClientTests(unittest.TestCase):
         self.alias_name = "mimosa_blocklist"
         self.alias_exists = True
         self.alias_addresses: set[str] = set()
+        self.port_aliases_created: set[str] = set()
+        self.alias_entries: dict[str, set[str]] = {self.alias_name: self.alias_addresses}
 
         def handler(request: httpx.Request) -> httpx.Response:
             path = request.url.path
@@ -27,41 +30,59 @@ class PFSenseClientTests(unittest.TestCase):
                 self.requests.append((request.method, path, response.status_code))
                 return response
 
-            if path == f"/api/v1/firewall/alias/{self.alias_name}":
-                if not self.alias_exists:
+            if path.startswith("/api/v1/firewall/alias/") and "/address" not in path:
+                alias_name = path.rsplit("/", maxsplit=1)[-1]
+                alias_exists = (
+                    alias_name == self.alias_name and self.alias_exists
+                ) or alias_name in self.port_aliases_created
+                if not alias_exists:
                     response = httpx.Response(404, json={"error": "missing"})
                 else:
+                    entries = self.alias_entries.setdefault(alias_name, set())
                     response = httpx.Response(
                         200,
                         json={
                             "addresses": [
-                                {"address": ip} for ip in sorted(self.alias_addresses)
+                                {"address": ip} for ip in sorted(entries)
                             ]
                         },
                     )
                 self.requests.append((request.method, path, response.status_code))
                 return response
 
-            if path.startswith(f"/api/v1/firewall/alias/{self.alias_name}/address"):
+            if path.startswith("/api/v1/firewall/alias/") and "/address" in path:
+                alias_name = path.split("/")[5]
                 if request.method == "POST":
                     address = request.url.path.rsplit("/", maxsplit=1)[-1]
                     if not address or address == "address":
                         content = request.content or b"{}"
                         payload = json.loads(content.decode())
                         address = payload.get("address", "")
-                    self.alias_exists = True
+                    if alias_name == self.alias_name:
+                        self.alias_exists = True
+                    else:
+                        self.port_aliases_created.add(alias_name)
                     if address:
-                        self.alias_addresses.add(address)
+                        entries = self.alias_entries.setdefault(alias_name, set())
+                        entries.add(address)
                     response = httpx.Response(200, json={"saved": address})
                 else:
                     address = request.url.path.rsplit("/", maxsplit=1)[-1]
-                    self.alias_addresses.discard(address)
+                    entries = self.alias_entries.setdefault(alias_name, set())
+                    entries.discard(address)
                     response = httpx.Response(200, json={"removed": address})
                 self.requests.append((request.method, path, response.status_code))
                 return response
 
             if path == "/api/v1/firewall/alias":
-                self.alias_exists = True
+                payload = json.loads(request.content or b"{}")
+                alias_name = payload.get("name")
+                if alias_name == self.alias_name:
+                    self.alias_exists = True
+                elif alias_name:
+                    self.port_aliases_created.add(alias_name)
+                if alias_name:
+                    self.alias_entries.setdefault(alias_name, set())
                 response = httpx.Response(200, json={"created": self.alias_name})
                 self.requests.append((request.method, path, response.status_code))
                 return response
@@ -133,6 +154,8 @@ class PFSenseClientTests(unittest.TestCase):
         apply_calls = [req for req in self.requests if req[1] == "/api/v1/diagnostics/filter/reload"]
         self.assertEqual(len(apply_calls), 1)
         self.assertTrue(self.alias_exists)
+        self.assertIn("mimosa_ports_tcp", self.port_aliases_created)
+        self.assertIn("mimosa_ports_udp", self.port_aliases_created)
 
     def test_can_disable_apply_calls_for_tests(self) -> None:
         firewall = PFSenseClient(
@@ -160,6 +183,8 @@ class PFSenseClientTests(unittest.TestCase):
         self.assertTrue(status.get("alias_created"))
         self.assertTrue(status.get("applied_changes"))
         self.assertTrue(self.alias_exists)
+        self.assertIn("mimosa_ports_tcp", self.port_aliases_created)
+        self.assertIn("mimosa_ports_udp", self.port_aliases_created)
 
     def test_live_pfsense_calls_use_test_environment(self) -> None:
         base_url = os.getenv("TEST_FIREWALL_PFSENSE_BASE_URL")

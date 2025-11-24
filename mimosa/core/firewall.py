@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import subprocess
-from typing import Callable, List
+from typing import Callable, Dict, List
 
 from mimosa.core.api import FirewallGateway
 
@@ -12,7 +12,7 @@ class DummyFirewall(FirewallGateway):
 
     def __init__(self) -> None:
         self._blocked: List[str] = []
-        self._ports: List[int] = []
+        self._ports: Dict[str, List[int]] = {"tcp": [], "udp": []}
 
     def block_ip(self, ip: str, reason: str, duration_minutes: int | None = None) -> None:
         if ip not in self._blocked:
@@ -54,19 +54,23 @@ class DummyFirewall(FirewallGateway):
         description: str | None = None,
         interface: str = "wan",
     ) -> None:
-        _ = target_ip, protocol, description, interface
-        if port not in self._ports:
-            self._ports.append(port)
+        _ = target_ip, description, interface
+        normalized_protocol = (protocol or "tcp").lower()
+        bucket = self._ports.setdefault(normalized_protocol, [])
+        if port not in bucket:
+            bucket.append(port)
 
     def remove_port(
         self, port: int, *, protocol: str = "tcp", interface: str = "wan"
     ) -> None:
-        _ = protocol, interface
-        if port in self._ports:
-            self._ports.remove(port)
+        _ = interface
+        normalized_protocol = (protocol or "tcp").lower()
+        bucket = self._ports.get(normalized_protocol)
+        if bucket and port in bucket:
+            bucket.remove(port)
 
-    def get_ports(self) -> List[int]:
-        return list(self._ports)
+    def get_ports(self) -> Dict[str, List[int]]:
+        return {protocol: list(ports) for protocol, ports in self._ports.items()}
 
     def list_services(self) -> List[dict]:
         return []
@@ -159,7 +163,7 @@ class SSHIptablesFirewall(FirewallGateway):
             "La gestión de NAT no está disponible para SSH + iptables"
         )
 
-    def get_ports(self) -> List[int]:
+    def get_ports(self) -> Dict[str, List[int]]:
         raise NotImplementedError(
             "La gestión de NAT no está disponible para SSH + iptables"
         )
