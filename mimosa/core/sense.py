@@ -150,12 +150,21 @@ class _BaseSenseClient(FirewallGateway):
     def remove_port(
         self, port: int, *, protocol: str = "tcp", interface: str = "wan"
     ) -> None:
-        _ = protocol, interface
+        removed_rule = False
         try:
-            changed = self._remove_port_from_alias(int(port))
+            removed_rule = self._delete_port_forward(
+                port=int(port), protocol=protocol, interface=interface
+            )
         except NotImplementedError:
-            return
-        if changed:
+            removed_rule = False
+
+        alias_changed = False
+        try:
+            alias_changed = self._remove_port_from_alias(int(port))
+        except NotImplementedError:
+            alias_changed = False
+
+        if (removed_rule or alias_changed) and self._apply_changes:
             self._apply_changes_if_enabled()
 
     def get_ports(self) -> List[int]:
@@ -224,6 +233,13 @@ class _BaseSenseClient(FirewallGateway):
         interface: str,
     ) -> None:
         """Crea una regla de NAT que apunte a Mimosa."""
+
+        raise NotImplementedError
+
+    def _delete_port_forward(
+        self, *, port: int, protocol: str, interface: str
+    ) -> bool:
+        """Elimina la regla de NAT asociada al puerto indicado."""
 
         raise NotImplementedError
 
@@ -469,6 +485,7 @@ class OPNsenseClient(_BaseSenseClient):
                     "description": row.get("descr") or row.get("description"),
                     "port": port,
                     "protocol": (row.get("protocol") or row.get("proto") or "tcp").lower(),
+                    "interface": row.get("interface") or row.get("if"),
                     "target": row.get("target")
                     or row.get("natip")
                     or row.get("redirect_targetip"),
@@ -505,6 +522,34 @@ class OPNsenseClient(_BaseSenseClient):
                 self._request("POST", "/api/firewall/nat/addPortForward", json=payload)
             else:
                 raise
+
+    def _delete_port_forward(
+        self, *, port: int, protocol: str, interface: str
+    ) -> bool:
+        desired_protocol = protocol.lower()
+        match = next(
+            (
+                svc
+                for svc in self._list_port_forwards()
+                if svc.get("port") == int(port)
+                and svc.get("protocol") == desired_protocol
+                and (svc.get("interface") in {None, interface})
+            ),
+            None,
+        )
+        if not match or not match.get("id"):
+            return False
+
+        try:
+            self._request("POST", f"/api/firewall/nat/delNAT/{match['id']}")
+        except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
+            if exc.response.status_code == 404:
+                self._request(
+                    "POST", f"/api/firewall/nat/delPortForward/{match['id']}"
+                )
+            else:
+                raise
+        return True
 
     def flush_states(self) -> Dict[str, object]:
         response = self._request("POST", "/api/core/diagnostics/flushState")
@@ -763,6 +808,7 @@ class PFSenseClient(_BaseSenseClient):
                     "description": item.get("descr") or item.get("description"),
                     "port": port,
                     "protocol": (item.get("protocol") or item.get("proto") or "tcp").lower(),
+                    "interface": item.get("interface"),
                     "target": item.get("target")
                     or item.get("local-port")
                     or item.get("redirect_targetip"),
@@ -790,3 +836,25 @@ class PFSenseClient(_BaseSenseClient):
             "natreflection": "enable",
         }
         self._request("POST", "/api/v1/firewall/nat/port_forward", json=payload)
+
+    def _delete_port_forward(
+        self, *, port: int, protocol: str, interface: str
+    ) -> bool:
+        desired_protocol = protocol.lower()
+        match = next(
+            (
+                svc
+                for svc in self._list_port_forwards()
+                if svc.get("port") == int(port)
+                and svc.get("protocol") == desired_protocol
+                and (svc.get("interface") in {None, interface})
+            ),
+            None,
+        )
+        if not match or not match.get("id"):
+            return False
+
+        self._request(
+            "DELETE", f"/api/v1/firewall/nat/port_forward/{match['id']}"
+        )
+        return True
