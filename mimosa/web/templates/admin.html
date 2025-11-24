@@ -12,6 +12,7 @@
 <div class="tabs">
   <button class="tab-btn active" data-tab="config" onclick="switchTab('config')">Configuración</button>
   <button class="tab-btn" data-tab="plugins" onclick="switchTab('plugins')">Plugins</button>
+  <button class="tab-btn" data-tab="firewall" onclick="switchTab('firewall')">Firewall</button>
   <button class="tab-btn" data-tab="offenses" onclick="switchTab('offenses')">Ofensas</button>
   <button class="tab-btn" data-tab="blocks" onclick="switchTab('blocks')">Bloqueos</button>
   <button class="tab-btn" data-tab="ips" onclick="switchTab('ips')">IP inspector</button>
@@ -363,6 +364,50 @@
       </div>
     </div>
   </div>
+</section>
+
+<section id="tab-firewall" class="tab-panel">
+  <section class="card space">
+    <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
+      <div>
+        <h2 style="margin:0">Alias del firewall</h2>
+        <div class="muted">Revisa el contenido de los alias de bloqueo y de puertos expuestos.</div>
+      </div>
+      <div class="flex" style="gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+        <select id="alias-fw-select" class="block-fw-select" style="min-width:220px"></select>
+        <button class="secondary" onclick="loadFirewallAliases()">Actualizar</button>
+      </div>
+    </div>
+    <div id="alias-status-message" class="muted" style="margin-top:6px;"></div>
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top:12px; align-items:start;">
+      <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+        <h3 style="margin-top:0">Alias de bloqueo</h3>
+        <div style="max-height:240px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
+          <table>
+            <thead>
+              <tr><th>Entradas</th></tr>
+            </thead>
+            <tbody id="alias-block-table">
+              <tr><td class="muted">Sin datos.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+        <h3 style="margin-top:0">Alias de puertos</h3>
+        <div style="max-height:240px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
+          <table>
+            <thead>
+              <tr><th>Puertos publicados</th></tr>
+            </thead>
+            <tbody id="alias-port-table">
+              <tr><td class="muted">Sin datos.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
 </section>
 
 <section id="tab-offenses" class="tab-panel">
@@ -763,6 +808,7 @@ function switchTab(tab) {
   if (tab === 'offenses') { loadOffenses(); loadRules(); }
   if (tab === 'ips') loadIps();
   if (tab === 'whitelist') loadWhitelist();
+  if (tab === 'firewall') loadFirewallAliases();
   if (tab === 'config') {
     loadBlockingSettings();
     loadFirewalls();
@@ -1374,6 +1420,9 @@ function renderBlockSelectors() {
     });
     updateBlockTableMessage('Añade un firewall para gestionar bloqueos.');
     updateOffenseMessage('Configura un firewall para bloquear ofensas.');
+    renderAliasTablesFallback('Añade un firewall para revisar alias.');
+    const aliasStatus = document.getElementById('alias-status-message');
+    if (aliasStatus) aliasStatus.textContent = 'Sin firewall seleccionado.';
     selectedFirewallId = null;
     return;
   }
@@ -1391,6 +1440,76 @@ function renderBlockSelectors() {
   });
   updateOffenseMessage('');
   refreshBlocks();
+  loadFirewallAliases();
+}
+
+function renderAliasPlaceholder(tbodyId, message) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  tbody.innerHTML = `<tr><td class="muted">${message}</td></tr>`;
+}
+
+function renderAliasEntries(tbodyId, entries, emptyText) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  if (!entries || !entries.length) {
+    renderAliasPlaceholder(tbodyId, emptyText);
+    return;
+  }
+  entries.forEach(entry => {
+    const row = document.createElement('tr');
+    row.innerHTML = `<td>${entry}</td>`;
+    tbody.appendChild(row);
+  });
+}
+
+function renderAliasTablesFallback(message) {
+  renderAliasPlaceholder('alias-block-table', message);
+  renderAliasPlaceholder('alias-port-table', message);
+}
+
+async function loadFirewallAliases() {
+  const statusEl = document.getElementById('alias-status-message');
+  if (statusEl) {
+    statusEl.textContent = '';
+    statusEl.style.color = '';
+  }
+
+  if (!selectedFirewallId) {
+    renderAliasTablesFallback('Configura un firewall para revisar alias.');
+    if (statusEl) statusEl.textContent = 'Selecciona un firewall para consultar los alias.';
+    return;
+  }
+
+  renderAliasTablesFallback('Cargando...');
+
+  try {
+    const res = await fetch(`/api/firewalls/${selectedFirewallId}/aliases`);
+    const data = await res.json();
+    if (!res.ok) {
+      renderAliasTablesFallback('No se pudo cargar el estado de los alias.');
+      if (statusEl) {
+        statusEl.textContent = data.detail || 'No se pudieron consultar los alias.';
+        statusEl.style.color = '#fca5a5';
+      }
+      return;
+    }
+
+    renderAliasEntries('alias-block-table', data.block_entries || [], 'Alias sin entradas.');
+    renderAliasEntries('alias-port-table', data.port_entries || [], 'Alias sin puertos.');
+    if (statusEl) {
+      const aliasLabel = data.alias || '-';
+      const portsAlias = data.ports_alias || 'mimosa_ports';
+      statusEl.textContent = `Alias de bloqueo: ${aliasLabel} · Alias de puertos: ${portsAlias}`;
+    }
+  } catch (error) {
+    renderAliasTablesFallback('Error al cargar los alias.');
+    if (statusEl) {
+      statusEl.textContent = 'Error al cargar los alias.';
+      statusEl.style.color = '#fca5a5';
+    }
+  }
 }
 
 function renderServiceTable(items) {
@@ -1688,6 +1807,7 @@ function handleFirewallChange(event) {
   });
   refreshBlocks();
   loadFirewallServices();
+  loadFirewallAliases();
 }
 
 async function submitBlockForm(event, messageId) {
