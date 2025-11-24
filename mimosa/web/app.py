@@ -349,6 +349,10 @@ def create_app(
             },
             "blocks": {
                 "current": len(block_manager.list()),
+                "total": block_manager.count_all(),
+                "last_7d": block_manager.count_since(now - seven_days),
+                "last_24h": block_manager.count_since(now - day),
+                "last_1h": block_manager.count_since(now - hour),
                 "timeline": {
                     "7d": block_manager.timeline(seven_days, bucket="day"),
                     "24h": block_manager.timeline(day, bucket="hour"),

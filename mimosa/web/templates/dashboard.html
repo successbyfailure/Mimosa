@@ -16,6 +16,29 @@
     <div class="number" id="offenses-24h">0</div>
     <div class="muted">Actividad de ayer a hoy</div>
   </div>
+</section>
+
+<section class="grid stats space">
+  <div class="card">
+    <h2>Bloqueos totales</h2>
+    <div class="number" id="blocks-total">0</div>
+    <div class="muted">Histórico acumulado</div>
+  </div>
+  <div class="card">
+    <h2>Bloqueos últimos 7 días</h2>
+    <div class="number" id="blocks-7d">0</div>
+    <div class="muted">Eventos recientes</div>
+  </div>
+  <div class="card">
+    <h2>Bloqueos últimas 24h</h2>
+    <div class="number" id="blocks-24h">0</div>
+    <div class="muted">Actividad de ayer a hoy</div>
+  </div>
+  <div class="card">
+    <h2>Bloqueos última hora</h2>
+    <div class="number" id="blocks-1h">0</div>
+    <div class="muted">Ataques en curso</div>
+  </div>
   <div class="card">
     <h2>Bloqueos activos</h2>
     <div class="number" id="blocks-current">0</div>
@@ -79,6 +102,10 @@ function updateStatsCards(offenses = {}, blocks = {}) {
   document.getElementById('offenses-total').innerText = offenses.total ?? '—';
   document.getElementById('offenses-7d').innerText = offenses.last_7d ?? '—';
   document.getElementById('offenses-24h').innerText = offenses.last_24h ?? '—';
+  document.getElementById('blocks-total').innerText = blocks.total ?? '—';
+  document.getElementById('blocks-7d').innerText = blocks.last_7d ?? '—';
+  document.getElementById('blocks-24h').innerText = blocks.last_24h ?? '—';
+  document.getElementById('blocks-1h').innerText = blocks.last_1h ?? '—';
   document.getElementById('blocks-current').innerText = blocks.current ?? '—';
 }
 
