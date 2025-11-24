@@ -218,6 +218,16 @@ class BlockManager:
 
         return len(self.history_for_ip(ip))
 
+    def count_all(self) -> int:
+        """Número total de bloqueos registrados."""
+
+        return len(self._history)
+
+    def count_since(self, since: datetime) -> int:
+        """Cuenta bloqueos creados a partir de un instante dado."""
+
+        return len([entry for entry in self._history if entry.created_at >= since])
+
     def recent_activity(self, limit: int = 20) -> List[Dict[str, object]]:
         """Historial combinado de altas y bajas de bloqueos."""
 
