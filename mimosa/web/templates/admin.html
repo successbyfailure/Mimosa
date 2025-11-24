@@ -36,9 +36,20 @@
       </div>
       <div style="display:flex; align-items:flex-end; gap:10px;">
         <button type="submit">Guardar</button>
-        <div id="blocking-settings-message" class="muted"></div>
-      </div>
+      <div id="blocking-settings-message" class="muted"></div>
+    </div>
     </form>
+  </section>
+
+  <section class="card space">
+    <div class="flex space" style="align-items:flex-start;">
+      <div>
+        <h2 style="margin:0 0 8px">Base de datos de estadísticas</h2>
+        <div class="muted">Reinicia contadores y tablas usadas para las gráficas del dashboard. No afecta firewalls ni whitelist.</div>
+      </div>
+      <button class="secondary" onclick="resetStatsDatabase()">Vaciar base de datos</button>
+    </div>
+    <div id="stats-reset-message" class="muted"></div>
   </section>
 
   <section class="card space">
@@ -835,6 +846,23 @@ async function loadBlockingSettings() {
   const form = document.getElementById('blocking-settings');
   form.default_duration_minutes.value = data.default_duration_minutes ?? 60;
   form.sync_interval_seconds.value = data.sync_interval_seconds ?? 300;
+}
+
+async function resetStatsDatabase() {
+  const message = document.getElementById('stats-reset-message');
+  message.textContent = '';
+  message.style.color = '';
+  const confirmed = window.confirm('¿Seguro que quieres vaciar las estadísticas y contadores?');
+  if (!confirmed) return;
+
+  const res = await fetch('/api/stats/reset', { method: 'POST' });
+  if (res.ok) {
+    message.textContent = 'Estadísticas reiniciadas.';
+    message.style.color = '#67e8f9';
+  } else {
+    message.textContent = 'No se pudo reiniciar la base de datos de estadísticas.';
+    message.style.color = '#fca5a5';
+  }
 }
 
 function defaultProxytrapPolicies() {

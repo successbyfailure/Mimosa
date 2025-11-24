@@ -214,3 +214,10 @@ class ProxyTrapService:
             ],
         }
 
+    def reset_stats(self) -> None:
+        """Limpia el fichero de hits acumulados."""
+
+        self._domain_hits = {}
+        if self._stats_path.exists():
+            self._stats_path.unlink()
+

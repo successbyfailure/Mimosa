@@ -283,6 +283,18 @@ class BlockManager:
             for bucket_label, count in sorted(grouped.items())
         ]
 
+    def reset(self) -> None:
+        """Elimina todos los bloqueos persistidos y reinicia la caché."""
+
+        try:
+            with self._connection() as conn:
+                conn.execute("DELETE FROM blocks;")
+        except sqlite3.DatabaseError:
+            Path(self.db_path).unlink(missing_ok=True)
+            ensure_database(self.db_path)
+        self._last_sync = None
+        self._load_state()
+
     # Sincronización con firewall --------------------------------------------------
     def sync_with_firewall(self, gateway: "FirewallGateway", *, force: bool = False) -> Dict[str, List[str]]:
         """Sincroniza la base de datos con las entradas reales del firewall."""
