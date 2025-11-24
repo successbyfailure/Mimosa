@@ -14,6 +14,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY mimosa ./mimosa
+COPY version.json ./version.json
 COPY env.example .
 COPY README.md .
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
