@@ -24,7 +24,7 @@ def _load_env_file(env_path: Path) -> None:
 
         key, value = line.split("=", 1)
         value = value.strip()
-        if key and key not in os.environ and value:
+        if key and value and (key not in os.environ or not os.environ[key]):
             os.environ[key] = value
 
 
