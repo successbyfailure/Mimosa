@@ -97,7 +97,11 @@ class _BaseSenseClient(FirewallGateway):
             "applied_changes": False,
         }
 
-        self.check_connection()
+        try:
+            self.check_connection()
+        except httpx.HTTPError as exc:
+            status["error"] = str(exc)
+            return status
         status["available"] = True
 
         temporal_created = self._ensure_alias_exists(
@@ -435,5 +439,4 @@ class OPNsenseClient(_BaseSenseClient):
     @property
     def _apply_endpoint(self) -> str:
         return "/api/firewall/filter/apply"
-
 

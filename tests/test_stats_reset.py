@@ -1,10 +1,15 @@
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
 from mimosa.core.blocking import BlockManager
 from mimosa.core.offenses import OffenseStore
 from mimosa.web.app import create_app
+
+
+def _get_endpoint(app, path: str, method: str = "GET"):
+    for route in app.router.routes:
+        if getattr(route, "path", None) == path and method in getattr(route, "methods", {"GET"}):
+            return route.endpoint
+    raise AssertionError(f"No se encontró el endpoint {path}")
 
 
 def test_stats_reset_clears_data(tmp_path: Path) -> None:
@@ -18,19 +23,20 @@ def test_stats_reset_clears_data(tmp_path: Path) -> None:
         block_manager=block_manager,
         proxytrap_stats_path=tmp_path / "proxytrap.json",
     )
-    client = TestClient(app)
+    stats_endpoint = _get_endpoint(app, "/api/stats")
+    reset_endpoint = _get_endpoint(app, "/api/stats/reset", "POST")
 
     offense_store.record(source_ip="1.2.3.4", description="test")
     block_manager.add("1.2.3.4", "reason")
 
-    before = client.get("/api/stats").json()
+    before = stats_endpoint()
     assert before["offenses"]["total"] == 1
     assert before["blocks"]["total"] == 1
 
-    reset = client.post("/api/stats/reset")
-    assert reset.status_code == 200
+    reset = reset_endpoint()
+    assert reset["offenses"]["total"] == 0
 
-    after = client.get("/api/stats").json()
+    after = stats_endpoint()
     assert after["offenses"]["total"] == 0
     assert after["blocks"]["total"] == 0
     assert after["offenses"]["timeline"]["7d"] == []
