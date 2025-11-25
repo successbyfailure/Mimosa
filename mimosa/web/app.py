@@ -17,7 +17,6 @@ from pydantic import BaseModel, Field
 
 from mimosa.core.api import FirewallGateway
 from mimosa.core.blocking import BlockEntry, BlockManager
-from mimosa.core.firewall import DummyFirewall
 from mimosa.core.offenses import OffenseRecord, OffenseStore
 from mimosa.core.plugins import (
     MimosaNpmConfig,
@@ -63,17 +62,13 @@ class FirewallInput(BaseModel):
     """Payload para crear y probar conexiones con firewalls."""
 
     name: str
-    type: Literal["dummy", "pfsense", "opnsense", "ssh_iptables"]
+    type: Literal["opnsense"]
     base_url: str | None = None
     api_key: str | None = None
     api_secret: str | None = None
     verify_ssl: bool = True
     timeout: float = 5.0
     apply_changes: bool = True
-    ssh_host: str | None = None
-    ssh_user: str | None = None
-    ssh_key_path: str | None = None
-    ssh_port: int = 22
 
 
 class BlockInput(BaseModel):
@@ -255,7 +250,7 @@ def create_app(
     def _select_gateway() -> FirewallGateway:
         configs = config_store.list()
         if not configs:
-            return DummyFirewall()
+            raise RuntimeError("Configura un firewall OPNsense antes de continuar")
 
         primary = configs[0]
         cached = gateway_cache.get(primary.id)
@@ -267,23 +262,27 @@ def create_app(
         return gateway
 
     def _primary_gateway_or_error() -> FirewallGateway:
-        configs = config_store.list()
-        if not configs:
+        try:
+            return _select_gateway()
+        except RuntimeError as exc:
             raise HTTPException(
                 status_code=404,
-                detail="Configura al menos un firewall para gestionar alias de puertos.",
+                detail=str(exc),
             )
-        return _select_gateway()
 
     def _cleanup_expired_blocks() -> None:
-        gateway = _select_gateway()
+        gateway: FirewallGateway | None = None
+        try:
+            gateway = _select_gateway()
+        except RuntimeError:
+            gateway = None
         block_manager.purge_expired(firewall_gateway=gateway)
 
     def _rule_manager() -> RuleManager:
         return RuleManager(
             offense_store,
             block_manager,
-            _select_gateway(),
+            _primary_gateway_or_error(),
             rules=rule_store.list() or [OffenseRule()],
         )
 

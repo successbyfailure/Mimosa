@@ -2,9 +2,10 @@ import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
-from fastapi import HTTPException
 from conftest import ensure_test_env
+from fastapi import HTTPException
 from mimosa.core.blocking import BlockManager
 from mimosa.core.offenses import OffenseStore
 from mimosa.web.app import (
@@ -15,6 +16,7 @@ from mimosa.web.app import (
     create_app,
 )
 from mimosa.web.config import FirewallConfigStore
+from tests.helpers import MemoryFirewall
 
 
 def _get_endpoint(app, path: str, method: str = "GET"):
@@ -57,62 +59,8 @@ def _opnsense_env_payload() -> FirewallInput | None:
     )
 
 
-def _pfsense_env_payload() -> FirewallInput | None:
-    if not ensure_test_env(
-        [
-            "TEST_FIREWALL_PFSENSE_BASE_URL",
-            "TEST_FIREWALL_PFSENSE_API_KEY",
-            "TEST_FIREWALL_PFSENSE_API_SECRET",
-        ]
-    ):
-        return None
-
-    base_url = os.getenv("TEST_FIREWALL_PFSENSE_BASE_URL")
-    api_key = os.getenv("TEST_FIREWALL_PFSENSE_API_KEY")
-    api_secret = os.getenv("TEST_FIREWALL_PFSENSE_API_SECRET", api_key)
-    if not base_url or not api_key or not api_secret:
-        return None
-    return FirewallInput(
-        name=os.getenv("TEST_FIREWALL_PFSENSE_NAME", "pfsense-env"),
-        type="pfsense",
-        base_url=base_url,
-        api_key=api_key,
-        api_secret=api_secret,
-        verify_ssl=_as_bool(os.getenv("TEST_FIREWALL_PFSENSE_VERIFY_SSL"), True),
-        timeout=float(os.getenv("TEST_FIREWALL_TIMEOUT") or 15),
-        apply_changes=_as_bool(os.getenv("TEST_FIREWALL_APPLY_CHANGES"), True),
-    )
-
-
-def _legacy_env_payload() -> FirewallInput | None:
-    if not ensure_test_env(
-        [
-            "TEST_FIREWALL_BASE_URL",
-            "TEST_FIREWALL_API_KEY",
-            "TEST_FIREWALL_API_SECRET",
-        ]
-    ):
-        return None
-
-    base_url = os.getenv("TEST_FIREWALL_BASE_URL")
-    api_key = os.getenv("TEST_FIREWALL_API_KEY")
-    api_secret = os.getenv("TEST_FIREWALL_API_SECRET")
-    if not base_url or not api_key or not api_secret:
-        return None
-    return FirewallInput(
-        name=os.getenv("TEST_FIREWALL_NAME", "env-firewall"),
-        type=os.getenv("TEST_FIREWALL_TYPE", "opnsense"),
-        base_url=base_url,
-        api_key=api_key,
-        api_secret=api_secret,
-        verify_ssl=_as_bool(os.getenv("TEST_FIREWALL_VERIFY_SSL"), True),
-        timeout=float(os.getenv("TEST_FIREWALL_TIMEOUT") or 15),
-        apply_changes=_as_bool(os.getenv("TEST_FIREWALL_APPLY_CHANGES"), True),
-    )
-
-
 def _env_firewall_payload() -> FirewallInput | None:
-    return _opnsense_env_payload() or _pfsense_env_payload() or _legacy_env_payload()
+    return _opnsense_env_payload()
 
 
 class FirewallApiTests(unittest.TestCase):
@@ -121,6 +69,24 @@ class FirewallApiTests(unittest.TestCase):
         storage_dir = Path(self._tmp.name)
         self.config_store = FirewallConfigStore(path=storage_dir / "firewalls.json")
         self.offense_store = OffenseStore(db_path=storage_dir / "mimosa.db")
+        self.gateway_patcher = patch(
+            "mimosa.web.app.build_firewall_gateway", lambda cfg: MemoryFirewall()
+        )
+        self.status_patcher = patch(
+            "mimosa.web.app.check_firewall_status",
+            lambda cfg: {
+                "id": cfg.id,
+                "name": cfg.name,
+                "type": cfg.type,
+                "online": True,
+                "message": "Conexión OK",
+                "alias_ready": True,
+                "alias_created": False,
+                "applied_changes": False,
+            },
+        )
+        self.gateway_patcher.start()
+        self.status_patcher.start()
         self.app = create_app(
             offense_store=self.offense_store,
             block_manager=BlockManager(db_path=self.offense_store.db_path),
@@ -128,12 +94,14 @@ class FirewallApiTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        self.gateway_patcher.stop()
+        self.status_patcher.stop()
         self._tmp.cleanup()
 
-    def _dummy_payload(self) -> FirewallInput:
+    def _stub_payload(self) -> FirewallInput:
         return FirewallInput(
-            name="dummy-fw",
-            type="dummy",
+            name="opnsense-stub",
+            type="opnsense",
             base_url=None,
             api_key=None,
             api_secret=None,
@@ -146,7 +114,7 @@ class FirewallApiTests(unittest.TestCase):
         return endpoint(payload)
 
     def test_create_firewall_persists_configuration(self) -> None:
-        created = self._create_firewall(self._dummy_payload())
+        created = self._create_firewall(self._stub_payload())
 
         stored = self.config_store.get(created.id)
         self.assertIsNotNone(stored)
@@ -159,11 +127,11 @@ class FirewallApiTests(unittest.TestCase):
 
     def test_test_firewall_accepts_body_payload(self) -> None:
         test_endpoint = _get_endpoint(self.app, "/api/firewalls/test", "POST")
-        result = test_endpoint(self._dummy_payload())
+        result = test_endpoint(self._stub_payload())
         self.assertTrue(result["online"])
 
     def test_block_manager_endpoints_allow_add_and_remove(self) -> None:
-        created = self._create_firewall(self._dummy_payload())
+        created = self._create_firewall(self._stub_payload())
         config_id = created.id
 
         list_blocks = _get_endpoint(self.app, "/api/firewalls/{config_id}/blocks", "GET")
@@ -182,7 +150,7 @@ class FirewallApiTests(unittest.TestCase):
         self.assertEqual(final_listing["items"], [])
 
     def test_blacklist_endpoints_allow_add_and_remove(self) -> None:
-        created = self._create_firewall(self._dummy_payload())
+        created = self._create_firewall(self._stub_payload())
         config_id = created.id
 
         list_blacklist = _get_endpoint(self.app, "/api/firewalls/{config_id}/blacklist", "GET")
