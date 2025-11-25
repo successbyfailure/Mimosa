@@ -57,15 +57,12 @@
     <form id="firewall-form" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
       <div>
         <label>Nombre</label>
-        <input name="name" required placeholder="pfSense homelab" />
+        <input name="name" required placeholder="OPNsense homelab" />
       </div>
       <div>
         <label>Tipo</label>
         <select name="type">
-          <option value="pfsense">pfSense (pfRest)</option>
           <option value="opnsense">OPNsense</option>
-          <option value="ssh_iptables">SSH + iptables</option>
-          <option value="dummy">Dummy</option>
         </select>
       </div>
       <div>
@@ -79,22 +76,6 @@
       <div>
         <label>API secret</label>
         <input name="api_secret" />
-      </div>
-      <div>
-        <label>Host SSH</label>
-        <input name="ssh_host" placeholder="firewall.local" />
-      </div>
-      <div>
-        <label>Usuario SSH</label>
-        <input name="ssh_user" placeholder="root" />
-      </div>
-      <div>
-        <label>Puerto SSH</label>
-        <input name="ssh_port" type="number" min="1" max="65535" value="22" />
-      </div>
-      <div>
-        <label>Ruta llave SSH</label>
-        <input name="ssh_key_path" placeholder="/home/mimosa/.ssh/id_rsa" />
       </div>
       <div>
         <label>Timeout (s)</label>
@@ -754,10 +735,7 @@
       <div>
         <label>Tipo</label>
         <select name="type">
-          <option value="pfsense">pfSense (pfRest)</option>
           <option value="opnsense">OPNsense</option>
-          <option value="ssh_iptables">SSH + iptables</option>
-          <option value="dummy">Dummy</option>
         </select>
       </div>
       <div>
@@ -771,22 +749,6 @@
       <div>
         <label>API secret</label>
         <input name="api_secret" />
-      </div>
-      <div>
-        <label>Host SSH</label>
-        <input name="ssh_host" />
-      </div>
-      <div>
-        <label>Usuario SSH</label>
-        <input name="ssh_user" />
-      </div>
-      <div>
-        <label>Puerto SSH</label>
-        <input name="ssh_port" type="number" min="1" max="65535" />
-      </div>
-      <div>
-        <label>Ruta llave SSH</label>
-        <input name="ssh_key_path" />
       </div>
       <div>
         <label>Timeout (s)</label>
@@ -1484,20 +1446,15 @@ function buildPayload(form) {
   payload.verify_ssl = form.verify_ssl.checked;
   payload.apply_changes = form.apply_changes ? form.apply_changes.checked : true;
   payload.timeout = parseFloat(payload.timeout || '5');
-  payload.ssh_port = payload.ssh_port ? Number(payload.ssh_port) : 22;
   return payload;
 }
 
 function setFormValues(form, cfg) {
   form.name.value = cfg.name || '';
-  form.type.value = cfg.type || 'pfsense';
+  form.type.value = cfg.type || 'opnsense';
   form.base_url.value = cfg.base_url || '';
   form.api_key.value = cfg.api_key || '';
   form.api_secret.value = cfg.api_secret || '';
-  form.ssh_host.value = cfg.ssh_host || '';
-  form.ssh_user.value = cfg.ssh_user || '';
-  form.ssh_port.value = cfg.ssh_port ?? 22;
-  form.ssh_key_path.value = cfg.ssh_key_path || '';
   form.timeout.value = cfg.timeout ?? 5;
   form.verify_ssl.checked = Boolean(cfg.verify_ssl);
   if (form.apply_changes) {

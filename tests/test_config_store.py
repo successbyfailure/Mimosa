@@ -61,7 +61,7 @@ class FirewallConfigStoreEnvTests(unittest.TestCase):
             self.assertEqual(len(configs), 1)
 
             cfg = configs[0]
-            self.assertEqual(cfg.type, "pfsense")
+            self.assertEqual(cfg.type, "opnsense")
             self.assertIsNone(cfg.base_url)
             self.assertIsNone(cfg.api_key)
             self.assertIsNone(cfg.api_secret)

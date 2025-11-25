@@ -3,7 +3,7 @@
 Este archivo aplica a todo el repositorio Mimosa. Úsalo como referencia rápida para ejecutar, contribuir y mantener coherencia en los cambios.
 
 ## Propósito y alcance
-Mimosa es un núcleo de defensa para homelabs que coordina bloqueos temporales contra pfSense/OPNsense. Aquí se documentan normas y atajos para cualquiera que toque el código o la infraestructura de este repo.
+Mimosa es un núcleo de defensa para homelabs que coordina bloqueos temporales contra OPNsense. Aquí se documentan normas y atajos para cualquiera que toque el código o la infraestructura de este repo.
 
 ## Ejecución rápida
 - Requisitos: Python 3.11+ recomendado.
@@ -19,13 +19,11 @@ Mimosa es un núcleo de defensa para homelabs que coordina bloqueos temporales c
 
 ## Configuración inicial y variables de entorno
 - Variables `INITIAL_FIREWALL_*` permiten crear un firewall inicial automáticamente (usadas por la UI).
-- Las credenciales de pfSense/OPNsense se leen del entorno (ver `env.example`).
-- pfSense se comprueba vía `/api/v1/status/system`; si responde 401/403, revisa permisos o claves.
+- Las credenciales de OPNsense se leen del entorno (ver `env.example`).
 
 ## Documentación de APIs
-- pfSense (pfrest): https://pfrest.org/
 - OPNsense: https://docs.opnsense.org/development/api.html
-- Documentos de referencia locales para las APIs de pfSense/OPNsense: consulta `reference_docs/api-pfsense.md` y `reference_docs/api-opnsense.md`.
+- Documento de referencia local para la API de OPNsense: consulta `reference_docs/api-opnsense.md`.
 
 ## Convenciones de contribución
 - Sigue el estilo Python del proyecto (módulos `mimosa/`); evita capturar excepciones en torno a imports.
@@ -44,9 +42,7 @@ Mimosa es un núcleo de defensa para homelabs que coordina bloqueos temporales c
 - Tests disponibles en `tests/`; ejecútalos con `pytest` cuando modifiques lógica.
 - Si añades endpoints o UI, indica cómo verificaste (comandos o capturas) en el PR.
 - Para activar pruebas reales contra firewalls, el entorno de CI puede exponer algunas variables. Las pruebas se ejecutan solo si
-  las variables del firewall correspondiente están presentes:
+  las variables de OPNsense correspondientes están presentes:
   - OPNsense: `TEST_FIREWALL_OPNSENSE_BASE_URL`, `TEST_FIREWALL_OPNSENSE_API_KEY`, `TEST_FIREWALL_OPNSENSE_API_SECRET`,
     `TEST_FIREWALL_OPNSENSE_ALIAS_NAME`, `TEST_FIREWALL_OPNSENSE_VERIFY_SSL`.
-  - pfSense: `TEST_FIREWALL_PFSENSE_BASE_URL`, `TEST_FIREWALL_PFSENSE_API_KEY`, `TEST_FIREWALL_PFSENSE_ALIAS_NAME`,
-    `TEST_FIREWALL_PFSENSE_VERIFY_SSL`.
-  - Ajustes comunes a ambos: `TEST_FIREWALL_APPLY_CHANGES` y `TEST_FIREWALL_TIMEOUT`.
+  - Ajustes comunes: `TEST_FIREWALL_APPLY_CHANGES` y `TEST_FIREWALL_TIMEOUT`.
