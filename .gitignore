@@ -1,0 +1,6 @@
+# Python bytecode and cache artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*$py.class
