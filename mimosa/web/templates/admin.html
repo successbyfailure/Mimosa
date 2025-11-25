@@ -372,51 +372,6 @@
       </form>
     </div>
 
-    <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
-      <div class="flex space" style="align-items:flex-start;">
-        <div>
-          <h3 style="margin-top:0">Dominios más solicitados</h3>
-          <div class="muted">Estadísticas recogidas por ProxyTrap.</div>
-        </div>
-        <button class="secondary" onclick="loadProxyTrapStats()">Refrescar</button>
-      </div>
-      <div style="max-height:320px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
-        <table>
-          <thead>
-            <tr>
-              <th>Dominio</th>
-              <th>Solicitudes</th>
-            </tr>
-          </thead>
-          <tbody id="proxytrap-stats">
-            <tr><td colspan="2" class="muted">Sin datos.</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-    <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
-      <div class="flex space" style="align-items:flex-start;">
-        <div>
-          <h3 style="margin-top:0">Puertos más solicitados</h3>
-          <div class="muted">Hits registrados por Port Detector.</div>
-        </div>
-        <button class="secondary" onclick="loadPortDetectorStats()">Refrescar</button>
-      </div>
-      <div style="max-height:320px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
-        <table>
-          <thead>
-            <tr>
-              <th>Puerto</th>
-              <th>Protocolo</th>
-              <th>Solicitudes</th>
-            </tr>
-          </thead>
-          <tbody id="portdetector-stats">
-            <tr><td colspan="3" class="muted">Sin datos.</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
   </div>
 </section>
 
@@ -863,7 +818,7 @@ let proxytrapPolicies = [];
 let editingPolicyIndex = null;
 let portDetectorRules = [];
 let editingPortRuleIndex = null;
-let ipBlockChart = null;
+let ipPluginChart = null;
 const editModal = document.getElementById('edit-modal');
 const editForm = document.getElementById('edit-form');
 const syncPreferenceKey = 'mimosa_sync_with_firewall';
@@ -1019,9 +974,7 @@ async function loadPlugins() {
   if (mimosanpm && mimosanpm.config) {
     setMimosaNpmForm(mimosanpm.config);
   }
-  loadProxyTrapStats();
   loadPortDetectorAliases();
-  loadPortDetectorStats();
 }
 
 function setProxyTrapForm(config) {
@@ -1161,43 +1114,6 @@ async function syncPortDetectorAliases() {
       message.style.color = '#fca5a5';
     }
   }
-}
-
-async function loadPortDetectorStats() {
-  const tbody = document.getElementById('portdetector-stats');
-  if (tbody) {
-    tbody.innerHTML = '<tr><td colspan="3" class="muted">Cargando...</td></tr>';
-  }
-  const res = await fetch('/api/plugins/portdetector/stats');
-  if (!res.ok) {
-    let detail = 'No se pudieron cargar las estadísticas.';
-    try {
-      const data = await res.json();
-      detail = data.detail || detail;
-    } catch (error) {
-      // Ignorar errores de parseo y mostrar mensaje genérico
-    }
-    if (tbody) {
-      tbody.innerHTML = `<tr><td colspan="3" class="muted">${detail}</td></tr>`;
-    }
-    return;
-  }
-  const data = await res.json();
-  if (data.config) {
-    setPortDetectorForm(data.config);
-  }
-  const entries = data.top_ports || [];
-  if (!tbody) return;
-  tbody.innerHTML = '';
-  if (!entries.length) {
-    tbody.innerHTML = '<tr><td colspan="3" class="muted">Sin datos registrados.</td></tr>';
-    return;
-  }
-  entries.forEach(item => {
-    const row = document.createElement('tr');
-    row.innerHTML = `<td>${item.port}</td><td>${(item.protocol || '').toUpperCase()}</td><td>${item.hits}</td>`;
-    tbody.appendChild(row);
-  });
 }
 
 function setMimosaNpmForm(config) {
@@ -1475,30 +1391,6 @@ async function submitMimosaNpm(event) {
       message.style.color = '#fca5a5';
     }
   }
-}
-
-async function loadProxyTrapStats() {
-  const tbody = document.getElementById('proxytrap-stats');
-  tbody.innerHTML = '<tr><td colspan="2" class="muted">Cargando...</td></tr>';
-  const res = await fetch('/api/plugins/proxytrap/stats');
-  if (!res.ok) {
-    tbody.innerHTML = '<tr><td colspan="2" class="muted">No se pudieron cargar las estadísticas.</td></tr>';
-    return;
-  }
-  const data = await res.json();
-  setProxyTrapForm(data.config || {});
-  toggleCustomHtml();
-  const entries = data.top_domains || [];
-  tbody.innerHTML = '';
-  if (!entries.length) {
-    tbody.innerHTML = '<tr><td colspan="2" class="muted">Sin datos registrados.</td></tr>';
-    return;
-  }
-  entries.forEach(item => {
-    const row = document.createElement('tr');
-    row.innerHTML = `<td>${item.domain}</td><td>${item.hits}</td>`;
-    tbody.appendChild(row);
-  });
 }
 
 async function submitBlockingSettings(event) {
@@ -2144,6 +2036,15 @@ async function showIpDetail(ip) {
     .map(([source, count]) => `${source}: ${count}`)
     .join(' · ');
   const latestBlock = blocks[0] ? new Date(blocks[0].created_at).toLocaleString() : 'sin registros';
+  const pluginGroups = offenses.reduce((acc, offense) => {
+    const descriptionPlugin = (offense.description || '').split(':')[0];
+    const key = (offense.context?.plugin || descriptionPlugin || 'desconocido').trim() || 'desconocido';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  const pluginSummary = Object.entries(pluginGroups)
+    .map(([plugin, count]) => `${plugin}: ${count}`)
+    .join(' · ');
   detail.innerHTML = `
     <div><strong>${profile.ip}</strong></div>
     <div class="muted">Reverse DNS: ${profile.reverse_dns || 'n/d'}</div>
@@ -2155,12 +2056,13 @@ async function showIpDetail(ip) {
         <div class="muted">Estadísticas rápidas</div>
         <div style="font-weight:700;">${offenses.length} ofensas · ${blocks.length} bloqueos</div>
         <div class="muted">Último bloqueo: ${latestBlock}</div>
-        <div class="muted">Tipos: ${blockTypeSummary || 'Sin bloqueos registrados'}</div>
+        <div class="muted">Tipos de bloqueo: ${blockTypeSummary || 'Sin bloqueos registrados'}</div>
+        <div class="muted">Plugins: ${pluginSummary || 'Sin ofensas registradas'}</div>
       </div>
       <div class="card" style="padding:12px; background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
-        <div class="muted" style="margin-bottom:6px;">Distribución de bloqueos</div>
-        <canvas id="ip-block-chart" height="140"></canvas>
-        <div id="ip-block-chart-empty" class="muted" style="display:none;">Sin bloqueos para graficar.</div>
+        <div class="muted" style="margin-bottom:6px;">Distribución de ofensas por plugin</div>
+        <canvas id="ip-plugin-chart" height="140"></canvas>
+        <div id="ip-plugin-chart-empty" class="muted" style="display:none;">Sin ofensas para graficar.</div>
       </div>
     </div>
     <h4>Ofensas</h4>
@@ -2172,19 +2074,20 @@ async function showIpDetail(ip) {
       ${blocks.map(b => `<li>${new Date(b.created_at).toLocaleString()} · ${b.reason}</li>`).join('') || '<li class="muted">Sin bloqueos</li>'}
     </ul>
   `;
-  renderIpBlockChart(blocks);
+  renderIpPluginChart(offenses);
 }
 
-function renderIpBlockChart(blocks) {
-  const canvas = document.getElementById('ip-block-chart');
-  const emptyState = document.getElementById('ip-block-chart-empty');
+function renderIpPluginChart(offenses) {
+  const canvas = document.getElementById('ip-plugin-chart');
+  const emptyState = document.getElementById('ip-plugin-chart-empty');
   if (!canvas) return;
-  if (ipBlockChart) {
-    ipBlockChart.destroy();
-    ipBlockChart = null;
+  if (ipPluginChart) {
+    ipPluginChart.destroy();
+    ipPluginChart = null;
   }
-  const grouped = blocks.reduce((acc, block) => {
-    const key = block.source || 'desconocido';
+  const grouped = offenses.reduce((acc, offense) => {
+    const descriptionPlugin = (offense.description || '').split(':')[0];
+    const key = (offense.context?.plugin || descriptionPlugin || 'desconocido').trim() || 'desconocido';
     acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
@@ -2201,7 +2104,7 @@ function renderIpBlockChart(blocks) {
   if (emptyState) emptyState.style.display = 'none';
 
   const colors = ['#38bdf8', '#22c55e', '#fbbf24', '#f472b6', '#a78bfa', '#60a5fa'];
-  ipBlockChart = new Chart(canvas.getContext('2d'), {
+  ipPluginChart = new Chart(canvas.getContext('2d'), {
     type: 'doughnut',
     data: {
       labels,
