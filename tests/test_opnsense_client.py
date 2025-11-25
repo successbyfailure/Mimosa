@@ -214,7 +214,10 @@ class OPNsenseClientTests(unittest.TestCase):
         alias_ip = "mimosa_test_alias_ip"
         alias_ports = "mimosa_test_alias_ports"
 
-        firewall.check_connection()  # 1
+        try:
+            firewall.check_connection()  # 1
+        except httpx.HTTPError as exc:
+            self.skipTest(f"Firewall OPNsense no accesible: {exc}")
         firewall.create_alias(name=alias_ip, alias_type="host", description="ci-ip")  # 2
         firewall.create_alias(name=alias_ports, alias_type="port", description="ci-ports")  # 3
         self.assertTrue(firewall._alias_exists(alias_ip))  # type: ignore[attr-defined]  # 4

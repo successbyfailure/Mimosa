@@ -2,9 +2,9 @@ from datetime import timedelta
 from pathlib import Path
 
 from mimosa.core.blocking import BlockManager
-from mimosa.core.firewall import DummyFirewall
 from mimosa.core.offenses import OffenseStore
 from mimosa.core.rules import OffenseEvent, OffenseRule, RuleManager
+from tests.firewall_stubs import InMemoryFirewall
 
 
 def _setup(tmp_path: Path):
@@ -14,7 +14,7 @@ def _setup(tmp_path: Path):
         default_duration_minutes=45,
         whitelist_checker=store.is_whitelisted,
     )
-    firewall = DummyFirewall()
+    firewall = InMemoryFirewall()
     return store, block_manager, firewall
 
 

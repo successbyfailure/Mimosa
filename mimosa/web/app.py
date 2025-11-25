@@ -6,7 +6,7 @@ import sqlite3
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Literal, Optional
+from typing import Callable, Dict, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Request, Response
 import httpx
@@ -17,7 +17,6 @@ from pydantic import BaseModel, Field
 
 from mimosa.core.api import FirewallGateway
 from mimosa.core.blocking import BlockEntry, BlockManager
-from mimosa.core.firewall import DummyFirewall
 from mimosa.core.offenses import OffenseRecord, OffenseStore
 from mimosa.core.plugins import (
     MimosaNpmConfig,
@@ -63,17 +62,13 @@ class FirewallInput(BaseModel):
     """Payload para crear y probar conexiones con firewalls."""
 
     name: str
-    type: Literal["dummy", "pfsense", "opnsense", "ssh_iptables"]
+    type: Literal["opnsense"]
     base_url: str | None = None
     api_key: str | None = None
     api_secret: str | None = None
     verify_ssl: bool = True
     timeout: float = 5.0
     apply_changes: bool = True
-    ssh_host: str | None = None
-    ssh_user: str | None = None
-    ssh_key_path: str | None = None
-    ssh_port: int = 22
 
 
 class BlockInput(BaseModel):
@@ -205,6 +200,7 @@ def create_app(
     rule_store: OffenseRuleStore | None = None,
     proxytrap_stats_path: Path | str | None = None,
     portdetector_stats_path: Path | str | None = None,
+    gateway_builder: Callable[[FirewallConfig], FirewallGateway] | None = None,
 ) -> FastAPI:
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -227,6 +223,10 @@ def create_app(
     rule_store = rule_store or OffenseRuleStore(db_path=offense_store.db_path)
     plugin_store = PluginConfigStore()
     gateway_cache: Dict[str, FirewallGateway] = {}
+    gateway_builder = gateway_builder or build_firewall_gateway
+    status_checker = lambda cfg: check_firewall_status(
+        cfg, gateway_builder=gateway_builder
+    )
     proxytrap_stats_path = proxytrap_stats_path or Path("data/proxytrap_stats.json")
     portdetector_stats_path = portdetector_stats_path or Path(
         "data/portdetector_stats.json"
@@ -255,28 +255,32 @@ def create_app(
     def _select_gateway() -> FirewallGateway:
         configs = config_store.list()
         if not configs:
-            return DummyFirewall()
+            raise RuntimeError("Configura un firewall OPNsense antes de continuar")
 
         primary = configs[0]
         cached = gateway_cache.get(primary.id)
         if cached:
             return cached
 
-        gateway = build_firewall_gateway(primary)
+        gateway = gateway_builder(primary)
         gateway_cache[primary.id] = gateway
         return gateway
 
     def _primary_gateway_or_error() -> FirewallGateway:
-        configs = config_store.list()
-        if not configs:
+        try:
+            return _select_gateway()
+        except RuntimeError as exc:
             raise HTTPException(
                 status_code=404,
-                detail="Configura al menos un firewall para gestionar alias de puertos.",
-            )
-        return _select_gateway()
+                detail="Configura al menos un firewall OPNsense para operar.",
+            ) from exc
 
     def _cleanup_expired_blocks() -> None:
-        gateway = _select_gateway()
+        try:
+            gateway = _select_gateway()
+        except RuntimeError:
+            block_manager.purge_expired()
+            return
         block_manager.purge_expired(firewall_gateway=gateway)
 
     def _rule_manager() -> RuleManager:
@@ -293,7 +297,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="Firewall no encontrado")
         gateway = gateway_cache.get(config.id)
         if not gateway:
-            gateway = build_firewall_gateway(config)
+            gateway = gateway_builder(config)
             gateway_cache[config.id] = gateway
         return config, gateway
 
@@ -704,13 +708,13 @@ def create_app(
     def firewall_status() -> List[Dict[str, str | bool]]:
         statuses: List[Dict[str, str | bool]] = []
         for config in config_store.list():
-            statuses.append(check_firewall_status(config))
+            statuses.append(status_checker(config))
         return statuses
 
     @app.post("/api/firewalls/test")
     def test_firewall(payload: FirewallInput) -> Dict[str, str | bool]:
         temporary_config = FirewallConfig.new(**payload.model_dump())
-        return check_firewall_status(temporary_config)
+        return status_checker(temporary_config)
 
     @app.get("/api/firewalls/{config_id}/block_rule_stats")
     def firewall_block_rule_stats(config_id: str) -> Dict[str, object]:

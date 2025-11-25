@@ -5,7 +5,7 @@ Mimosa es un sistema de defensa para homelabs y entusiastas creado con nocturnid
 La Mimosa pudica repliega sus hojas ante el mínimo contacto. La meta de este proyecto es reaccionar igual de rápido ante señales hostiles, coordinando bloqueos ligeros y temporales sobre el firewall del homelab.
 
 ## ¿Cómo funciona?
-Mimosa esta pensado para correr en una mv detras de un firewall pfSense o OpnSense, tiene plugins que detectan diferentes ofensas y se comunica via api con el firewall para bloquear temporalmente las ips que ofenden.
+Mimosa está pensado para correr en una VM detrás de un firewall OPNsense. Incluye plugins que detectan diferentes ofensas y se comunica vía API con OPNsense para bloquear temporalmente las IPs ofensivas.
 
 ## Plugins planificados
  - Detector de conexiones tcp/udp:
@@ -33,7 +33,7 @@ Mimosa incluye una pequeña aplicación FastAPI para consultar métricas y gesti
 1. Instala las dependencias actualizadas: `pip install -r requirements.txt`.
 2. Lanza el servidor: `uvicorn mimosa.web.app:app --reload`.
 3. Abre en el navegador `http://localhost:8000` para ver el dashboard y `http://localhost:8000/admin` para gestionar los firewalls configurados (persisten en `data/firewalls.json`).
-4. La UI aplica automáticamente un *apply/reload* tras crear alias o modificar entradas en pfSense/OPNsense para que los cambios surtan efecto. Puedes desactivar el flag de "Recargar reglas tras cambios" en la pantalla de administración si necesitas hacer pruebas sin impactar el firewall.
+4. La UI aplica automáticamente un *apply/reload* tras crear alias o modificar entradas en OPNsense para que los cambios surtan efecto. Puedes desactivar el flag de "Recargar reglas tras cambios" en la pantalla de administración si necesitas hacer pruebas sin impactar el firewall.
 
 ## Despliegue con Docker Compose
 1. Crea un fichero `.env` a partir de `env.example` con tus credenciales de firewall y la ruta de base de datos deseada. El contenedor sincronizará automáticamente las variables nuevas que aparezcan en `env.example` manteniendo los valores existentes de `.env`.
@@ -45,20 +45,12 @@ Mimosa incluye una pequeña aplicación FastAPI para consultar métricas y gesti
 ## Uso rápido
 1. Instala las dependencias: `pip install -r requirements.txt`.
 2. Configura tus credenciales del firewall y la ruta de base de datos mediante variables de entorno (ver `env.example`). Si defines `INITIAL_FIREWALL_NAME`, la UI creará automáticamente una configuración inicial de firewall en `data/firewalls.json` usando los valores `INITIAL_FIREWALL_*`.
-3. Crea la API núcleo y el cliente pfSense:
+3. Crea la API núcleo y el cliente OPNsense:
    ```python
    from mimosa.core.api import CoreAPI
    from mimosa.core.blocking import BlockManager
-   from mimosa.core.sense import OPNsenseClient, PFSenseClient
+   from mimosa.core.sense import OPNsenseClient
 
-   # Para pfSense (pfRest)
-   firewall = PFSenseClient(
-       base_url="https://firewall.local",
-       api_key="API_KEY",
-       api_secret="API_SECRET",
-   )
-
-   # O bien para OPNsense
    firewall = OPNsenseClient(
        base_url="https://firewall.local",
        api_key="API_KEY",
@@ -70,10 +62,3 @@ Mimosa incluye una pequeña aplicación FastAPI para consultar métricas y gesti
    ```
 
 Mimosa usa alias fijos en el firewall: `mimosa_temporal_list` para bloqueos temporales sincronizados por el núcleo y `mimosa_blacklist` para bloqueos permanentes que se gestionan desde la pestaña Whitelist del panel.
-
-La comprobación de conectividad para pfSense se realiza contra el endpoint
-documentado de estado de pfRest (`/api/v1/status/system`). Si este punto responde
-con un 401/403, Mimosa devolverá un error claro indicando que las credenciales
-no son válidas o carecen de permisos. Si tu instalación publica la API bajo otro
-prefijo (por ejemplo `/rest`), Mimosa probará automáticamente los prefijos
-conocidos cuando encuentre un 404.

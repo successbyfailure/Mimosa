@@ -3,11 +3,11 @@ import time
 from tempfile import TemporaryDirectory
 
 from mimosa.core.blocking import BlockManager
-from mimosa.core.firewall import DummyFirewall
 from mimosa.core.offenses import OffenseStore
 from mimosa.core.plugins import PortDetectorConfig, PortDetectorRule
 from mimosa.core.portdetector import PortDetectorService
 from mimosa.core.rules import OffenseRuleStore
+from tests.firewall_stubs import InMemoryFirewall
 
 
 def _free_port() -> int:
@@ -25,7 +25,7 @@ def test_portdetector_records_tcp_offense() -> None:
             offense_store,
             block_manager,
             rule_store,
-            gateway_factory=lambda: DummyFirewall(),
+            gateway_factory=lambda: InMemoryFirewall(),
         )
 
         port = _free_port()
@@ -54,7 +54,7 @@ def test_portdetector_records_udp_offense() -> None:
             offense_store,
             block_manager,
             rule_store,
-            gateway_factory=lambda: DummyFirewall(),
+            gateway_factory=lambda: InMemoryFirewall(),
         )
 
         port = _free_port()

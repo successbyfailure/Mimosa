@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from mimosa.core.blocking import BlockManager
 from mimosa.core.offenses import OffenseStore
 from mimosa.web.app import create_app
+from tests.firewall_stubs import InMemoryFirewall
 
 
 def test_stats_reset_clears_data(tmp_path: Path) -> None:
@@ -17,6 +18,7 @@ def test_stats_reset_clears_data(tmp_path: Path) -> None:
         offense_store=offense_store,
         block_manager=block_manager,
         proxytrap_stats_path=tmp_path / "proxytrap.json",
+        gateway_builder=lambda cfg: InMemoryFirewall(),
     )
     client = TestClient(app)
 

@@ -2,20 +2,19 @@
 from __future__ import annotations
 
 import json
-import uuid
 import os
-from dataclasses import dataclass, asdict
+import uuid
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
-from mimosa.core.firewall import DummyFirewall, SSHIptablesFirewall
-from mimosa.core.sense import OPNsenseClient, PFSenseClient
 from mimosa.core.api import FirewallGateway
 from mimosa.core.sense import (
     BLACKLIST_ALIAS_NAME,
     PORT_ALIAS_NAMES,
     TEMPORAL_ALIAS_NAME,
 )
+from mimosa.core.sense import OPNsenseClient
 
 
 @dataclass
@@ -31,10 +30,6 @@ class FirewallConfig:
     verify_ssl: bool = True
     timeout: float = 5.0
     apply_changes: bool = True
-    ssh_host: str | None = None
-    ssh_user: str | None = None
-    ssh_key_path: str | None = None
-    ssh_port: int = 22
 
     @classmethod
     def new(
@@ -48,10 +43,6 @@ class FirewallConfig:
         verify_ssl: bool = True,
         timeout: float = 5.0,
         apply_changes: bool = True,
-        ssh_host: str | None = None,
-        ssh_user: str | None = None,
-        ssh_key_path: str | None = None,
-        ssh_port: int = 22,
     ) -> "FirewallConfig":
         return cls(
             id=uuid.uuid4().hex,
@@ -63,10 +54,6 @@ class FirewallConfig:
             verify_ssl=verify_ssl,
             timeout=timeout,
             apply_changes=apply_changes,
-            ssh_host=ssh_host,
-            ssh_user=ssh_user,
-            ssh_key_path=ssh_key_path,
-            ssh_port=ssh_port,
         )
 
 
@@ -105,10 +92,6 @@ class FirewallConfigStore:
                     "verify_ssl",
                     "timeout",
                     "apply_changes",
-                    "ssh_host",
-                    "ssh_user",
-                    "ssh_key_path",
-                    "ssh_port",
                 }
             }
             config = FirewallConfig(**sanitized)
@@ -152,11 +135,9 @@ class FirewallConfigStore:
         if not name:
             return None
 
-        firewall_type = env.get("INITIAL_FIREWALL_TYPE", "pfsense").lower()
-        if firewall_type not in {"dummy", "pfsense", "opnsense", "ssh_iptables"}:
-            raise ValueError(
-                "INITIAL_FIREWALL_TYPE debe ser dummy, pfsense, opnsense o ssh_iptables"
-            )
+        firewall_type = env.get("INITIAL_FIREWALL_TYPE", "opnsense").lower()
+        if firewall_type not in {"opnsense"}:
+            raise ValueError("INITIAL_FIREWALL_TYPE debe ser opnsense")
 
         def _as_bool(value: str | None, default: bool) -> bool:
             if value is None:
@@ -174,10 +155,6 @@ class FirewallConfigStore:
             apply_changes=_as_bool(
                 env.get("INITIAL_FIREWALL_APPLY_CHANGES"), True
             ),
-            ssh_host=env.get("INITIAL_FIREWALL_SSH_HOST"),
-            ssh_user=env.get("INITIAL_FIREWALL_SSH_USER"),
-            ssh_key_path=env.get("INITIAL_FIREWALL_SSH_KEY_PATH"),
-            ssh_port=int(env.get("INITIAL_FIREWALL_SSH_PORT") or 22),
         )
 
         return self.add(config)
@@ -186,26 +163,8 @@ class FirewallConfigStore:
 def build_firewall_gateway(config: FirewallConfig) -> FirewallGateway:
     """Construye el cliente correcto según el tipo configurado."""
 
-    if config.type == "dummy":
-        return DummyFirewall()
     if config.type == "opnsense":
         return OPNsenseClient(
-            base_url=config.base_url or "",
-            api_key=config.api_key or "",
-            api_secret=config.api_secret or "",
-            verify_ssl=config.verify_ssl,
-            timeout=config.timeout,
-            apply_changes=config.apply_changes,
-        )
-    if config.type == "ssh_iptables":
-        return SSHIptablesFirewall(
-            host=config.ssh_host or config.base_url or "",
-            user=config.ssh_user or "root",
-            key_path=config.ssh_key_path,
-            port=config.ssh_port or 22,
-        )
-    if config.type == "pfsense":
-        return PFSenseClient(
             base_url=config.base_url or "",
             api_key=config.api_key or "",
             api_secret=config.api_secret or "",
@@ -216,10 +175,14 @@ def build_firewall_gateway(config: FirewallConfig) -> FirewallGateway:
     raise ValueError(f"Tipo de firewall no soportado: {config.type}")
 
 
-def check_firewall_status(config: FirewallConfig) -> Dict[str, str | bool]:
+def check_firewall_status(
+    config: FirewallConfig,
+    *,
+    gateway_builder: Callable[[FirewallConfig], FirewallGateway] = build_firewall_gateway,
+) -> Dict[str, str | bool]:
     """Comprueba conectividad con el firewall configurado."""
 
-    gateway = build_firewall_gateway(config)
+    gateway = gateway_builder(config)
     status: Dict[str, str | bool] = {
         "id": config.id,
         "name": config.name,
