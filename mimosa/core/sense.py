@@ -132,6 +132,7 @@ class _BaseSenseClient(FirewallGateway):
             entry.get("created") for entry in ports_status.values()
         )
 
+        alias_created = status["alias_created"]
         ports_alias_created = status["ports_alias_created"]
 
         if (alias_created or ports_alias_created) and self._apply_changes:
