@@ -13,8 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def _load_testing_env() -> None:
-    env_path = Path(__file__).with_name("testing.env")
+def _load_env_file(env_path: Path) -> None:
     if not env_path.is_file():
         return
 
@@ -24,16 +23,24 @@ def _load_testing_env() -> None:
             continue
 
         key, value = line.split("=", 1)
-        if key and key not in os.environ:
+        value = value.strip()
+        if key and key not in os.environ and value:
             os.environ[key] = value
 
 
 def ensure_test_env(required_vars: Iterable[str]) -> bool:
-    missing = [var for var in required_vars if not os.getenv(var)]
-    if missing:
-        _load_testing_env()
+    def _vars_ready() -> bool:
+        return all(os.getenv(var) for var in required_vars)
 
-    return all(os.getenv(var) for var in required_vars)
+    if _vars_ready():
+        return True
+
+    env_path = Path(__file__).with_name(".env")
+    _load_env_file(env_path)
+    if _vars_ready():
+        return True
+
+    return False
 
 
 # Compatibilidad con httpx 0.28+ para clientes síncronos usados en TestClient.
