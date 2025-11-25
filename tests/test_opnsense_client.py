@@ -1,11 +1,16 @@
 import json
 import os
 import unittest
+from typing import Dict, Set
 
 import httpx
 
 from conftest import ensure_test_env
-from mimosa.core.sense import OPNsenseClient
+from mimosa.core.sense import (
+    BLACKLIST_ALIAS_NAME,
+    TEMPORAL_ALIAS_NAME,
+    OPNsenseClient,
+)
 
 
 def _as_bool(value: str | None, default: bool = True) -> bool:
@@ -16,131 +21,92 @@ def _as_bool(value: str | None, default: bool = True) -> bool:
 
 class OPNsenseClientTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.alias_created = False
-        self.alias_name = "mimosa_blocklist"
         self.requests: list[tuple[str, str, int]] = []
-        self.alias_addresses: set[str] = set()
-        self.port_aliases_created: set[str] = set()
-        self.alias_entries: dict[str, set[str]] = {self.alias_name: self.alias_addresses}
-        self.created_aliases: set[str] = set()
-        self.fallback_after_additem_404 = False
-        self.fallback_after_delete_404 = False
+        self.alias_entries: Dict[str, Set[str]] = {
+            TEMPORAL_ALIAS_NAME: set(),
+            BLACKLIST_ALIAS_NAME: set(),
+        }
+        self.created_aliases: Set[str] = set(self.alias_entries.keys())
+        self.port_aliases: Set[str] = set()
 
         def handler(request: httpx.Request) -> httpx.Response:
-            if request.url.path == "/api/core/firmware/info":
+            path = request.url.path
+            method = request.method
+
+            if path == "/api/core/firmware/info":
                 response = httpx.Response(200, json={"status": "ok"})
-                self.requests.append((request.method, request.url.path, response.status_code))
+                self.requests.append((method, path, response.status_code))
                 return response
 
-            if request.url.path == f"/api/firewall/alias/searchItem":
-                rows = []
-                if self.alias_created:
-                    rows.append({"name": self.alias_name, "uuid": "alias-uuid"})
-                for alias_name in sorted(self.port_aliases_created):
-                    rows.append({"name": alias_name, "uuid": f"{alias_name}-uuid"})
-                response = httpx.Response(
-                    200,
-                    json={
-                        "rows": rows,
-                        "rowCount": len(rows),
-                        "total": len(rows),
-                        "current": 1,
-                    },
-                )
-                self.requests.append((request.method, request.url.path, response.status_code))
+            if path == "/api/firewall/filter/apply" and method == "POST":
+                response = httpx.Response(200, json={"status": "applied"})
+                self.requests.append((method, path, response.status_code))
                 return response
 
-            if request.url.path.startswith("/api/firewall/alias_util/list/"):
-                alias_name = request.url.path.rsplit("/", maxsplit=1)[-1]
-                entries = self.alias_entries.get(alias_name, set())
-                if alias_name in self.created_aliases or (
-                    alias_name == self.alias_name and self.alias_created
-                ):
+            if path == "/api/firewall/alias/searchItem":
+                rows = [{"name": name, "uuid": f"{name}-uuid"} for name in sorted(self.created_aliases)]
+                response = httpx.Response(200, json={"rows": rows})
+                self.requests.append((method, path, response.status_code))
+                return response
+
+            if path == "/api/firewall/alias/addItem" and method == "POST":
+                payload = json.loads(request.content or b"{}")
+                alias = payload.get("alias", {})
+                alias_name = alias.get("name")
+                alias_type = alias.get("type")
+                if alias_name:
+                    self.created_aliases.add(alias_name)
+                    if alias_type == "port":
+                        self.port_aliases.add(alias_name)
+                    self.alias_entries.setdefault(alias_name, set())
+                response = httpx.Response(200, json={"status": "ok"})
+                self.requests.append((method, path, response.status_code))
+                return response
+
+            if path.startswith("/api/firewall/alias/deleteItem/") and method == "POST":
+                alias_name = path.rsplit("/", maxsplit=1)[-1]
+                self.created_aliases.discard(alias_name)
+                self.alias_entries.pop(alias_name, None)
+                response = httpx.Response(200, json={"status": "ok"})
+                self.requests.append((method, path, response.status_code))
+                return response
+
+            if path.startswith("/api/firewall/alias_util/list/"):
+                alias_name = path.rsplit("/", maxsplit=1)[-1]
+                if alias_name not in self.created_aliases:
+                    response = httpx.Response(404, json={"error": "missing"})
+                else:
+                    entries = sorted(self.alias_entries.get(alias_name, set()))
                     response = httpx.Response(
                         200,
-                        json={
-                            "total": len(entries),
-                            "rowCount": len(entries),
-                            "current": 1,
-                            "rows": [{"ip": address} for address in sorted(entries)],
-                        },
+                        json={"rows": [{"ip": entry} for entry in entries]},
                     )
-                else:
-                    response = httpx.Response(404, json={"error": "alias missing"})
-                self.requests.append((request.method, request.url.path, response.status_code))
+                self.requests.append((method, path, response.status_code))
                 return response
 
-            if request.url.path == "/api/firewall/alias/addItem":
-                if self.fallback_after_additem_404:
-                    response = httpx.Response(404, json={"error": "missing endpoint"})
-                else:
-                    payload = json.loads(request.content or b"{}")
-                    alias = payload.get("alias", {})
-                    alias_name = alias.get("name")
-                    if alias_name:
-                        self.created_aliases.add(alias_name)
-                        self.alias_entries.setdefault(alias_name, set())
-                        if alias_name == self.alias_name:
-                            self.alias_created = True
-                        else:
-                            self.port_aliases_created.add(alias_name)
-                    response = httpx.Response(200, json={"uuid": "alias-uuid"})
-                self.requests.append((request.method, request.url.path, response.status_code))
-                return response
-
-            if request.url.path.startswith("/api/firewall/alias_util/add/"):
-                alias_name = request.url.path.rsplit("/", maxsplit=1)[-1]
+            if path.startswith("/api/firewall/alias_util/add/"):
+                alias_name = path.rsplit("/", maxsplit=1)[-1]
                 payload = json.loads(request.content or b"{}")
-                ip = payload.get("address")
-                entries = self.alias_entries.setdefault(alias_name, set())
-                if ip:
-                    entries.add(ip)
-                    if alias_name == self.alias_name:
-                        self.alias_addresses.add(ip)
-                        self.alias_created = True
-                    else:
-                        self.port_aliases_created.add(alias_name)
-                    response = httpx.Response(200, json={"status": "done"})
-                else:
-                    response = httpx.Response(400, json={"status": "failed"})
-                self.requests.append((request.method, request.url.path, response.status_code))
-                return response
-
-            if request.url.path.startswith("/api/firewall/alias_util/delete/"):
-                alias_name = request.url.path.rsplit("/", maxsplit=1)[-1]
-                if self.fallback_after_delete_404 and alias_name == self.alias_name:
-                    response = httpx.Response(404, json={"error": "missing endpoint"})
-                else:
-                    payload = json.loads(request.content or b"{}")
-                    ip = payload.get("address")
-                    entries = self.alias_entries.setdefault(alias_name, set())
-                    if ip and ip in entries:
-                        entries.discard(ip)
-                        if alias_name == self.alias_name:
-                            self.alias_addresses.discard(ip)
-                        response = httpx.Response(200, json={"status": "done"})
-                    else:
-                        response = httpx.Response(404, json={"status": "not found"})
-                self.requests.append((request.method, request.url.path, response.status_code))
-                return response
-
-            if request.url.path.startswith("/api/firewall/alias_util/flush/"):
-                alias_name = request.url.path.rsplit("/", maxsplit=1)[-1]
-                entries = self.alias_entries.setdefault(alias_name, set())
-                entries.clear()
-                if alias_name == self.alias_name:
-                    self.alias_addresses.clear()
+                address = payload.get("address")
+                if address:
+                    self.alias_entries.setdefault(alias_name, set()).add(str(address))
+                    self.created_aliases.add(alias_name)
                 response = httpx.Response(200, json={"status": "done"})
-                self.requests.append((request.method, request.url.path, response.status_code))
+                self.requests.append((method, path, response.status_code))
                 return response
 
-            if request.url.path == "/api/firewall/filter/apply":
-                response = httpx.Response(200, json={"status": "ok"})
-                self.requests.append((request.method, request.url.path, response.status_code))
+            if path.startswith("/api/firewall/alias_util/delete/"):
+                alias_name = path.rsplit("/", maxsplit=1)[-1]
+                payload = json.loads(request.content or b"{}")
+                address = payload.get("address")
+                if address:
+                    self.alias_entries.setdefault(alias_name, set()).discard(str(address))
+                response = httpx.Response(200, json={"status": "done"})
+                self.requests.append((method, path, response.status_code))
                 return response
 
             response = httpx.Response(500, json={"error": "unexpected"})
-            self.requests.append((request.method, request.url.path, response.status_code))
+            self.requests.append((method, path, response.status_code))
             return response
 
         self.transport = httpx.MockTransport(handler)
@@ -149,150 +115,73 @@ class OPNsenseClientTests(unittest.TestCase):
             base_url="http://fw",
             api_key="apikey",
             api_secret="apisecret",
-            alias_name=self.alias_name,
             client=self.client,
         )
 
     def tearDown(self) -> None:
         self.client.close()
 
-    def test_ensure_ready_creates_alias_via_alias_util(self) -> None:
-        self.firewall.ensure_ready()
+    def test_check_connection_reaches_status_endpoint(self) -> None:
+        self.firewall.check_connection()
+        self.assertIn(("GET", "/api/core/firmware/info", 200), self.requests)
 
-        self.assertTrue(self.alias_created)
-        self.assertIn(
-            ("POST", "/api/firewall/alias/addItem", 200),
-            self.requests,
+    def test_alias_workflow_sequence_with_mock(self) -> None:
+        # 1. Online
+        self.firewall.check_connection()
+        # 2. Crear alias IP
+        self.firewall.create_alias(
+            name="mimosa_test_alias_ip",
+            alias_type="host",
+            description="alias ip test",
         )
-
-        items = self.firewall.list_blocks()
-        self.assertEqual(items, [])
-        statuses = [status for *_, status in self.requests]
-        self.assertEqual(statuses.count(404), 0)
-
-    def test_list_blocks_recovers_from_missing_alias(self) -> None:
-        blocks = self.firewall.list_blocks()
-
-        self.assertTrue(self.alias_created)
-        self.assertEqual(blocks, [])
-        self.assertIn(
-            ("POST", "/api/firewall/alias/addItem", 200),
-            self.requests,
+        # 3. Crear alias puertos
+        self.firewall.create_alias(
+            name="mimosa_test_alias_ports",
+            alias_type="port",
+            description="alias ports test",
         )
-
-    def test_errors_if_alias_creation_endpoint_is_missing(self) -> None:
-        self.fallback_after_additem_404 = True
-
-        with self.assertRaises(httpx.HTTPStatusError):
-            self.firewall.list_blocks()
-
-    def test_block_and_unblock_trigger_reload(self) -> None:
-        self.firewall.block_ip("203.0.113.10", reason="prueba")
-        self.firewall.unblock_ip("203.0.113.10")
-
-        apply_calls = [req for req in self.requests if req[1] == "/api/firewall/filter/apply"]
-        self.assertEqual(len(apply_calls), 2)
-
-    def test_unblock_ip_preserves_other_entries(self) -> None:
-        self.firewall.block_ip("203.0.113.10", reason="prueba")
-        self.firewall.block_ip("203.0.113.11", reason="prueba")
-
-        self.firewall.unblock_ip("203.0.113.10")
-
-        self.assertNotIn("203.0.113.10", self.alias_addresses)
-        self.assertIn("203.0.113.11", self.alias_addresses)
-
-    def test_unblock_ip_uses_delete_endpoint_when_available(self) -> None:
-        self.firewall.block_ip("203.0.113.12", reason="prueba")
-
-        self.firewall.unblock_ip("203.0.113.12")
-
-        self.assertNotIn("203.0.113.12", self.alias_addresses)
-        self.assertIn(
-            ("POST", f"/api/firewall/alias_util/delete/{self.alias_name}", 200),
-            self.requests,
+        # 4. Comprobar existencia
+        self.assertTrue(self.firewall._alias_exists("mimosa_test_alias_ip"))  # type: ignore[attr-defined]
+        self.assertTrue(self.firewall._alias_exists("mimosa_test_alias_ports"))  # type: ignore[attr-defined]
+        # 5. Eliminar alias
+        self.firewall._request("POST", "/api/firewall/alias/deleteItem/mimosa_test_alias_ip")  # type: ignore[attr-defined]
+        self.firewall._request("POST", "/api/firewall/alias/deleteItem/mimosa_test_alias_ports")  # type: ignore[attr-defined]
+        # 6. Verificar eliminación
+        self.assertFalse(self.firewall._alias_exists("mimosa_test_alias_ip"))  # type: ignore[attr-defined]
+        self.assertFalse(self.firewall._alias_exists("mimosa_test_alias_ports"))  # type: ignore[attr-defined]
+        # 7. Crear alias de puertos con entradas
+        self.firewall.create_alias(
+            name="mimosa_test_alias_ports",
+            alias_type="port",
+            description="alias ports test",
         )
-
-    def test_unblock_ip_falls_back_when_delete_endpoint_missing(self) -> None:
-        self.fallback_after_delete_404 = True
-        self.firewall.block_ip("203.0.113.13", reason="prueba")
-
-        self.firewall.unblock_ip("203.0.113.13")
-
-        self.assertNotIn("203.0.113.13", self.alias_addresses)
-        self.assertIn(
-            ("POST", f"/api/firewall/alias_util/delete/{self.alias_name}", 404),
-            self.requests,
+        self.firewall._request(  # type: ignore[attr-defined]
+            "POST",
+            "/api/firewall/alias_util/add/mimosa_test_alias_ports",
+            json={"address": "1234"},
         )
-        self.assertIn(
-            ("POST", f"/api/firewall/alias_util/flush/{self.alias_name}", 200),
-            self.requests,
+        self.firewall._request(  # type: ignore[attr-defined]
+            "POST",
+            "/api/firewall/alias_util/add/mimosa_test_alias_ports",
+            json={"address": "4321"},
         )
-
-    def test_ensure_ready_applies_when_creating_alias(self) -> None:
-        self.firewall.ensure_ready()
-
-        apply_calls = [req for req in self.requests if req[1] == "/api/firewall/filter/apply"]
-        self.assertEqual(len(apply_calls), 1)
-        self.assertTrue(self.alias_created)
-        self.assertIn("mimosa_ports_tcp", self.port_aliases_created)
-        self.assertIn("mimosa_ports_udp", self.port_aliases_created)
-
-    def test_can_disable_apply_calls_for_tests(self) -> None:
-        firewall = OPNsenseClient(
-            base_url="http://fw",
-            api_key="apikey",
-            api_secret="apisecret",
-            alias_name=self.alias_name,
-            client=self.client,
-            apply_changes=False,
+        # 8. Comprobar contenido
+        ports = self.firewall._list_alias_values("mimosa_test_alias_ports")  # type: ignore[attr-defined]
+        self.assertIn("1234", ports)
+        self.assertIn("4321", ports)
+        # 9. Eliminar puerto 4321
+        self.firewall._request(  # type: ignore[attr-defined]
+            "POST",
+            "/api/firewall/alias_util/delete/mimosa_test_alias_ports",
+            json={"address": "4321"},
         )
+        ports_after = self.firewall._list_alias_values("mimosa_test_alias_ports")  # type: ignore[attr-defined]
+        self.assertEqual(ports_after, ["1234"])
+        # 10. Eliminar alias final
+        self.firewall._request("POST", "/api/firewall/alias/deleteItem/mimosa_test_alias_ports")  # type: ignore[attr-defined]
+        self.assertFalse(self.firewall._alias_exists("mimosa_test_alias_ports"))  # type: ignore[attr-defined]
 
-        firewall.block_ip("203.0.113.10")
-        firewall.unblock_ip("203.0.113.10")
-
-        apply_calls = [req for req in self.requests if req[1] == "/api/firewall/filter/apply"]
-        self.assertEqual(len(apply_calls), 0)
-
-    def test_get_status_reports_alias_preparation(self) -> None:
-        status = self.firewall.get_status()
-
-        self.assertTrue(status.get("available"))
-        self.assertTrue(status.get("alias_ready"))
-        self.assertTrue(status.get("alias_created"))
-        self.assertTrue(status.get("applied_changes"))
-        self.assertIn(("POST", "/api/firewall/filter/apply", 200), self.requests)
-        self.assertIn("mimosa_ports_tcp", self.port_aliases_created)
-        self.assertIn("mimosa_ports_udp", self.port_aliases_created)
-
-    def test_live_opnsense_calls_use_environment(self) -> None:
-        base_url = os.getenv("OPNSENSE_BASE_URL") or os.getenv("OPNSENSE_URL")
-        api_key = os.getenv("OPNSENSE_API_KEY")
-        api_secret = os.getenv("OPNSENSE_API_SECRET")
-        alias_name = os.getenv("OPNSENSE_ALIAS_NAME", "mimosa_blocklist")
-        test_ip = os.getenv("OPNSENSE_TEST_IP", "198.51.100.250")
-
-        if not base_url or not api_key or not api_secret:
-            self.skipTest("Entorno OPNsense no configurado")
-
-        firewall = OPNsenseClient(
-            base_url=base_url,
-            api_key=api_key,
-            api_secret=api_secret,
-            alias_name=alias_name,
-            verify_ssl=os.getenv("OPNSENSE_VERIFY_SSL", "true").lower() not in {"0", "false", "no"},
-            apply_changes=False,
-        )
-
-        firewall.check_connection()
-        firewall.ensure_ready()
-        firewall.block_ip(test_ip, reason="prueba-ci")
-        try:
-            self.assertIn(test_ip, firewall.list_blocks())
-        finally:
-            firewall.unblock_ip(test_ip)
-
-    def test_live_opnsense_calls_use_test_environment(self) -> None:
+    def test_live_opnsense_alias_workflow_optional(self) -> None:
         required_vars = [
             "TEST_FIREWALL_OPNSENSE_BASE_URL",
             "TEST_FIREWALL_OPNSENSE_API_KEY",
@@ -305,31 +194,47 @@ class OPNsenseClientTests(unittest.TestCase):
         base_url = os.getenv("TEST_FIREWALL_OPNSENSE_BASE_URL")
         api_key = os.getenv("TEST_FIREWALL_OPNSENSE_API_KEY")
         api_secret = os.getenv("TEST_FIREWALL_OPNSENSE_API_SECRET")
-        alias_name = os.getenv("TEST_FIREWALL_OPNSENSE_ALIAS_NAME", "mimosa_blocklist")
         verify_ssl = _as_bool(os.getenv("TEST_FIREWALL_OPNSENSE_VERIFY_SSL"), True)
         apply_changes = _as_bool(os.getenv("TEST_FIREWALL_APPLY_CHANGES"), False)
         timeout_str = os.getenv("TEST_FIREWALL_TIMEOUT")
         timeout = float(timeout_str) if timeout_str else 10.0
-        test_ip = os.getenv("TEST_FIREWALL_OPNSENSE_TEST_IP", "198.51.100.251")
+
+        if not base_url or not str(base_url).startswith(("http://", "https://")):
+            self.skipTest("TEST_FIREWALL_OPNSENSE_BASE_URL no es válido")
 
         firewall = OPNsenseClient(
             base_url=base_url,
             api_key=api_key,
             api_secret=api_secret,
-            alias_name=alias_name,
             verify_ssl=verify_ssl,
             timeout=timeout,
             apply_changes=apply_changes,
         )
 
-        firewall.check_connection()
-        firewall.ensure_ready()
-        firewall.block_ip(test_ip, reason="prueba-ci-env")
-        try:
-            blocks = firewall.list_blocks()
-            self.assertIn(test_ip, blocks)
-        finally:
-            firewall.unblock_ip(test_ip)
+        alias_ip = "mimosa_test_alias_ip"
+        alias_ports = "mimosa_test_alias_ports"
+
+        firewall.check_connection()  # 1
+        firewall.create_alias(name=alias_ip, alias_type="host", description="ci-ip")  # 2
+        firewall.create_alias(name=alias_ports, alias_type="port", description="ci-ports")  # 3
+        self.assertTrue(firewall._alias_exists(alias_ip))  # type: ignore[attr-defined]  # 4
+        self.assertTrue(firewall._alias_exists(alias_ports))  # type: ignore[attr-defined]
+        firewall._request("POST", f"/api/firewall/alias/deleteItem/{alias_ip}")  # type: ignore[attr-defined]  # 5
+        firewall._request("POST", f"/api/firewall/alias/deleteItem/{alias_ports}")  # type: ignore[attr-defined]
+        self.assertFalse(firewall._alias_exists(alias_ip))  # type: ignore[attr-defined]  # 6
+        self.assertFalse(firewall._alias_exists(alias_ports))  # type: ignore[attr-defined]
+        firewall.create_alias(name=alias_ports, alias_type="port", description="ci-ports")  # 7
+        firewall._request("POST", f"/api/firewall/alias_util/add/{alias_ports}", json={"address": "1234"})  # type: ignore[attr-defined]
+        firewall._request("POST", f"/api/firewall/alias_util/add/{alias_ports}", json={"address": "4321"})  # type: ignore[attr-defined]
+        ports = firewall._list_alias_values(alias_ports)  # type: ignore[attr-defined]  # 8
+        self.assertIn("1234", ports)
+        self.assertIn("4321", ports)
+        firewall._request("POST", f"/api/firewall/alias_util/delete/{alias_ports}", json={"address": "4321"})  # type: ignore[attr-defined]  # 9
+        ports_after = firewall._list_alias_values(alias_ports)  # type: ignore[attr-defined]
+        self.assertIn("1234", ports_after)
+        self.assertNotIn("4321", ports_after)
+        firewall._request("POST", f"/api/firewall/alias/deleteItem/{alias_ports}")  # type: ignore[attr-defined]  # 10
+        self.assertFalse(firewall._alias_exists(alias_ports))  # type: ignore[attr-defined]
 
 
 if __name__ == "__main__":

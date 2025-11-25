@@ -73,10 +73,6 @@
         <input name="base_url" placeholder="https://firewall.local" />
       </div>
       <div>
-        <label>Alias</label>
-        <input name="alias_name" value="mimosa_blocklist" />
-      </div>
-      <div>
         <label>API key</label>
         <input name="api_key" />
       </div>
@@ -138,14 +134,13 @@
         <tr>
           <th>Nombre</th>
           <th>Tipo</th>
-          <th>Alias</th>
           <th>Verificación SSL</th>
           <th>Apply/Reload</th>
           <th>Acciones</th>
         </tr>
       </thead>
       <tbody id="fw-table">
-        <tr><td colspan="6" class="muted">Cargando...</td></tr>
+        <tr><td colspan="5" class="muted">Cargando...</td></tr>
       </tbody>
     </table>
   </section>
@@ -399,6 +394,19 @@
               <tr><th>Entradas</th></tr>
             </thead>
             <tbody id="alias-block-table">
+              <tr><td class="muted">Sin datos.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+        <h3 style="margin-top:0">Blacklist (permanente)</h3>
+        <div style="max-height:240px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
+          <table>
+            <thead>
+              <tr><th>Entradas</th></tr>
+            </thead>
+            <tbody id="alias-blacklist-table">
               <tr><td class="muted">Sin datos.</td></tr>
             </tbody>
           </table>
@@ -693,6 +701,39 @@
         </table>
       </div>
     </div>
+    <div class="card" style="margin-top:14px;">
+      <div class="flex space" style="align-items:flex-start; gap:12px; flex-wrap:wrap;">
+        <div>
+          <h3 style="margin:0">Blacklist del firewall</h3>
+          <div class="muted">Alias fijo <code>mimosa_blacklist</code> administrado desde Mimosa.</div>
+        </div>
+        <div class="flex" style="gap:8px; align-items:center; flex-wrap:wrap;">
+          <select id="blacklist-fw-select" class="block-fw-select" style="min-width:220px"></select>
+          <button class="secondary" onclick="loadBlacklist()">Actualizar</button>
+        </div>
+      </div>
+      <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-top:12px;">
+        <form id="blacklist-form" class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+          <h4 style="margin-top:0">Añadir a mimosa_blacklist</h4>
+          <label>IP o CIDR</label>
+          <input name="ip" required placeholder="203.0.113.33" />
+          <label>Motivo (opcional)</label>
+          <input name="reason" placeholder="Bloqueo permanente" />
+          <button type="submit" style="margin-top:12px;">Añadir</button>
+          <div id="blacklist-message" class="muted"></div>
+        </form>
+        <div style="max-height:260px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
+          <table>
+            <thead>
+              <tr><th>Entrada</th><th style="width:110px;"></th></tr>
+            </thead>
+            <tbody id="blacklist-table">
+              <tr><td colspan="2" class="muted">Selecciona un firewall.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </section>
 </section>
 
@@ -719,10 +760,6 @@
       <div>
         <label>Base URL</label>
         <input name="base_url" placeholder="https://firewall.local" />
-      </div>
-      <div>
-        <label>Alias</label>
-        <input name="alias_name" />
       </div>
       <div>
         <label>API key</label>
@@ -806,7 +843,7 @@ function switchTab(tab) {
   if (tab === 'blocks') refreshBlocks();
   if (tab === 'offenses') { loadOffenses(); loadRules(); }
   if (tab === 'ips') loadIps();
-  if (tab === 'whitelist') loadWhitelist();
+  if (tab === 'whitelist') { loadWhitelist(); loadBlacklist(); }
   if (tab === 'firewall') {
     loadFirewallAliases();
   }
@@ -1318,7 +1355,7 @@ async function loadFirewalls() {
   const tbody = document.getElementById('fw-table');
   tbody.innerHTML = '';
   if (!data.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="muted">No hay firewalls configurados.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="muted">No hay firewalls configurados.</td></tr>';
     renderBlockSelectors();
     return;
   }
@@ -1327,7 +1364,6 @@ async function loadFirewalls() {
     row.innerHTML = `
       <td>${cfg.name}</td>
       <td>${cfg.type}</td>
-      <td>${cfg.alias_name}</td>
       <td>${cfg.verify_ssl ? 'Sí' : 'No'}</td>
       <td>${cfg.apply_changes ? 'Sí' : 'No'}</td>
       <td style="text-align:right; display:flex; gap:8px; justify-content:flex-end;">
@@ -1367,7 +1403,6 @@ async function submitForm(event) {
     message.textContent = 'Guardado correctamente';
     message.style.color = '#67e8f9';
     form.reset();
-    form.alias_name.value = 'mimosa_blocklist';
     form.timeout.value = '5';
     form.verify_ssl.checked = true;
     form.apply_changes.checked = true;
@@ -1391,7 +1426,6 @@ function setFormValues(form, cfg) {
   form.name.value = cfg.name || '';
   form.type.value = cfg.type || 'pfsense';
   form.base_url.value = cfg.base_url || '';
-  form.alias_name.value = cfg.alias_name || '';
   form.api_key.value = cfg.api_key || '';
   form.api_secret.value = cfg.api_secret || '';
   form.ssh_host.value = cfg.ssh_host || '';
@@ -1562,6 +1596,7 @@ function renderPortAliasEntries(entriesByProtocol, emptyText = 'Alias sin puerto
 
 function renderAliasTablesFallback(message) {
   renderAliasPlaceholder('alias-block-table', message);
+  renderAliasPlaceholder('alias-blacklist-table', message);
   renderAliasPlaceholder('alias-port-table', message, 2);
 }
 
@@ -1593,13 +1628,14 @@ async function loadFirewallAliases() {
     }
 
     renderAliasEntries('alias-block-table', data.block_entries || [], 'Alias sin entradas.');
+    renderAliasEntries('alias-blacklist-table', data.blacklist_entries || [], 'Alias sin entradas.');
     renderPortAliasEntries(data.port_entries || {}, 'Alias sin puertos.');
     if (statusEl) {
-      const aliasLabel = data.alias || '-';
+      const aliases = data.aliases || {};
       const portsAliases = data.ports_aliases || {};
       const tcpAlias = portsAliases.tcp || 'mimosa_ports_tcp';
       const udpAlias = portsAliases.udp || 'mimosa_ports_udp';
-      statusEl.textContent = `Alias de bloqueo: ${aliasLabel} · Puertos TCP: ${tcpAlias} · Puertos UDP: ${udpAlias}`;
+      statusEl.textContent = `Temporal: ${aliases.temporal || '-'} · Blacklist: ${aliases.blacklist || '-'} · Puertos TCP: ${tcpAlias} · Puertos UDP: ${udpAlias}`;
     }
   } catch (error) {
     renderAliasTablesFallback('Error al cargar los alias.');
@@ -2030,6 +2066,56 @@ async function loadWhitelist() {
   });
 }
 
+async function loadBlacklist() {
+  const tbody = document.getElementById('blacklist-table');
+  const message = document.getElementById('blacklist-message');
+  if (!selectedFirewallId) {
+    tbody.innerHTML = '<tr><td colspan="2" class="muted">Configura un firewall para gestionar la blacklist.</td></tr>';
+    if (message) {
+      message.textContent = 'Selecciona un firewall.';
+      message.style.color = '#fca5a5';
+    }
+    return;
+  }
+  tbody.innerHTML = '<tr><td colspan="2" class="muted">Cargando...</td></tr>';
+  if (message) {
+    message.textContent = '';
+    message.style.color = '';
+  }
+  try {
+    const res = await fetch(`/api/firewalls/${selectedFirewallId}/blacklist`);
+    const data = await res.json();
+    if (!res.ok) {
+      tbody.innerHTML = '<tr><td colspan="2" class="muted">No se pudo cargar la blacklist.</td></tr>';
+      if (message) {
+        message.textContent = data.detail || 'No se pudo cargar la blacklist.';
+        message.style.color = '#fca5a5';
+      }
+      return;
+    }
+    const entries = data.items || [];
+    tbody.innerHTML = '';
+    if (!entries.length) {
+      tbody.innerHTML = '<tr><td colspan="2" class="muted">Sin entradas en mimosa_blacklist.</td></tr>';
+      return;
+    }
+    entries.forEach(ip => {
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td>${ip}</td>
+        <td style="text-align:right"><button class="secondary" onclick="deleteBlacklist('${ip}')">Eliminar</button></td>
+      `;
+      tbody.appendChild(row);
+    });
+  } catch (error) {
+    tbody.innerHTML = '<tr><td colspan="2" class="muted">Error al cargar la blacklist.</td></tr>';
+    if (message) {
+      message.textContent = 'Error al cargar la blacklist.';
+      message.style.color = '#fca5a5';
+    }
+  }
+}
+
 async function submitWhitelist(event) {
   event.preventDefault();
   const form = event.target;
@@ -2056,11 +2142,56 @@ async function deleteWhitelist(id) {
   loadWhitelist();
 }
 
+async function submitBlacklist(event) {
+  event.preventDefault();
+  const form = event.target;
+  const payload = Object.fromEntries(new FormData(form));
+  const message = document.getElementById('blacklist-message');
+  if (!selectedFirewallId) {
+    if (message) {
+      message.textContent = 'Selecciona un firewall antes de añadir entradas.';
+      message.style.color = '#fca5a5';
+    }
+    return;
+  }
+  try {
+    const res = await fetch(`/api/firewalls/${selectedFirewallId}/blacklist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const detail = await res.json().catch(() => ({}));
+    if (res.ok) {
+      if (message) {
+        message.textContent = 'Entrada añadida a mimosa_blacklist.';
+        message.style.color = '#67e8f9';
+      }
+      form.reset();
+      loadBlacklist();
+    } else if (message) {
+      message.textContent = detail.detail || 'No se pudo añadir la entrada.';
+      message.style.color = '#fca5a5';
+    }
+  } catch (error) {
+    if (message) {
+      message.textContent = 'Error al añadir la entrada.';
+      message.style.color = '#fca5a5';
+    }
+  }
+}
+
+async function deleteBlacklist(ip) {
+  if (!selectedFirewallId) return;
+  await fetch(`/api/firewalls/${selectedFirewallId}/blacklist/${encodeURIComponent(ip)}`, { method: 'DELETE' });
+  loadBlacklist();
+}
+
 // Event bindings
 document.getElementById('block-form').addEventListener('submit', addBlock);
 document.getElementById('firewall-form').addEventListener('submit', submitForm);
 document.getElementById('rule-form').addEventListener('submit', submitRule);
 document.getElementById('whitelist-form').addEventListener('submit', submitWhitelist);
+document.getElementById('blacklist-form').addEventListener('submit', submitBlacklist);
 document.getElementById('blocking-settings').addEventListener('submit', submitBlockingSettings);
 document.getElementById('proxytrap-form').addEventListener('submit', submitProxytrap);
 document.getElementById('proxytrap-policy-form').addEventListener('submit', submitProxytrapPolicy);
@@ -2087,6 +2218,7 @@ loadOffenses();
 loadRules();
 loadIps();
 loadWhitelist();
+loadBlacklist();
 loadPlugins();
 </script>
 {% endblock %}

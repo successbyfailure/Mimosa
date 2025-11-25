@@ -10,6 +10,10 @@ from typing import Dict, List, Optional
 import httpx
 from mimosa.core.api import FirewallGateway
 
+TEMPORAL_ALIAS_NAME = "mimosa_temporal_list"
+BLACKLIST_ALIAS_NAME = "mimosa_blacklist"
+PORT_ALIAS_NAMES = {"tcp": "mimosa_ports_tcp", "udp": "mimosa_ports_udp"}
+
 
 class _BaseSenseClient(FirewallGateway):
     """Base compartida para clientes de pfSense y OPNsense.
@@ -23,7 +27,6 @@ class _BaseSenseClient(FirewallGateway):
         base_url: str,
         api_key: str,
         api_secret: str,
-        alias_name: str = "mimosa_blocklist",
         *,
         verify_ssl: bool = True,
         timeout: float = 10.0,
@@ -32,8 +35,11 @@ class _BaseSenseClient(FirewallGateway):
     ) -> None:
         sanitized_url = base_url.rstrip("/")
         self.base_url = sanitized_url
-        self.alias_name = alias_name
-        self.ports_alias_names = {"tcp": "mimosa_ports_tcp", "udp": "mimosa_ports_udp"}
+        # Alias fijos gestionados por Mimosa
+        self.alias_name = TEMPORAL_ALIAS_NAME
+        self.temporal_alias = TEMPORAL_ALIAS_NAME
+        self.blacklist_alias = BLACKLIST_ALIAS_NAME
+        self.ports_alias_names = dict(PORT_ALIAS_NAMES)
         self._client = client or self._build_client(
             sanitized_url, api_key, api_secret, verify_ssl, timeout
         )
@@ -53,13 +59,13 @@ class _BaseSenseClient(FirewallGateway):
         necesarios.
         """
 
-        self._block_ip_backend(ip, reason)
+        self._block_ip_backend(ip, reason, alias_name=self.temporal_alias)
         self._apply_changes_if_enabled()
 
     def unblock_ip(self, ip: str) -> None:
         """Elimina una IP del alias configurado."""
 
-        self._unblock_ip_backend(ip)
+        self._unblock_ip_backend(ip, alias_name=self.temporal_alias)
         self._apply_changes_if_enabled()
 
     def list_table(self) -> List[str]:
@@ -94,9 +100,18 @@ class _BaseSenseClient(FirewallGateway):
         self.check_connection()
         status["available"] = True
 
-        alias_created = self._ensure_alias_exists()
+        temporal_created = self._ensure_alias_exists(
+            self.temporal_alias, "Mimosa temporal blocks"
+        )
+        blacklist_created = self._ensure_alias_exists(
+            self.blacklist_alias, "Mimosa blacklist"
+        )
         status["alias_ready"] = True
-        status["alias_created"] = alias_created
+        status["alias_created"] = temporal_created or blacklist_created
+        status["alias_details"] = {
+            "temporal": {"name": self.temporal_alias, "created": temporal_created},
+            "blacklist": {"name": self.blacklist_alias, "created": blacklist_created},
+        }
 
         ports_status: Dict[str, Dict[str, bool]] = {}
         try:
@@ -181,16 +196,27 @@ class _BaseSenseClient(FirewallGateway):
     ) -> httpx.Client:
         raise NotImplementedError
 
-    def _block_ip_backend(self, ip: str, reason: str) -> None:
+    def list_blacklist(self) -> List[str]:
+        return self._list_alias_values(self.blacklist_alias)
+
+    def add_to_blacklist(self, ip: str, reason: str = "") -> None:
+        self._block_ip_backend(ip, reason, alias_name=self.blacklist_alias)
+        self._apply_changes_if_enabled()
+
+    def remove_from_blacklist(self, ip: str) -> None:
+        self._unblock_ip_backend(ip, alias_name=self.blacklist_alias)
+        self._apply_changes_if_enabled()
+
+    def _block_ip_backend(self, ip: str, reason: str, *, alias_name: str) -> None:
         raise NotImplementedError
 
-    def _unblock_ip_backend(self, ip: str) -> None:
+    def _unblock_ip_backend(self, ip: str, *, alias_name: str) -> None:
         raise NotImplementedError
 
     def _list_table_backend(self) -> List[str]:
         raise NotImplementedError
 
-    def _ensure_alias_exists(self) -> bool:
+    def _ensure_alias_exists(self, alias_name: str, description: str) -> bool:
         """Crea el alias de bloqueos si la plataforma lo soporta.
 
         Devuelve ``True`` si se ha solicitado la creación del alias
@@ -263,21 +289,21 @@ class OPNsenseClient(_BaseSenseClient):
 
         self._request("POST", "/api/firewall/alias/addItem", json=payload)
 
-    def _block_ip_backend(self, ip: str, reason: str) -> None:
+    def _block_ip_backend(self, ip: str, reason: str, *, alias_name: str) -> None:
         response = self._request(
             "POST",
-            f"/api/firewall/alias_util/add/{self.alias_name}",
+            f"/api/firewall/alias_util/add/{alias_name}",
             json={"address": ip, "description": reason} if reason else {"address": ip},
         )
         data = response.json()
         if isinstance(data, dict) and data.get("status") not in {"done", "ok", None}:
             raise RuntimeError(f"No se pudo añadir la IP al alias: {data}")
 
-    def _unblock_ip_backend(self, ip: str) -> None:
+    def _unblock_ip_backend(self, ip: str, *, alias_name: str) -> None:
         try:
             response = self._request(
                 "POST",
-                f"/api/firewall/alias_util/delete/{self.alias_name}",
+                f"/api/firewall/alias_util/delete/{alias_name}",
                 json={"address": ip},
             )
             data = response.json()
@@ -293,12 +319,12 @@ class OPNsenseClient(_BaseSenseClient):
             return
 
         remaining = [address for address in current if address != ip]
-        self._request("POST", f"/api/firewall/alias_util/flush/{self.alias_name}")
+        self._request("POST", f"/api/firewall/alias_util/flush/{alias_name}")
 
         for address in remaining:
             self._request(
                 "POST",
-                f"/api/firewall/alias_util/add/{self.alias_name}",
+                f"/api/firewall/alias_util/add/{alias_name}",
                 json={"address": address},
             )
 
@@ -330,15 +356,17 @@ class OPNsenseClient(_BaseSenseClient):
     def _list_table_backend(self) -> List[str]:
         try:
             response = self._request(
-                "GET", f"/api/firewall/alias_util/list/{self.alias_name}"
+                "GET", f"/api/firewall/alias_util/list/{self.temporal_alias}"
             )
         except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
             if exc.response.status_code == 404:
-                created = self._ensure_alias_exists()
+                created = self._ensure_alias_exists(
+                    self.temporal_alias, "Mimosa temporal blocks"
+                )
                 if created:
                     self._apply_changes_if_enabled()
                 response = self._request(
-                    "GET", f"/api/firewall/alias_util/list/{self.alias_name}"
+                    "GET", f"/api/firewall/alias_util/list/{self.temporal_alias}"
                 )
             else:
                 raise
@@ -352,14 +380,14 @@ class OPNsenseClient(_BaseSenseClient):
             return data
         return []
 
-    def _ensure_alias_exists(self) -> bool:
-        if self._alias_exists(self.alias_name):
+    def _ensure_alias_exists(self, alias_name: str, description: str) -> bool:  # type: ignore[override]
+        if self._alias_exists(alias_name):
             return False
 
         self.create_alias(
-            name=self.alias_name,
+            name=alias_name,
             alias_type="host",
-            description="Mimosa blocklist",
+            description=description,
         )
         return True
 
@@ -406,7 +434,6 @@ class PFSenseClient(_BaseSenseClient):
         base_url: str,
         api_key: str,
         api_secret: str,
-        alias_name: str = "mimosa_blocklist",
         *,
         verify_ssl: bool = True,
         timeout: float = 10.0,
@@ -420,7 +447,6 @@ class PFSenseClient(_BaseSenseClient):
             base_url,
             api_key,
             api_secret,
-            alias_name,
             verify_ssl=verify_ssl,
             timeout=timeout,
             client=client,
@@ -506,24 +532,24 @@ class PFSenseClient(_BaseSenseClient):
         }
         self._request("POST", "firewall/alias", json=payload)
 
-    def _block_ip_backend(self, ip: str, reason: str) -> None:
+    def _block_ip_backend(self, ip: str, reason: str, *, alias_name: str) -> None:
         payload = {"address": ip, "descr": reason or ""}
-        self._request(
-            "POST", f"firewall/alias/{self.alias_name}/address", json=payload
-        )
+        self._request("POST", f"firewall/alias/{alias_name}/address", json=payload)
 
-    def _unblock_ip_backend(self, ip: str) -> None:
-        self._request("DELETE", f"firewall/alias/{self.alias_name}/address/{ip}")
+    def _unblock_ip_backend(self, ip: str, *, alias_name: str) -> None:
+        self._request("DELETE", f"firewall/alias/{alias_name}/address/{ip}")
 
     def _list_table_backend(self) -> List[str]:
         try:
-            response = self._request("GET", f"firewall/alias/{self.alias_name}")
+            response = self._request("GET", f"firewall/alias/{self.temporal_alias}")
         except httpx.HTTPStatusError as exc:  # pragma: no cover - dependiente del firewall
             if exc.response.status_code == 404:
-                created = self._ensure_alias_exists()
+                created = self._ensure_alias_exists(
+                    self.temporal_alias, "Mimosa temporal blocks"
+                )
                 if created:
                     self._apply_changes_if_enabled()
-                response = self._request("GET", f"firewall/alias/{self.alias_name}")
+                response = self._request("GET", f"firewall/alias/{self.temporal_alias}")
             else:
                 raise
         data = response.json()
@@ -564,14 +590,14 @@ class PFSenseClient(_BaseSenseClient):
             ]
         return values
 
-    def _ensure_alias_exists(self) -> bool:
-        if self._alias_exists(self.alias_name):
+    def _ensure_alias_exists(self, alias_name: str, description: str) -> bool:  # type: ignore[override]
+        if self._alias_exists(alias_name):
             return False
 
         self.create_alias(
-            name=self.alias_name,
+            name=alias_name,
             alias_type="host",
-            description="Mimosa blocklist",
+            description=description,
         )
         return True
 

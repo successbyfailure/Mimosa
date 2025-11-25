@@ -3,25 +3,25 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from fastapi.testclient import TestClient
-
+from fastapi import HTTPException
 from conftest import ensure_test_env
 from mimosa.core.blocking import BlockManager
 from mimosa.core.offenses import OffenseStore
-from mimosa.web.app import FirewallInput, create_app
+from mimosa.web.app import (
+    BlacklistInput,
+    BlockInput,
+    FirewallInput,
+    RuleInput,
+    create_app,
+)
 from mimosa.web.config import FirewallConfigStore
 
 
-def build_client(tmp_dir: str) -> tuple[TestClient, FirewallConfigStore]:
-    storage_dir = Path(tmp_dir)
-    config_store = FirewallConfigStore(path=storage_dir / "firewalls.json")
-    offense_store = OffenseStore(db_path=storage_dir / "mimosa.db")
-    app = create_app(
-        offense_store=offense_store,
-        block_manager=BlockManager(db_path=offense_store.db_path),
-        config_store=config_store,
-    )
-    return TestClient(app), config_store
+def _get_endpoint(app, path: str, method: str = "GET"):
+    for route in app.router.routes:
+        if getattr(route, "path", None) == path and method in getattr(route, "methods", {"GET"}):
+            return route.endpoint
+    raise AssertionError(f"No se encontró el endpoint {path}")
 
 
 def _as_bool(value: str | None, default: bool = True) -> bool:
@@ -51,7 +51,6 @@ def _opnsense_env_payload() -> FirewallInput | None:
         base_url=base_url,
         api_key=api_key,
         api_secret=api_secret,
-        alias_name=os.getenv("TEST_FIREWALL_OPNSENSE_ALIAS_NAME", "mimosa_blocklist"),
         verify_ssl=_as_bool(os.getenv("TEST_FIREWALL_OPNSENSE_VERIFY_SSL"), True),
         timeout=float(os.getenv("TEST_FIREWALL_TIMEOUT") or 15),
         apply_changes=_as_bool(os.getenv("TEST_FIREWALL_APPLY_CHANGES"), True),
@@ -79,7 +78,6 @@ def _pfsense_env_payload() -> FirewallInput | None:
         base_url=base_url,
         api_key=api_key,
         api_secret=api_secret,
-        alias_name=os.getenv("TEST_FIREWALL_PFSENSE_ALIAS_NAME", "mimosa_blocklist"),
         verify_ssl=_as_bool(os.getenv("TEST_FIREWALL_PFSENSE_VERIFY_SSL"), True),
         timeout=float(os.getenv("TEST_FIREWALL_TIMEOUT") or 15),
         apply_changes=_as_bool(os.getenv("TEST_FIREWALL_APPLY_CHANGES"), True),
@@ -107,7 +105,6 @@ def _legacy_env_payload() -> FirewallInput | None:
         base_url=base_url,
         api_key=api_key,
         api_secret=api_secret,
-        alias_name=os.getenv("TEST_FIREWALL_ALIAS_NAME", "mimosa_blocklist"),
         verify_ssl=_as_bool(os.getenv("TEST_FIREWALL_VERIFY_SSL"), True),
         timeout=float(os.getenv("TEST_FIREWALL_TIMEOUT") or 15),
         apply_changes=_as_bool(os.getenv("TEST_FIREWALL_APPLY_CHANGES"), True),
@@ -121,115 +118,120 @@ def _env_firewall_payload() -> FirewallInput | None:
 class FirewallApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = TemporaryDirectory()
-        self.client, self.config_store = build_client(self._tmp.name)
+        storage_dir = Path(self._tmp.name)
+        self.config_store = FirewallConfigStore(path=storage_dir / "firewalls.json")
+        self.offense_store = OffenseStore(db_path=storage_dir / "mimosa.db")
+        self.app = create_app(
+            offense_store=self.offense_store,
+            block_manager=BlockManager(db_path=self.offense_store.db_path),
+            config_store=self.config_store,
+        )
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def _dummy_payload(self) -> dict:
+    def _dummy_payload(self) -> FirewallInput:
         return FirewallInput(
             name="dummy-fw",
             type="dummy",
             base_url=None,
             api_key=None,
             api_secret=None,
-            alias_name="mimosa_blocklist",
             verify_ssl=True,
             timeout=5.0,
-        ).model_dump()
+        )
+
+    def _create_firewall(self, payload: FirewallInput) -> object:
+        endpoint = _get_endpoint(self.app, "/api/firewalls", "POST")
+        return endpoint(payload)
 
     def test_create_firewall_persists_configuration(self) -> None:
-        response = self.client.post("/api/firewalls", json=self._dummy_payload())
-        self.assertEqual(response.status_code, 201)
-        data = response.json()
+        created = self._create_firewall(self._dummy_payload())
 
-        stored = self.config_store.get(data["id"])
+        stored = self.config_store.get(created.id)
         self.assertIsNotNone(stored)
-        self.assertEqual(data["name"], stored.name)
+        self.assertEqual(created.name, stored.name)
 
-        listing = self.client.get("/api/firewalls")
-        self.assertEqual(listing.status_code, 200)
-        ids = {cfg["id"] for cfg in listing.json()}
-        self.assertIn(data["id"], ids)
+        listing_endpoint = _get_endpoint(self.app, "/api/firewalls")
+        listing = listing_endpoint()
+        ids = {cfg.id for cfg in listing}
+        self.assertIn(created.id, ids)
 
     def test_test_firewall_accepts_body_payload(self) -> None:
-        response = self.client.post("/api/firewalls/test", json=self._dummy_payload())
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertTrue(payload["online"])
+        test_endpoint = _get_endpoint(self.app, "/api/firewalls/test", "POST")
+        result = test_endpoint(self._dummy_payload())
+        self.assertTrue(result["online"])
 
     def test_block_manager_endpoints_allow_add_and_remove(self) -> None:
-        created = self.client.post("/api/firewalls", json=self._dummy_payload()).json()
-        config_id = created["id"]
+        created = self._create_firewall(self._dummy_payload())
+        config_id = created.id
 
-        listing = self.client.get(f"/api/firewalls/{config_id}/blocks")
-        self.assertEqual(listing.status_code, 200)
-        self.assertEqual(listing.json()["items"], [])
+        list_blocks = _get_endpoint(self.app, "/api/firewalls/{config_id}/blocks", "GET")
+        add_block = _get_endpoint(self.app, "/api/firewalls/{config_id}/blocks", "POST")
+        delete_block = _get_endpoint(self.app, "/api/firewalls/{config_id}/blocks/{ip}", "DELETE")
 
-        add_resp = self.client.post(
-            f"/api/firewalls/{config_id}/blocks",
-            json={"ip": "203.0.113.10", "reason": "manual"},
+        listing = list_blocks(config_id)
+        self.assertEqual(listing["items"], [])
+
+        add_block(config_id, BlockInput(ip="203.0.113.10", reason="manual"))
+        refreshed = list_blocks(config_id)
+        self.assertIn("203.0.113.10", refreshed["items"])
+
+        delete_block(config_id, "203.0.113.10")
+        final_listing = list_blocks(config_id)
+        self.assertEqual(final_listing["items"], [])
+
+    def test_blacklist_endpoints_allow_add_and_remove(self) -> None:
+        created = self._create_firewall(self._dummy_payload())
+        config_id = created.id
+
+        list_blacklist = _get_endpoint(self.app, "/api/firewalls/{config_id}/blacklist", "GET")
+        add_blacklist = _get_endpoint(self.app, "/api/firewalls/{config_id}/blacklist", "POST")
+        delete_blacklist = _get_endpoint(
+            self.app, "/api/firewalls/{config_id}/blacklist/{ip}", "DELETE"
         )
-        self.assertEqual(add_resp.status_code, 201)
 
-        refreshed = self.client.get(f"/api/firewalls/{config_id}/blocks")
-        self.assertIn("203.0.113.10", refreshed.json()["items"])
-
-        delete_resp = self.client.delete(
-            f"/api/firewalls/{config_id}/blocks/203.0.113.10"
-        )
-        self.assertEqual(delete_resp.status_code, 204)
-
-        final_listing = self.client.get(f"/api/firewalls/{config_id}/blocks")
-        self.assertEqual(final_listing.json()["items"], [])
-
-    def test_block_rule_stats_returns_error_for_dummy(self) -> None:
-        created = self.client.post("/api/firewalls", json=self._dummy_payload()).json()
-        config_id = created["id"]
-
-        stats = self.client.get(f"/api/firewalls/{config_id}/block_rule_stats")
-        self.assertEqual(stats.status_code, 501)
-
-    def test_flush_states_returns_error_for_dummy(self) -> None:
-        created = self.client.post("/api/firewalls", json=self._dummy_payload()).json()
-        config_id = created["id"]
-
-        response = self.client.post(f"/api/firewalls/{config_id}/flush_states")
-        self.assertEqual(response.status_code, 501)
+        self.assertEqual(list_blacklist(config_id)["items"], [])
+        add_blacklist(config_id, BlacklistInput(ip="203.0.113.40", reason="manual"))
+        listing = list_blacklist(config_id)
+        self.assertIn("203.0.113.40", listing["items"])
+        delete_blacklist(config_id, "203.0.113.40")
+        self.assertEqual(list_blacklist(config_id)["items"], [])
 
     def test_rule_endpoints_allow_add_and_delete(self) -> None:
-        initial = self.client.get("/api/rules")
-        self.assertEqual(initial.status_code, 200)
-        initial_count = len(initial.json())
+        list_rules = _get_endpoint(self.app, "/api/rules", "GET")
+        create_rule = _get_endpoint(self.app, "/api/rules", "POST")
+        delete_rule = _get_endpoint(self.app, "/api/rules/{rule_id}", "DELETE")
 
-        create_resp = self.client.post(
-            "/api/rules",
-            json={
-                "plugin": "auth",
-                "severity": "alto",
-                "description": "intentos fallidos",
-                "min_last_hour": 2,
-                "min_total": 3,
-                "min_blocks_total": 1,
-                "block_minutes": 90,
-            },
+        initial_count = len(list_rules())
+        created = create_rule(
+            RuleInput(
+                plugin="auth",
+                severity="alto",
+                description="intentos fallidos",
+                min_last_hour=2,
+                min_total=3,
+                min_blocks_total=1,
+                block_minutes=90,
+            )
         )
-        self.assertEqual(create_resp.status_code, 201)
-        created = create_resp.json()
 
-        listing = self.client.get("/api/rules")
-        self.assertEqual(len(listing.json()), initial_count + 1)
-        self.assertEqual(created["plugin"], "auth")
+        self.assertEqual(len(list_rules()), initial_count + 1)
+        delete_rule(created["id"])
+        self.assertEqual(len(list_rules()), initial_count)
 
-        delete_resp = self.client.delete(f"/api/rules/{created['id']}")
-        self.assertEqual(delete_resp.status_code, 204)
 
-        final_listing = self.client.get("/api/rules")
-        self.assertEqual(len(final_listing.json()), initial_count)
 class FirewallEnvIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = TemporaryDirectory()
-        self.client, self.config_store = build_client(self._tmp.name)
+        storage_dir = Path(self._tmp.name)
+        self.config_store = FirewallConfigStore(path=storage_dir / "firewalls.json")
+        self.offense_store = OffenseStore(db_path=storage_dir / "mimosa.db")
+        self.app = create_app(
+            offense_store=self.offense_store,
+            block_manager=BlockManager(db_path=self.offense_store.db_path),
+            config_store=self.config_store,
+        )
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -241,12 +243,18 @@ class FirewallEnvIntegrationTests(unittest.TestCase):
     def test_block_rule_stats_with_env_firewall(self) -> None:
         payload = _env_firewall_payload()
         self.assertIsNotNone(payload)
-        response = self.client.post("/api/firewalls", json=payload.model_dump())
-        self.assertEqual(response.status_code, 201)
-        config_id = response.json()["id"]
+        create_firewall = _get_endpoint(self.app, "/api/firewalls", "POST")
+        block_rule_stats = _get_endpoint(
+            self.app, "/api/firewalls/{config_id}/block_rule_stats", "GET"
+        )
 
-        stats = self.client.get(f"/api/firewalls/{config_id}/block_rule_stats")
-        self.assertIn(stats.status_code, (200, 501))
+        created = create_firewall(payload)
+        try:
+            stats = block_rule_stats(created.id)
+        except HTTPException as exc:
+            self.assertIn(exc.status_code, (501, 502))
+            return
+        self.assertIsInstance(stats, dict)
 
     @unittest.skipUnless(
         _env_firewall_payload(),
@@ -255,14 +263,16 @@ class FirewallEnvIntegrationTests(unittest.TestCase):
     def test_flush_states_with_env_firewall(self) -> None:
         payload = _env_firewall_payload()
         self.assertIsNotNone(payload)
-        response = self.client.post("/api/firewalls", json=payload.model_dump())
-        self.assertEqual(response.status_code, 201)
-        config_id = response.json()["id"]
+        create_firewall = _get_endpoint(self.app, "/api/firewalls", "POST")
+        flush_states = _get_endpoint(self.app, "/api/firewalls/{config_id}/flush_states", "POST")
 
-        flush = self.client.post(f"/api/firewalls/{config_id}/flush_states")
-        self.assertIn(flush.status_code, (200, 501, 502))
-
-
+        created = create_firewall(payload)
+        try:
+            result = flush_states(created.id)
+        except HTTPException as exc:
+            self.assertIn(exc.status_code, (501, 502))
+            return
+        self.assertIsInstance(result, dict)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,11 @@ from typing import Dict, List, Optional
 from mimosa.core.firewall import DummyFirewall, SSHIptablesFirewall
 from mimosa.core.sense import OPNsenseClient, PFSenseClient
 from mimosa.core.api import FirewallGateway
+from mimosa.core.sense import (
+    BLACKLIST_ALIAS_NAME,
+    PORT_ALIAS_NAMES,
+    TEMPORAL_ALIAS_NAME,
+)
 
 
 @dataclass
@@ -23,7 +28,6 @@ class FirewallConfig:
     base_url: str | None
     api_key: str | None
     api_secret: str | None
-    alias_name: str = "mimosa_blocklist"
     verify_ssl: bool = True
     timeout: float = 5.0
     apply_changes: bool = True
@@ -41,7 +45,6 @@ class FirewallConfig:
         base_url: str | None,
         api_key: str | None,
         api_secret: str | None,
-        alias_name: str = "mimosa_blocklist",
         verify_ssl: bool = True,
         timeout: float = 5.0,
         apply_changes: bool = True,
@@ -57,7 +60,6 @@ class FirewallConfig:
             base_url=base_url,
             api_key=api_key,
             api_secret=api_secret,
-            alias_name=alias_name,
             verify_ssl=verify_ssl,
             timeout=timeout,
             apply_changes=apply_changes,
@@ -89,7 +91,27 @@ class FirewallConfigStore:
         with self.path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
         for item in data:
-            config = FirewallConfig(**item)
+            sanitized = {
+                key: value
+                for key, value in item.items()
+                if key
+                in {
+                    "id",
+                    "name",
+                    "type",
+                    "base_url",
+                    "api_key",
+                    "api_secret",
+                    "verify_ssl",
+                    "timeout",
+                    "apply_changes",
+                    "ssh_host",
+                    "ssh_user",
+                    "ssh_key_path",
+                    "ssh_port",
+                }
+            }
+            config = FirewallConfig(**sanitized)
             self._configs[config.id] = config
 
     def _save(self) -> None:
@@ -141,14 +163,12 @@ class FirewallConfigStore:
                 return default
             return value.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
 
-        alias = env.get("INITIAL_FIREWALL_ALIAS_NAME", "mimosa_blocklist")
         config = FirewallConfig.new(
             name=name,
             type=firewall_type,
             base_url=env.get("INITIAL_FIREWALL_BASE_URL"),
             api_key=env.get("INITIAL_FIREWALL_API_KEY"),
             api_secret=env.get("INITIAL_FIREWALL_API_SECRET"),
-            alias_name=alias,
             verify_ssl=_as_bool(env.get("INITIAL_FIREWALL_VERIFY_SSL"), True),
             timeout=float(env.get("INITIAL_FIREWALL_TIMEOUT") or 15),
             apply_changes=_as_bool(
@@ -173,7 +193,6 @@ def build_firewall_gateway(config: FirewallConfig) -> FirewallGateway:
             base_url=config.base_url or "",
             api_key=config.api_key or "",
             api_secret=config.api_secret or "",
-            alias_name=config.alias_name,
             verify_ssl=config.verify_ssl,
             timeout=config.timeout,
             apply_changes=config.apply_changes,
@@ -190,7 +209,6 @@ def build_firewall_gateway(config: FirewallConfig) -> FirewallGateway:
             base_url=config.base_url or "",
             api_key=config.api_key or "",
             api_secret=config.api_secret or "",
-            alias_name=config.alias_name,
             verify_ssl=config.verify_ssl,
             timeout=config.timeout,
             apply_changes=config.apply_changes,
@@ -217,6 +235,8 @@ def check_firewall_status(config: FirewallConfig) -> Dict[str, str | bool]:
         status["online"] = bool(info.get("available"))
         status["alias_ready"] = bool(info.get("alias_ready"))
         status["alias_created"] = bool(info.get("alias_created"))
+        status["alias_details"] = info.get("alias_details")
+        status["ports_alias_status"] = info.get("ports_alias_status")
         status["applied_changes"] = bool(info.get("applied_changes"))
         status["message"] = "Conexión OK" if status["online"] else "No disponible"
     except Exception as exc:  # pragma: no cover - logging superficial

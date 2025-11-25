@@ -56,7 +56,6 @@ Mimosa incluye una pequeña aplicación FastAPI para consultar métricas y gesti
        base_url="https://firewall.local",
        api_key="API_KEY",
        api_secret="API_SECRET",
-       alias_name="mimosa_blocklist",
    )
 
    # O bien para OPNsense
@@ -64,12 +63,13 @@ Mimosa incluye una pequeña aplicación FastAPI para consultar métricas y gesti
        base_url="https://firewall.local",
        api_key="API_KEY",
        api_secret="API_SECRET",
-       alias_name="mimosa_blocklist",
    )
 
    api = CoreAPI(firewall, block_manager=BlockManager())
    api.block_ip("203.0.113.10", reason="Prueba de bloqueo", duration_minutes=60)
    ```
+
+Mimosa usa alias fijos en el firewall: `mimosa_temporal_list` para bloqueos temporales sincronizados por el núcleo y `mimosa_blacklist` para bloqueos permanentes que se gestionan desde la pestaña Whitelist del panel.
 
 La comprobación de conectividad para pfSense se realiza contra el endpoint
 documentado de estado de pfRest (`/api/v1/status/system`). Si este punto responde

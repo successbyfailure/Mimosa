@@ -131,6 +131,21 @@ class FirewallGateway:
 
         raise NotImplementedError
 
+    def list_blacklist(self) -> List[str]:
+        """Devuelve las IPs bloqueadas de forma permanente."""
+
+        raise NotImplementedError
+
+    def add_to_blacklist(self, ip: str, reason: str = "") -> None:
+        """Añade una IP a la lista negra permanente."""
+
+        raise NotImplementedError
+
+    def remove_from_blacklist(self, ip: str) -> None:
+        """Elimina una IP de la lista negra permanente."""
+
+        raise NotImplementedError
+
     def block_rule_stats(self) -> Dict[str, object]:
         """Devuelve estadísticas de reglas de bloqueo en el firewall."""
 
@@ -140,4 +155,3 @@ class FirewallGateway:
         """Fuerza un flush de estados en el firewall remoto."""
 
         raise NotImplementedError
-

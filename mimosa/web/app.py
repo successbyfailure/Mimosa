@@ -26,6 +26,11 @@ from mimosa.core.plugins import (
     PortDetectorRule,
     ProxyTrapConfig,
 )
+from mimosa.core.sense import (
+    BLACKLIST_ALIAS_NAME,
+    PORT_ALIAS_NAMES,
+    TEMPORAL_ALIAS_NAME,
+)
 from mimosa.core.portdetector import PortBindingError, PortDetectorService
 from mimosa.core.mimosanpm import MimosaNpmAlert, MimosaNpmService
 from mimosa.core.proxytrap import ProxyTrapService
@@ -58,7 +63,6 @@ class FirewallInput(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
     api_secret: str | None = None
-    alias_name: str = "mimosa_blocklist"
     verify_ssl: bool = True
     timeout: float = 5.0
     apply_changes: bool = True
@@ -75,6 +79,13 @@ class BlockInput(BaseModel):
     reason: str | None = None
     duration_minutes: int | None = None
     sync_with_firewall: bool = True
+
+
+class BlacklistInput(BaseModel):
+    """Entrada para gestionar la lista negra permanente."""
+
+    ip: str
+    reason: str | None = None
 
 
 class BlockingSettingsInput(BaseModel):
@@ -658,6 +669,10 @@ def create_app(
         try:
             gateway.ensure_ready()
             block_entries = gateway.list_blocks()
+            try:
+                blacklist_entries = gateway.list_blacklist()
+            except NotImplementedError:
+                blacklist_entries = []
             port_entries = gateway.get_ports()
         except NotImplementedError:
             raise HTTPException(
@@ -668,12 +683,16 @@ def create_app(
             raise HTTPException(status_code=502, detail=str(exc))
 
         return {
-            "alias": config.alias_name,
+            "aliases": {
+                "temporal": TEMPORAL_ALIAS_NAME,
+                "blacklist": BLACKLIST_ALIAS_NAME,
+            },
             "block_entries": block_entries,
+            "blacklist_entries": blacklist_entries,
             "ports_aliases": getattr(
                 gateway,
                 "ports_alias_names",
-                {"tcp": "mimosa_ports_tcp", "udp": "mimosa_ports_udp"},
+                PORT_ALIAS_NAMES,
             ),
             "port_entries": port_entries,
         }
@@ -689,11 +708,51 @@ def create_app(
         except httpx.HTTPStatusError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         return {
-            "alias": config.alias_name,
+            "alias": TEMPORAL_ALIAS_NAME,
             "items": items,
             "database": [_serialize_block(block) for block in block_manager.list()],
             "sync": sync_info,
         }
+
+    @app.get("/api/firewalls/{config_id}/blacklist")
+    def list_firewall_blacklist(config_id: str) -> Dict[str, object]:
+        _, gateway = _get_firewall(config_id)
+        try:
+            gateway.ensure_ready()
+            items = gateway.list_blacklist()
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Blacklist no soportada para este firewall")
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"alias": BLACKLIST_ALIAS_NAME, "items": items}
+
+    @app.post("/api/firewalls/{config_id}/blacklist", status_code=201)
+    def add_firewall_blacklist(config_id: str, payload: BlacklistInput) -> Dict[str, object]:
+        _, gateway = _get_firewall(config_id)
+        try:
+            gateway.ensure_ready()
+            gateway.add_to_blacklist(payload.ip, payload.reason or "")
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Blacklist no soportada para este firewall")
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"alias": BLACKLIST_ALIAS_NAME, "ip": payload.ip}
+
+    @app.delete(
+        "/api/firewalls/{config_id}/blacklist/{ip}",
+        status_code=204,
+        response_class=Response,
+    )
+    def delete_firewall_blacklist(config_id: str, ip: str) -> Response:
+        _, gateway = _get_firewall(config_id)
+        try:
+            gateway.ensure_ready()
+            gateway.remove_from_blacklist(ip)
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Blacklist no soportada para este firewall")
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return Response(status_code=204)
 
     @app.post("/api/firewalls/{config_id}/blocks", status_code=201)
     def add_firewall_block(config_id: str, payload: BlockInput) -> Dict[str, object]:
@@ -721,7 +780,7 @@ def create_app(
                 block_manager.remove(payload.ip)
                 raise HTTPException(status_code=502, detail=str(exc))
         return {
-            "alias": config.alias_name,
+            "alias": TEMPORAL_ALIAS_NAME,
             "ip": payload.ip,
             "reason": payload.reason or "",
             "duration_minutes": duration_minutes,
@@ -754,7 +813,10 @@ def create_app(
         except Exception as exc:  # pragma: no cover - errores específicos del cliente
             raise HTTPException(status_code=400, detail=str(exc))
         gateway_cache.pop(config.id, None)
-        return {"status": "ok", "message": f"Alias {config.alias_name} preparado"}
+        return {
+            "status": "ok",
+            "message": f"Alias {TEMPORAL_ALIAS_NAME} y {BLACKLIST_ALIAS_NAME} preparados",
+        }
 
     return app
 

@@ -5,6 +5,8 @@ from pathlib import Path
 import sys
 from typing import Iterable
 
+import anyio
+import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -32,3 +34,11 @@ def ensure_test_env(required_vars: Iterable[str]) -> bool:
         _load_testing_env()
 
     return all(os.getenv(var) for var in required_vars)
+
+
+# Compatibilidad con httpx 0.28+ para clientes síncronos usados en TestClient.
+if not hasattr(httpx.ASGITransport, "handle_request"):
+    def _handle_request(self, request: httpx.Request) -> httpx.Response:
+        return anyio.from_thread.run(self.handle_async_request, request)
+
+    httpx.ASGITransport.handle_request = _handle_request  # type: ignore[attr-defined]

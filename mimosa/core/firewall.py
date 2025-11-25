@@ -13,6 +13,7 @@ class DummyFirewall(FirewallGateway):
     def __init__(self) -> None:
         self._blocked: List[str] = []
         self._ports: Dict[str, List[int]] = {"tcp": [], "udp": []}
+        self._blacklist: List[str] = []
 
     def block_ip(self, ip: str, reason: str, duration_minutes: int | None = None) -> None:
         if ip not in self._blocked:
@@ -30,6 +31,17 @@ class DummyFirewall(FirewallGateway):
 
     def apply_changes(self) -> None:
         return None
+
+    def list_blacklist(self) -> List[str]:
+        return list(self._blacklist)
+
+    def add_to_blacklist(self, ip: str, reason: str = "") -> None:  # noqa: ARG002 - reason se ignora en dummy
+        if ip not in self._blacklist:
+            self._blacklist.append(ip)
+
+    def remove_from_blacklist(self, ip: str) -> None:
+        if ip in self._blacklist:
+            self._blacklist.remove(ip)
 
     def check_connection(self) -> None:
         """Dummy siempre responde como disponible."""
@@ -118,6 +130,15 @@ class SSHIptablesFirewall(FirewallGateway):
         raise NotImplementedError(
             "La gestión de NAT no está disponible para SSH + iptables"
         )
+
+    def list_blacklist(self) -> List[str]:
+        raise NotImplementedError("Blacklist no disponible para SSH + iptables")
+
+    def add_to_blacklist(self, ip: str, reason: str = "") -> None:  # noqa: ARG002
+        raise NotImplementedError("Blacklist no disponible para SSH + iptables")
+
+    def remove_from_blacklist(self, ip: str) -> None:
+        raise NotImplementedError("Blacklist no disponible para SSH + iptables")
 
     # --------------------------- utilidades ---------------------------------
     def _execute(self, remote_command: str) -> str:
