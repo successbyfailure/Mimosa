@@ -115,23 +115,30 @@ function cleanCharts() {
 }
 
 async function loadStats(range = '7d') {
+  let data;
   try {
     const res = await fetch('/api/stats');
     if (!res.ok) {
       throw new Error('Respuesta no válida');
     }
-    const data = await res.json();
-    updateStatsCards(data.offenses, data.blocks);
-
-    const offenseTimeline = data.offenses?.timeline?.[range] || [];
-    const blockTimeline = data.blocks?.timeline?.[range] || [];
-
-    cleanCharts();
-    offenseChart = buildChart(document.getElementById('offenses-chart'), 'Ofensas', offenseTimeline, '#38bdf8');
-    blockChart = buildChart(document.getElementById('blocks-chart'), 'Bloqueos', blockTimeline, '#22c55e');
+    data = await res.json();
   } catch (error) {
     updateStatsCards();
     cleanCharts();
+    return;
+  }
+
+  updateStatsCards(data.offenses, data.blocks);
+
+  const offenseTimeline = data.offenses?.timeline?.[range] || [];
+  const blockTimeline = data.blocks?.timeline?.[range] || [];
+
+  cleanCharts();
+  try {
+    offenseChart = buildChart(document.getElementById('offenses-chart'), 'Ofensas', offenseTimeline, '#38bdf8');
+    blockChart = buildChart(document.getElementById('blocks-chart'), 'Bloqueos', blockTimeline, '#22c55e');
+  } catch (error) {
+    console.error('No se pudieron renderizar las gráficas de estadísticas', error);
   }
 }
 
