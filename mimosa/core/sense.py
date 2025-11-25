@@ -430,7 +430,7 @@ class OPNsenseClient(_BaseSenseClient):
 
     @property
     def _status_endpoint(self) -> str:
-        return "/api/core/firmware/info"
+        return "/api/core/firmware/status"
 
     @property
     def _apply_endpoint(self) -> str:
