@@ -1,21 +1,31 @@
-"""Plugin Port Detector.
-
-Abre puertos TCP/UDP configurables y registra una ofensa por cada
-conexión detectada, permitiendo escalar a reglas de bloqueo
-preexistentes.
-"""
+"""Abre puertos TCP/UDP y registra cada conexión detectada."""
 from __future__ import annotations
 
+import json
 import select
 import socket
 import threading
 from dataclasses import asdict
+from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Tuple
 
 from mimosa.core.blocking import BlockManager
 from mimosa.core.offenses import OffenseStore
 from mimosa.core.plugins import PortDetectorConfig, PortDetectorRule
 from mimosa.core.rules import OffenseEvent, OffenseRule, OffenseRuleStore, RuleManager
+
+
+def collect_ports_by_protocol(rules: Iterable[PortDetectorRule]) -> Dict[str, List[int]]:
+    """Agrupa todos los puertos configurados por protocolo."""
+
+    ports: Dict[str, set[int]] = {"tcp": set(), "udp": set()}
+    for rule in rules:
+        protocol = (rule.protocol or "tcp").lower()
+        for port in PortDetectorService._iter_ports(rule):
+            if 1 <= port <= 65535:
+                ports.setdefault(protocol, set()).add(int(port))
+
+    return {proto: sorted(values) for proto, values in ports.items() if values}
 
 
 class PortBindingError(OSError):
@@ -47,6 +57,8 @@ class PortDetectorService:
         block_manager: BlockManager,
         rule_store: OffenseRuleStore,
         gateway_factory: Callable[[], object],
+        *,
+        stats_path: str | Path | None = None,
     ) -> None:
         self.offense_store = offense_store
         self.block_manager = block_manager
@@ -57,6 +69,9 @@ class PortDetectorService:
         self._sockets: List[socket.socket] = []
         self._threads: List[threading.Thread] = []
         self.config = PortDetectorConfig()
+        self._stats_path = Path(stats_path or Path("data/portdetector_stats.json"))
+        self._stats_path.parent.mkdir(parents=True, exist_ok=True)
+        self._port_hits = self._load_stats()
 
     # ---------------------------- configuración ----------------------------
     def apply_config(self, config: PortDetectorConfig) -> None:
@@ -162,6 +177,7 @@ class PortDetectorService:
     # ------------------------------ ofensas ---------------------------------
     def _register_hit(self, source_ip: str, port: int, protocol: str, severity: str) -> None:
         description = f"portdetector {protocol.upper()}:{port}"
+        self._increment_stat(protocol, port)
         self.offense_store.record(
             source_ip=source_ip,
             description=description,
@@ -220,5 +236,57 @@ class PortDetectorService:
             for port in range(start, end + 1):
                 yield port
 
+    # ----------------------------- estadísticas ----------------------------
+    def _load_stats(self) -> Dict[str, int]:
+        if not self._stats_path.exists():
+            return {}
+        try:
+            with self._stats_path.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (json.JSONDecodeError, OSError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        normalized: Dict[str, int] = {}
+        for key, value in data.items():
+            try:
+                normalized[str(key)] = int(value)
+            except (TypeError, ValueError):
+                continue
+        return normalized
 
-__all__ = ["PortBindingError", "PortDetectorService"]
+    def _save_stats(self) -> None:
+        with self._stats_path.open("w", encoding="utf-8") as fh:
+            json.dump(self._port_hits, fh, indent=2)
+
+    def _increment_stat(self, protocol: str, port: int) -> None:
+        key = f"{protocol}:{port}"
+        self._port_hits[key] = self._port_hits.get(key, 0) + 1
+        self._save_stats()
+
+    def stats(self, limit: int = 50) -> Dict[str, object]:
+        ordered = sorted(
+            self._port_hits.items(), key=lambda item: item[1], reverse=True
+        )[:limit]
+        entries: List[Dict[str, object]] = []
+        for key, hits in ordered:
+            parts = key.split(":", maxsplit=1)
+            if len(parts) != 2:
+                continue
+            try:
+                port = int(parts[1])
+            except ValueError:
+                continue
+            entries.append({"protocol": parts[0], "port": port, "hits": hits})
+        return {
+            "config": asdict(self.config),
+            "top_ports": entries,
+        }
+
+    def reset_stats(self) -> None:
+        self._port_hits = {}
+        if self._stats_path.exists():
+            self._stats_path.unlink()
+
+
+__all__ = ["PortBindingError", "PortDetectorService", "collect_ports_by_protocol"]
