@@ -27,6 +27,7 @@ class MimosaClient:
             timeout=10,
         )
         response.raise_for_status()
-        accepted = response.json().get("processed", 0)
+        body = response.json()
+        accepted = body.get("accepted", body.get("processed", 0))
         LOGGER.info("Alertas enviadas: %s aceptadas", accepted)
         return int(accepted)

@@ -29,7 +29,7 @@ class AccessLogEntry:
     def to_alert(self) -> dict[str, object]:
         return {
             "source_ip": self.source_ip,
-            "requested_host": self.host or "desconocido",
+            "host": self.host or "desconocido",
             "path": self.path,
             "user_agent": self.user_agent,
             "status_code": self.status_code,
