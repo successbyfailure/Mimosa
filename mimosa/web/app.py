@@ -31,7 +31,11 @@ from mimosa.core.sense import (
     PORT_ALIAS_NAMES,
     TEMPORAL_ALIAS_NAME,
 )
-from mimosa.core.portdetector import PortBindingError, PortDetectorService
+from mimosa.core.portdetector import (
+    PortBindingError,
+    PortDetectorService,
+    collect_ports_by_protocol,
+)
 from mimosa.core.mimosanpm import MimosaNpmAlert, MimosaNpmService
 from mimosa.core.proxytrap import ProxyTrapService
 from mimosa.core.rules import OffenseEvent, OffenseRule, OffenseRuleStore, RuleManager
@@ -200,6 +204,7 @@ def create_app(
     config_store: FirewallConfigStore | None = None,
     rule_store: OffenseRuleStore | None = None,
     proxytrap_stats_path: Path | str | None = None,
+    portdetector_stats_path: Path | str | None = None,
 ) -> FastAPI:
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -223,6 +228,9 @@ def create_app(
     plugin_store = PluginConfigStore()
     gateway_cache: Dict[str, FirewallGateway] = {}
     proxytrap_stats_path = proxytrap_stats_path or Path("data/proxytrap_stats.json")
+    portdetector_stats_path = portdetector_stats_path or Path(
+        "data/portdetector_stats.json"
+    )
     proxytrap_service = ProxyTrapService(
         offense_store,
         block_manager,
@@ -235,6 +243,7 @@ def create_app(
         block_manager,
         rule_store,
         gateway_factory=lambda: _select_gateway(),
+        stats_path=portdetector_stats_path,
     )
     mimosanpm_service = MimosaNpmService(
         offense_store,
@@ -256,6 +265,15 @@ def create_app(
         gateway = build_firewall_gateway(primary)
         gateway_cache[primary.id] = gateway
         return gateway
+
+    def _primary_gateway_or_error() -> FirewallGateway:
+        configs = config_store.list()
+        if not configs:
+            raise HTTPException(
+                status_code=404,
+                detail="Configura al menos un firewall para gestionar alias de puertos.",
+            )
+        return _select_gateway()
 
     def _cleanup_expired_blocks() -> None:
         gateway = _select_gateway()
@@ -400,6 +418,52 @@ def create_app(
     def proxytrap_stats() -> Dict[str, object]:
         return proxytrap_service.stats()
 
+    @app.get("/api/plugins/portdetector/stats")
+    def portdetector_stats(limit: int = 50) -> Dict[str, object]:
+        return portdetector_service.stats(limit=limit)
+
+    @app.get("/api/plugins/portdetector/aliases")
+    def list_portdetector_aliases() -> Dict[str, object]:
+        gateway = _primary_gateway_or_error()
+        try:
+            gateway.ensure_ready()
+            port_entries = gateway.get_ports()
+            alias_names = getattr(gateway, "ports_alias_names", PORT_ALIAS_NAMES)
+        except (NotImplementedError, AttributeError):
+            raise HTTPException(
+                status_code=501,
+                detail="El firewall no expone alias de puertos",
+            )
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+        return {"ports_aliases": alias_names, "port_entries": port_entries}
+
+    @app.post("/api/plugins/portdetector/aliases/sync")
+    def sync_portdetector_aliases() -> Dict[str, object]:
+        gateway = _primary_gateway_or_error()
+        config = plugin_store.get_port_detector()
+        desired_ports = collect_ports_by_protocol(config.rules or [])
+        try:
+            gateway.ensure_ready()
+            for protocol, ports in desired_ports.items():
+                gateway.set_ports_alias(protocol, ports)
+            port_entries = gateway.get_ports()
+            alias_names = getattr(gateway, "ports_alias_names", PORT_ALIAS_NAMES)
+        except (NotImplementedError, AttributeError):
+            raise HTTPException(
+                status_code=501,
+                detail="El firewall no expone alias de puertos",
+            )
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+        return {
+            "ports_aliases": alias_names,
+            "port_entries": port_entries,
+            "synced": desired_ports,
+        }
+
     @app.put("/api/plugins/proxytrap")
     def update_proxytrap_settings(payload: ProxyTrapInput) -> Dict[str, object]:
         config = ProxyTrapConfig(
@@ -508,8 +572,14 @@ def create_app(
 
     @app.post("/api/offenses", status_code=201)
     def create_offense(payload: OffenseInput) -> Dict[str, object]:
+        context = payload.context.copy() if payload.context else {}
+        if payload.plugin and not context.get("plugin"):
+            context["plugin"] = payload.plugin
+        if payload.event_id and not context.get("event_id"):
+            context["event_id"] = payload.event_id
         offense = offense_store.record(
-            **payload.model_dump(exclude={"plugin", "event_id"})
+            **payload.model_dump(exclude={"plugin", "event_id", "context"}),
+            context=context or None,
         )
         manager = _rule_manager()
         manager.process_offense(

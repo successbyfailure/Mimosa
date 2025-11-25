@@ -5,7 +5,7 @@ Proporciona métodos para añadir o eliminar direcciones en una tabla
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 import httpx
 from mimosa.core.api import FirewallGateway
@@ -132,6 +132,7 @@ class _BaseSenseClient(FirewallGateway):
             entry.get("created") for entry in ports_status.values()
         )
 
+        alias_created = status["alias_created"]
         ports_alias_created = status["ports_alias_created"]
 
         if (alias_created or ports_alias_created) and self._apply_changes:
@@ -179,6 +180,11 @@ class _BaseSenseClient(FirewallGateway):
             ports_by_protocol[protocol] = sorted(set(normalized))
 
         return ports_by_protocol
+
+    def set_ports_alias(self, protocol: str, ports: Iterable[int]) -> None:
+        """Reemplaza el contenido del alias de puertos indicado."""
+
+        raise NotImplementedError
 
     def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         url = f"{self.base_url}{path}"
@@ -407,6 +413,21 @@ class OPNsenseClient(_BaseSenseClient):
         alias_name = self._ports_alias_name_for(protocol)
         return self._list_alias_values(alias_name)
 
+    def set_ports_alias(self, protocol: str, ports: Iterable[int]) -> None:  # type: ignore[override]
+        alias_name = self._ports_alias_name_for(protocol)
+        self._ensure_ports_alias_exists(protocol)
+        self._request("POST", f"/api/firewall/alias_util/flush/{alias_name}")
+
+        sanitized = sorted({int(port) for port in ports if 1 <= int(port) <= 65535})
+        for port in sanitized:
+            self._request(
+                "POST",
+                f"/api/firewall/alias_util/add/{alias_name}",
+                json={"address": str(port)},
+            )
+
+        self._apply_changes_if_enabled()
+
     @property
     def _status_endpoint(self) -> str:
         return "/api/core/firmware/info"
@@ -632,3 +653,15 @@ class PFSenseClient(_BaseSenseClient):
                     "Las credenciales de pfRest no son válidas o carecen de permisos"
                 ) from exc
             raise
+
+    def set_ports_alias(self, protocol: str, ports: Iterable[int]) -> None:  # type: ignore[override]
+        alias_name = self._ports_alias_name_for(protocol)
+        self._ensure_ports_alias_exists(protocol)
+        payload = {
+            "name": alias_name,
+            "type": "port",
+            "descr": "Mimosa published ports",
+            "addresses": [str(port) for port in sorted({int(p) for p in ports if 1 <= int(p) <= 65535})],
+        }
+        self._request("PUT", f"firewall/alias/{alias_name}", json=payload)
+        self._apply_changes_if_enabled()

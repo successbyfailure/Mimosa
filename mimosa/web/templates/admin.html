@@ -305,6 +305,31 @@
             </tbody>
           </table>
         </div>
+        <div class="flex space" style="align-items:flex-start; gap:10px; margin-top:14px; flex-wrap:wrap;">
+          <div>
+            <h4 style="margin:0 0 6px;">Alias de puertos en el firewall</h4>
+            <div class="muted">Consulta los alias usados para puertos TCP/UDP.</div>
+          </div>
+          <div class="flex" style="gap:8px; align-items:center; flex-wrap:wrap;">
+            <button class="secondary" type="button" onclick="loadPortDetectorAliases()">Ver alias</button>
+            <button class="secondary" type="button" onclick="syncPortDetectorAliases()">Sincronizar alias</button>
+          </div>
+        </div>
+        <div id="portdetector-alias-message" class="muted" style="margin-top:6px;"></div>
+        <div style="max-height:180px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px; margin-top:8px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Protocolo</th>
+                <th>Alias</th>
+                <th>Puertos</th>
+              </tr>
+            </thead>
+            <tbody id="portdetector-alias-table">
+              <tr><td colspan="3" class="muted">Pulsa "Ver alias" para consultar el firewall.</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <form id="mimosanpm-form" class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
@@ -347,28 +372,6 @@
       </form>
     </div>
 
-    <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
-      <div class="flex space" style="align-items:flex-start;">
-        <div>
-          <h3 style="margin-top:0">Dominios más solicitados</h3>
-          <div class="muted">Estadísticas recogidas por ProxyTrap.</div>
-        </div>
-        <button class="secondary" onclick="loadProxyTrapStats()">Refrescar</button>
-      </div>
-      <div style="max-height:320px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
-        <table>
-          <thead>
-            <tr>
-              <th>Dominio</th>
-              <th>Solicitudes</th>
-            </tr>
-          </thead>
-          <tbody id="proxytrap-stats">
-            <tr><td colspan="2" class="muted">Sin datos.</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
   </div>
 </section>
 
@@ -815,7 +818,7 @@ let proxytrapPolicies = [];
 let editingPolicyIndex = null;
 let portDetectorRules = [];
 let editingPortRuleIndex = null;
-let ipBlockChart = null;
+let ipPluginChart = null;
 const editModal = document.getElementById('edit-modal');
 const editForm = document.getElementById('edit-form');
 const syncPreferenceKey = 'mimosa_sync_with_firewall';
@@ -971,7 +974,7 @@ async function loadPlugins() {
   if (mimosanpm && mimosanpm.config) {
     setMimosaNpmForm(mimosanpm.config);
   }
-  loadProxyTrapStats();
+  loadPortDetectorAliases();
 }
 
 function setProxyTrapForm(config) {
@@ -1031,6 +1034,88 @@ function setPortDetectorForm(config) {
   if (warning) warning.style.display = form.enabled.checked ? 'none' : 'inline-flex';
 }
 
+function renderPortDetectorAliases(portEntries = {}, aliasNames = {}) {
+  const tbody = document.getElementById('portdetector-alias-table');
+  if (!tbody) return;
+  const protocols = ['tcp', 'udp'];
+  tbody.innerHTML = '';
+  protocols.forEach(protocol => {
+    const ports = portEntries?.[protocol] || [];
+    const alias = (aliasNames && aliasNames[protocol])
+      || (aliasNames && aliasNames[protocol.toLowerCase()])
+      || (aliasNames && aliasNames[protocol.toUpperCase()])
+      || '-';
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${protocol.toUpperCase()}</td>
+      <td>${alias || '-'}</td>
+      <td>${ports.length ? ports.join(', ') : 'Sin puertos'}</td>`;
+    tbody.appendChild(row);
+  });
+}
+
+async function loadPortDetectorAliases() {
+  const message = document.getElementById('portdetector-alias-message');
+  const tbody = document.getElementById('portdetector-alias-table');
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="3" class="muted">Cargando alias...</td></tr>';
+  }
+  if (message) {
+    message.textContent = 'Consultando alias del firewall...';
+    message.style.color = '';
+  }
+  try {
+    const res = await fetch('/api/plugins/portdetector/aliases');
+    const data = await res.json();
+    if (res.ok) {
+      renderPortDetectorAliases(data.port_entries || {}, data.ports_aliases || {});
+      if (message) {
+        message.textContent = 'Alias leídos desde el firewall principal.';
+        message.style.color = '#67e8f9';
+      }
+    } else if (message) {
+      message.textContent = data.detail || 'No se pudieron leer los alias.';
+      message.style.color = '#fca5a5';
+    }
+  } catch (error) {
+    if (message) {
+      message.textContent = 'Error al consultar los alias.';
+      message.style.color = '#fca5a5';
+    }
+  }
+}
+
+async function syncPortDetectorAliases() {
+  const message = document.getElementById('portdetector-alias-message');
+  const tbody = document.getElementById('portdetector-alias-table');
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="3" class="muted">Sincronizando con el firewall...</td></tr>';
+  }
+  if (message) {
+    message.textContent = 'Aplicando reglas de Port Detector a los alias...';
+    message.style.color = '';
+  }
+  try {
+    const res = await fetch('/api/plugins/portdetector/aliases/sync', { method: 'POST' });
+    const data = await res.json();
+    if (res.ok) {
+      renderPortDetectorAliases(data.port_entries || {}, data.ports_aliases || {});
+      if (message) {
+        message.textContent = 'Alias sincronizados con la configuración del plugin.';
+        message.style.color = '#67e8f9';
+      }
+    } else if (message) {
+      message.textContent = data.detail || 'No se pudieron sincronizar los alias de puertos.';
+      message.style.color = '#fca5a5';
+    }
+  } catch (error) {
+    if (message) {
+      message.textContent = 'Error al sincronizar los alias de puertos.';
+      message.style.color = '#fca5a5';
+    }
+  }
+}
+
 function setMimosaNpmForm(config) {
   const form = document.getElementById('mimosanpm-form');
   if (!form) return;
@@ -1070,9 +1155,14 @@ function renderPortDetectorRules() {
     return;
   }
   portDetectorRules.forEach((rule, index) => {
-    const detail = (rule.ports && rule.ports.length)
-      ? `Puertos: ${rule.ports.join(', ')}`
-      : 'Sin puertos';
+    const parts = [];
+    if (rule.ports && rule.ports.length) {
+      parts.push(`Puertos: ${rule.ports.join(', ')}`);
+    }
+    if (rule.start && rule.end) {
+      parts.push(`Rango: ${rule.start}-${rule.end}`);
+    }
+    const detail = parts.length ? parts.join(' · ') : 'Sin puertos';
     const row = document.createElement('tr');
     row.innerHTML = `
       <td>${rule.protocol || 'tcp'}</td>
@@ -1301,30 +1391,6 @@ async function submitMimosaNpm(event) {
       message.style.color = '#fca5a5';
     }
   }
-}
-
-async function loadProxyTrapStats() {
-  const tbody = document.getElementById('proxytrap-stats');
-  tbody.innerHTML = '<tr><td colspan="2" class="muted">Cargando...</td></tr>';
-  const res = await fetch('/api/plugins/proxytrap/stats');
-  if (!res.ok) {
-    tbody.innerHTML = '<tr><td colspan="2" class="muted">No se pudieron cargar las estadísticas.</td></tr>';
-    return;
-  }
-  const data = await res.json();
-  setProxyTrapForm(data.config || {});
-  toggleCustomHtml();
-  const entries = data.top_domains || [];
-  tbody.innerHTML = '';
-  if (!entries.length) {
-    tbody.innerHTML = '<tr><td colspan="2" class="muted">Sin datos registrados.</td></tr>';
-    return;
-  }
-  entries.forEach(item => {
-    const row = document.createElement('tr');
-    row.innerHTML = `<td>${item.domain}</td><td>${item.hits}</td>`;
-    tbody.appendChild(row);
-  });
 }
 
 async function submitBlockingSettings(event) {
@@ -1970,6 +2036,15 @@ async function showIpDetail(ip) {
     .map(([source, count]) => `${source}: ${count}`)
     .join(' · ');
   const latestBlock = blocks[0] ? new Date(blocks[0].created_at).toLocaleString() : 'sin registros';
+  const pluginGroups = offenses.reduce((acc, offense) => {
+    const descriptionPlugin = (offense.description || '').split(':')[0];
+    const key = (offense.context?.plugin || descriptionPlugin || 'desconocido').trim() || 'desconocido';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  const pluginSummary = Object.entries(pluginGroups)
+    .map(([plugin, count]) => `${plugin}: ${count}`)
+    .join(' · ');
   detail.innerHTML = `
     <div><strong>${profile.ip}</strong></div>
     <div class="muted">Reverse DNS: ${profile.reverse_dns || 'n/d'}</div>
@@ -1981,12 +2056,13 @@ async function showIpDetail(ip) {
         <div class="muted">Estadísticas rápidas</div>
         <div style="font-weight:700;">${offenses.length} ofensas · ${blocks.length} bloqueos</div>
         <div class="muted">Último bloqueo: ${latestBlock}</div>
-        <div class="muted">Tipos: ${blockTypeSummary || 'Sin bloqueos registrados'}</div>
+        <div class="muted">Tipos de bloqueo: ${blockTypeSummary || 'Sin bloqueos registrados'}</div>
+        <div class="muted">Plugins: ${pluginSummary || 'Sin ofensas registradas'}</div>
       </div>
       <div class="card" style="padding:12px; background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
-        <div class="muted" style="margin-bottom:6px;">Distribución de bloqueos</div>
-        <canvas id="ip-block-chart" height="140"></canvas>
-        <div id="ip-block-chart-empty" class="muted" style="display:none;">Sin bloqueos para graficar.</div>
+        <div class="muted" style="margin-bottom:6px;">Distribución de ofensas por plugin</div>
+        <canvas id="ip-plugin-chart" height="140"></canvas>
+        <div id="ip-plugin-chart-empty" class="muted" style="display:none;">Sin ofensas para graficar.</div>
       </div>
     </div>
     <h4>Ofensas</h4>
@@ -1998,19 +2074,20 @@ async function showIpDetail(ip) {
       ${blocks.map(b => `<li>${new Date(b.created_at).toLocaleString()} · ${b.reason}</li>`).join('') || '<li class="muted">Sin bloqueos</li>'}
     </ul>
   `;
-  renderIpBlockChart(blocks);
+  renderIpPluginChart(offenses);
 }
 
-function renderIpBlockChart(blocks) {
-  const canvas = document.getElementById('ip-block-chart');
-  const emptyState = document.getElementById('ip-block-chart-empty');
+function renderIpPluginChart(offenses) {
+  const canvas = document.getElementById('ip-plugin-chart');
+  const emptyState = document.getElementById('ip-plugin-chart-empty');
   if (!canvas) return;
-  if (ipBlockChart) {
-    ipBlockChart.destroy();
-    ipBlockChart = null;
+  if (ipPluginChart) {
+    ipPluginChart.destroy();
+    ipPluginChart = null;
   }
-  const grouped = blocks.reduce((acc, block) => {
-    const key = block.source || 'desconocido';
+  const grouped = offenses.reduce((acc, offense) => {
+    const descriptionPlugin = (offense.description || '').split(':')[0];
+    const key = (offense.context?.plugin || descriptionPlugin || 'desconocido').trim() || 'desconocido';
     acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
@@ -2027,7 +2104,7 @@ function renderIpBlockChart(blocks) {
   if (emptyState) emptyState.style.display = 'none';
 
   const colors = ['#38bdf8', '#22c55e', '#fbbf24', '#f472b6', '#a78bfa', '#60a5fa'];
-  ipBlockChart = new Chart(canvas.getContext('2d'), {
+  ipPluginChart = new Chart(canvas.getContext('2d'), {
     type: 'doughnut',
     data: {
       labels,
