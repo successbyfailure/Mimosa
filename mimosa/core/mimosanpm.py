@@ -66,7 +66,12 @@ class MimosaNpmService:
         host = alert.requested_host or "desconocido"
         path = alert.path or "/"
         alert_type = alert.alert_type or "unknown"
-        description = f"mimosanpm:{alert_type} host={host} path={path}"
+        log_source = alert.log_source or "desconocido"
+        status_code = alert.status_code if alert.status_code is not None else "n/a"
+        description = (
+            f"mimosanpm:{alert_type} host={host} path={path} "
+            f"log={log_source} status={status_code}"
+        )
         context = {
             "plugin": "mimosanpm",
             "status_code": alert.status_code,
