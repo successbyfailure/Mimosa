@@ -8,7 +8,7 @@ from typing import Iterable
 
 from mimosanpm_agent.client import MimosaClient
 from mimosanpm_agent.config import AgentSettings
-from mimosanpm_agent.log_watcher import LogFollower, AccessLogEntry, filter_unknown_domains
+from mimosanpm_agent.log_watcher import LogFollower, AccessLogEntry, filter_alert_entries
 
 LOGGER = logging.getLogger(__name__)
 RUNNING = True
@@ -51,7 +51,11 @@ def main() -> int:
 
     while RUNNING:
         entries = follower.read_new()
-        filtered = filter_unknown_domains(entries, settings.known_domains)
+        filtered = filter_alert_entries(
+            entries,
+            settings.known_domains,
+            settings.suspicious_paths,
+        )
         for batch in _batch_alerts(filtered, settings.batch_size):
             try:
                 client.send_alerts(batch)

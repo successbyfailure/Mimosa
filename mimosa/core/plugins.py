@@ -89,6 +89,9 @@ class MimosaNpmConfig:
     enabled: bool = False
     default_severity: str = "alto"
     shared_secret: str = field(default_factory=_generate_secret)
+    alert_fallback: bool = True
+    alert_unregistered_domain: bool = True
+    alert_suspicious_path: bool = True
 
 
 class PluginConfigStore:
@@ -189,6 +192,11 @@ class PluginConfigStore:
             enabled=bool(config.get("enabled", False)),
             default_severity=config.get("default_severity", "alto"),
             shared_secret=str(shared_secret),
+            alert_fallback=bool(config.get("alert_fallback", True)),
+            alert_unregistered_domain=bool(
+                config.get("alert_unregistered_domain", True)
+            ),
+            alert_suspicious_path=bool(config.get("alert_suspicious_path", True)),
         )
         # Normaliza y persiste secretos faltantes.
         self._plugins[loaded.name] = asdict(loaded)
@@ -202,4 +210,3 @@ class PluginConfigStore:
         self._plugins[payload.name] = sanitized
         self._save()
         return payload
-

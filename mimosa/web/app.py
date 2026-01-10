@@ -139,6 +139,9 @@ class MimosaNpmConfigInput(BaseModel):
     default_severity: str = "alto"
     shared_secret: str | None = None
     rotate_secret: bool = False
+    alert_fallback: bool = True
+    alert_unregistered_domain: bool = True
+    alert_suspicious_path: bool = True
 
 
 class MimosaNpmAlertInput(BaseModel):
@@ -150,6 +153,9 @@ class MimosaNpmAlertInput(BaseModel):
     user_agent: Optional[str] = None
     severity: Optional[str] = None
     status_code: Optional[int] = None
+    alert_type: Optional[str] = None
+    alert_tags: Optional[List[str]] = None
+    log_source: Optional[str] = None
 
 
 class MimosaNpmBatchInput(BaseModel):
@@ -518,6 +524,9 @@ def create_app(
             enabled=payload.enabled,
             default_severity=payload.default_severity,
             shared_secret=shared_secret,
+            alert_fallback=payload.alert_fallback,
+            alert_unregistered_domain=payload.alert_unregistered_domain,
+            alert_suspicious_path=payload.alert_suspicious_path,
         )
         mimosanpm_service.apply_config(config)
         plugin_store.update_mimosanpm(config)
@@ -546,6 +555,9 @@ def create_app(
                 user_agent=entry.user_agent,
                 severity=entry.severity,
                 status_code=entry.status_code,
+                alert_type=entry.alert_type,
+                alert_tags=entry.alert_tags,
+                log_source=entry.log_source,
             )
             for entry in payload.alerts
         ]

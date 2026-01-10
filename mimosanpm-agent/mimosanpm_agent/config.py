@@ -15,6 +15,7 @@ class AgentSettings:
     poll_interval: float
     batch_size: int
     known_domains: set[str]
+    suspicious_paths: set[str]
     state_path: Path
 
     @classmethod
@@ -38,5 +39,21 @@ class AgentSettings:
                 for domain in env.get("KNOWN_DOMAINS", "").split(",")
                 if domain.strip()
             },
+            suspicious_paths=_load_suspicious_paths(env.get("SUSPICIOUS_PATHS", "")),
             state_path=Path(env.get("STATE_PATH", "/state/mimosanpm-agent.json")),
         )
+
+
+def _load_suspicious_paths(raw_paths: str) -> set[str]:
+    if raw_paths.strip():
+        return {path.strip().lower() for path in raw_paths.split(",") if path.strip()}
+    return {
+        "/wp-admin",
+        "/wp-login.php",
+        "/xmlrpc.php",
+        "/.env",
+        "/.git",
+        "/phpmyadmin",
+        "/admin",
+        "/login",
+    }

@@ -14,6 +14,11 @@ ACCESS_REGEX = re.compile(
     r"(?P<remote_addr>\S+) \S+ \S+ \[(?P<time>[^\]]+)\] \"(?P<method>\S+) (?P<path>[^\s]+) (?P<protocol>[^\"]+)\" "
     r"(?P<status>\d{3}) \S+ \"[^\"]*\" \"(?P<user_agent>[^\"]*)\"(?P<rest>.*)"
 )
+NPM_REGEX = re.compile(
+    r"\[(?P<time>[^\]]+)\]\s+(?P<prefix>.*?)\s+(?P<method>\S+)\s+(?P<scheme>https?|http)\s+"
+    r"(?P<host>\S+)\s+\"(?P<path>[^\"]*)\"\s+\[Client\s+(?P<remote_addr>[^\]]+)\].*?"
+    r"\"(?P<user_agent>[^\"]*)\"(?:\s+\"(?P<referrer>[^\"]*)\")?"
+)
 
 
 @dataclass
@@ -25,15 +30,22 @@ class AccessLogEntry:
     path: str
     status_code: int | None
     user_agent: str | None
+    source_log: str | None = None
+    alert_type: str | None = None
+    alert_tags: list[str] | None = None
 
     def to_alert(self) -> dict[str, object]:
-        return {
+        payload = {
             "source_ip": self.source_ip,
             "host": self.host or "desconocido",
             "path": self.path,
             "user_agent": self.user_agent,
             "status_code": self.status_code,
+            "alert_type": self.alert_type,
+            "alert_tags": self.alert_tags,
+            "log_source": self.source_log,
         }
+        return {k: v for k, v in payload.items() if v is not None}
 
 
 class LogFollower:
@@ -58,10 +70,10 @@ class LogFollower:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self.state_path.write_text(json.dumps(self.offsets))
 
-    def _parse_line(self, line: str) -> AccessLogEntry | None:
+    def _parse_line(self, line: str, source_log: str) -> AccessLogEntry | None:
         match = ACCESS_REGEX.match(line)
         if not match:
-            return None
+            return self._parse_npm_line(line, source_log)
         status = int(match.group("status")) if match.group("status") else None
         rest = match.group("rest") or ""
         host = self._extract_host(rest)
@@ -71,7 +83,29 @@ class LogFollower:
             path=match.group("path"),
             status_code=status,
             user_agent=match.group("user_agent") or None,
+            source_log=source_log,
         )
+
+    def _parse_npm_line(self, line: str, source_log: str) -> AccessLogEntry | None:
+        match = NPM_REGEX.match(line)
+        if not match:
+            return None
+        status = self._extract_status(match.group("prefix"))
+        return AccessLogEntry(
+            source_ip=match.group("remote_addr"),
+            host=match.group("host"),
+            path=match.group("path"),
+            status_code=status,
+            user_agent=match.group("user_agent") or None,
+            source_log=source_log,
+        )
+
+    @staticmethod
+    def _extract_status(prefix: str) -> int | None:
+        status_match = re.search(r"\b(\d{3})\b", prefix)
+        if not status_match:
+            return None
+        return int(status_match.group(1))
 
     @staticmethod
     def _extract_host(rest: str) -> str | None:
@@ -101,21 +135,36 @@ class LogFollower:
             if not path.is_file():
                 continue
             for line in self._iter_new_lines(path):
-                parsed = self._parse_line(line)
+                parsed = self._parse_line(line, path.name)
                 if parsed:
                     yield parsed
 
 
-def filter_unknown_domains(
-    entries: Iterable[AccessLogEntry], known_domains: set[str]
+def filter_alert_entries(
+    entries: Iterable[AccessLogEntry],
+    known_domains: set[str],
+    suspicious_paths: Iterable[str],
 ) -> Iterator[AccessLogEntry]:
-    known = {domain.lower() for domain in known_domains}
+    del known_domains
+    suspicious = tuple(path.lower() for path in suspicious_paths if path)
     for entry in entries:
-        host = (entry.host or "").lower()
-        if known and host in known:
+        path = (entry.path or "").lower()
+        source_log = (entry.source_log or "").lower()
+        tags: list[str] = []
+
+        if source_log.startswith("fallback"):
+            tags.append("fallback")
+        if source_log.startswith("default-host"):
+            tags.append("unregistered_domain")
+        if path and any(path.startswith(pattern) for pattern in suspicious):
+            tags.append("suspicious_path")
+
+        if not tags:
             continue
-        if entry.status_code is not None and entry.status_code < 400:
-            continue
-        if not host:
-            continue
+
+        entry.alert_tags = tags
+        if "suspicious_path" in tags:
+            entry.alert_type = "suspicious_path"
+        else:
+            entry.alert_type = tags[0]
         yield entry

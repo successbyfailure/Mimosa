@@ -24,6 +24,9 @@ class MimosaNpmAlert:
     user_agent: str | None = None
     severity: str | None = None
     status_code: int | None = None
+    alert_type: str | None = None
+    alert_tags: list[str] | None = None
+    log_source: str | None = None
 
 
 class MimosaNpmService:
@@ -57,13 +60,19 @@ class MimosaNpmService:
         return processed
 
     def _handle_alert(self, alert: MimosaNpmAlert) -> None:
+        if not self._is_alert_enabled(alert):
+            return
         severity = alert.severity or self.config.default_severity
         host = alert.requested_host or "desconocido"
         path = alert.path or "/"
-        description = f"mimosanpm: {host}"
+        alert_type = alert.alert_type or "unknown"
+        description = f"mimosanpm:{alert_type}"
         context = {
             "plugin": "mimosanpm",
             "status_code": alert.status_code,
+            "alert_type": alert.alert_type,
+            "alert_tags": alert.alert_tags,
+            "log_source": alert.log_source,
         }
         sanitized_context = {k: v for k, v in context.items() if v is not None}
 
@@ -76,10 +85,10 @@ class MimosaNpmService:
             user_agent=alert.user_agent,
             context=sanitized_context,
         )
-        self._process_rules(host, alert.source_ip, severity, description)
+        self._process_rules(alert_type, alert.source_ip, severity, description)
 
     def _process_rules(
-        self, host: str, source_ip: str | None, severity: str, description: str
+        self, event_id: str, source_ip: str | None, severity: str, description: str
     ) -> None:
         manager = RuleManager(
             self.offense_store,
@@ -91,8 +100,18 @@ class MimosaNpmService:
             OffenseEvent(
                 source_ip=source_ip or "desconocido",
                 plugin="mimosanpm",
-                event_id=host,
+                event_id=event_id,
                 severity=severity,
                 description=description,
             )
         )
+
+    def _is_alert_enabled(self, alert: MimosaNpmAlert) -> bool:
+        alert_type = (alert.alert_type or "").lower()
+        if alert_type == "fallback":
+            return self.config.alert_fallback
+        if alert_type == "unregistered_domain":
+            return self.config.alert_unregistered_domain
+        if alert_type == "suspicious_path":
+            return self.config.alert_suspicious_path
+        return True
