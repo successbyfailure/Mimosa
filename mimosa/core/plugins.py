@@ -134,7 +134,14 @@ class PluginConfigStore:
         config.pop("wildcard_severity", None)
         config.pop("reverse_proxy", None)
         trap_hosts = config.get("trap_hosts") or []
-        config["trap_hosts"] = list(trap_hosts)
+        if "trap_hosts" not in config:
+            config["trap_hosts"] = list(trap_hosts)
+            self._plugins["proxytrap"] = config
+            self._save()
+        if "domain_policies" not in config:
+            config["domain_policies"] = list(DEFAULT_PROXYTRAP_POLICIES)
+            self._plugins["proxytrap"] = config
+            self._save()
         return ProxyTrapConfig(**config)
 
     def update_proxytrap(self, payload: ProxyTrapConfig) -> ProxyTrapConfig:
