@@ -17,10 +17,11 @@ La *Mimosa pudica* repliega sus hojas al mínimo contacto. Mimosa replica esta r
 ## ✨ Características
 
 - 🔥 **Integración OPNsense** - Control directo de alias y reglas de firewall
+- 🎛️ **Gestión de Reglas** - Activar/desactivar reglas de bloqueo desde la UI sin acceder a OPNsense
 - 🔍 **Detección de Puertos** - Identifica escaneos y conexiones sospechosas
 - 🌐 **Proxy Trap** - Detecta acceso a dominios no autorizados
-- 📊 **Dashboard Web** - Visualización en tiempo real de ofensas y bloqueos
-- ⚙️ **API REST** - Integración programática
+- 📊 **Dashboard Web** - Visualización en tiempo real de ofensas, bloqueos y estado de reglas
+- ⚙️ **API REST** - Integración programática completa
 - 🔒 **Bloqueos Temporales** - Configurables por tipo de ofensa
 - 🤖 **MimosaNPM Agent** - Integración con Nginx Proxy Manager
 

@@ -1,9 +1,4 @@
-"""Gestión de plugins y configuración persistente.
-
-Incluye utilidades mínimas para almacenar la configuración de plugins
-en disco y exponer defaults sensatos tanto para el plugin "dummy"
-como para el nuevo plugin "proxytrap".
-"""
+"""Gestión de plugins y configuración persistente."""
 from __future__ import annotations
 
 import json
@@ -41,14 +36,6 @@ def _default_port_rules() -> List[PortDetectorRule]:
         PortDetectorRule(protocol="tcp", severity="medio", start=5900, end=5903),
         PortDetectorRule(protocol="udp", severity="medio", ports=[53, 123]),
     ]
-
-
-@dataclass
-class DummyPluginConfig:
-    """Configuración del plugin manual de ofensas."""
-
-    name: str = "dummy"
-    enabled: bool = True
 
 
 @dataclass
@@ -106,12 +93,10 @@ class PluginConfigStore:
             self._bootstrap_defaults()
 
     def _bootstrap_defaults(self) -> None:
-        dummy = asdict(DummyPluginConfig())
         proxytrap = asdict(ProxyTrapConfig())
         portdetector = asdict(PortDetectorConfig())
         mimosanpm = asdict(MimosaNpmConfig())
         self._plugins = {
-            dummy["name"]: dummy,
             proxytrap["name"]: proxytrap,
             portdetector["name"]: portdetector,
             mimosanpm["name"]: mimosanpm,
@@ -123,6 +108,9 @@ class PluginConfigStore:
             return
         with self.path.open("r", encoding="utf-8") as fh:
             self._plugins = json.load(fh)
+        if "dummy" in self._plugins:
+            self._plugins.pop("dummy", None)
+            self._save()
 
     def _save(self) -> None:
         with self.path.open("w", encoding="utf-8") as fh:
@@ -131,7 +119,9 @@ class PluginConfigStore:
     def list(self) -> List[Dict[str, object]]:
         """Devuelve todas las configuraciones conocidas."""
 
-        return list(self._plugins.values())
+        return [
+            plugin for name, plugin in self._plugins.items() if name != "dummy"
+        ]
 
     def get_proxytrap(self) -> ProxyTrapConfig:
         config = self._plugins.get("proxytrap")

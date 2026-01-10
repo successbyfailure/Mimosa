@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
 
@@ -306,12 +306,34 @@ def create_app(
         return entry.to_dict()
 
     def _serialize_offense(offense: OffenseRecord) -> Dict[str, object]:
+        created_at = offense.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        else:
+            created_at = created_at.astimezone(timezone.utc)
+        description = offense.description or ""
+        plugin = None
+        if offense.context and isinstance(offense.context, dict):
+            plugin = offense.context.get("plugin")
+
+        description_clean = description
+        if plugin and description.startswith(f"{plugin}:"):
+            description_clean = description[len(plugin) + 1 :].lstrip()
+        elif not plugin and ":" in description:
+            prefix, rest = description.split(":", 1)
+            prefix = prefix.strip()
+            if prefix and all(ch.isalnum() or ch in "-_." for ch in prefix):
+                plugin = prefix
+                description_clean = rest.lstrip()
+
         return {
             "id": offense.id,
             "source_ip": offense.source_ip,
             "description": offense.description,
+            "description_clean": description_clean,
+            "plugin": plugin,
             "severity": offense.severity,
-            "created_at": offense.created_at.isoformat(),
+            "created_at": created_at.isoformat(),
             "host": offense.host,
             "path": offense.path,
             "user_agent": offense.user_agent,
@@ -336,7 +358,6 @@ def create_app(
         portdetector_config = plugin_store.get_port_detector()
         mimosanpm_config = plugin_store.get_mimosanpm()
         return [
-            {"name": "dummy", "enabled": True},
             {
                 "name": "proxytrap",
                 "enabled": proxytrap_config.enabled,
@@ -372,6 +393,49 @@ def create_app(
         day = timedelta(hours=24)
         hour = timedelta(hours=1)
 
+        def _bucket_format(bucket: str) -> str:
+            return {
+                "day": "%Y-%m-%d",
+                "hour": "%Y-%m-%d %H:00",
+                "minute": "%Y-%m-%d %H:%M",
+            }[bucket]
+
+        def _bucket_step(bucket: str) -> timedelta:
+            return {
+                "day": timedelta(days=1),
+                "hour": timedelta(hours=1),
+                "minute": timedelta(minutes=1),
+            }[bucket]
+
+        def _floor_time(value: datetime, bucket: str) -> datetime:
+            if bucket == "day":
+                return value.replace(hour=0, minute=0, second=0, microsecond=0)
+            if bucket == "hour":
+                return value.replace(minute=0, second=0, microsecond=0)
+            if bucket == "minute":
+                return value.replace(second=0, microsecond=0)
+            raise ValueError(f"Bucket desconocido: {bucket}")
+
+        def _complete_timeline(
+            timeline: List[Dict[str, str | int]],
+            window: timedelta,
+            bucket: str,
+        ) -> List[Dict[str, str | int]]:
+            step = _bucket_step(bucket)
+            count = max(1, int(window.total_seconds() // step.total_seconds()))
+            end = _floor_time(now, bucket)
+            start = end - step * (count - 1)
+            label_format = _bucket_format(bucket)
+
+            existing = {entry["bucket"]: int(entry["count"]) for entry in timeline}
+            filled: List[Dict[str, str | int]] = []
+            current = start
+            for _ in range(count):
+                label = current.strftime(label_format)
+                filled.append({"bucket": label, "count": existing.get(label, 0)})
+                current += step
+            return filled
+
         return {
             "offenses": {
                 "total": offense_store.count_all(),
@@ -379,9 +443,21 @@ def create_app(
                 "last_24h": offense_store.count_since(now - day),
                 "last_1h": offense_store.count_since(now - hour),
                 "timeline": {
-                    "7d": offense_store.timeline(seven_days, bucket="day"),
-                    "24h": offense_store.timeline(day, bucket="hour"),
-                    "1h": offense_store.timeline(hour, bucket="minute"),
+                    "7d": _complete_timeline(
+                        offense_store.timeline(seven_days, bucket="day"),
+                        seven_days,
+                        "day",
+                    ),
+                    "24h": _complete_timeline(
+                        offense_store.timeline(day, bucket="hour"),
+                        day,
+                        "hour",
+                    ),
+                    "1h": _complete_timeline(
+                        offense_store.timeline(hour, bucket="minute"),
+                        hour,
+                        "minute",
+                    ),
                 },
             },
             "blocks": {
@@ -391,9 +467,21 @@ def create_app(
                 "last_24h": block_manager.count_since(now - day),
                 "last_1h": block_manager.count_since(now - hour),
                 "timeline": {
-                    "7d": block_manager.timeline(seven_days, bucket="day"),
-                    "24h": block_manager.timeline(day, bucket="hour"),
-                    "1h": block_manager.timeline(hour, bucket="minute"),
+                    "7d": _complete_timeline(
+                        block_manager.timeline(seven_days, bucket="day"),
+                        seven_days,
+                        "day",
+                    ),
+                    "24h": _complete_timeline(
+                        block_manager.timeline(day, bucket="hour"),
+                        day,
+                        "hour",
+                    ),
+                    "1h": _complete_timeline(
+                        block_manager.timeline(hour, bucket="minute"),
+                        hour,
+                        "minute",
+                    ),
                 },
             },
         }
@@ -615,6 +703,14 @@ def create_app(
         saved = rule_store.add(rule)
         return _serialize_rule(saved)
 
+    @app.put("/api/rules/{rule_id}")
+    def update_rule(rule_id: int, payload: RuleInput) -> Dict[str, object]:
+        rule = OffenseRule(**payload.model_dump())
+        saved = rule_store.update(rule_id, rule)
+        if not saved:
+            raise HTTPException(status_code=404, detail="Regla no encontrada")
+        return _serialize_rule(saved)
+
     @app.delete("/api/rules/{rule_id}", status_code=204, response_class=Response)
     def delete_rule(rule_id: int) -> Response:
         rule_store.delete(rule_id)
@@ -743,6 +839,81 @@ def create_app(
         except httpx.HTTPStatusError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         return {"status": "ok"}
+
+    @app.get("/api/firewalls/{config_id}/rules")
+    def list_firewall_rules(config_id: str) -> Dict[str, object]:
+        """Lista las reglas de firewall gestionadas por Mimosa."""
+        _, gateway = _get_firewall(config_id)
+        try:
+            rules = gateway.list_firewall_rules()
+            return {"rules": rules, "count": len(rules)}
+        except NotImplementedError:
+            raise HTTPException(
+                status_code=501,
+                detail="Listado de reglas no soportado para este firewall"
+            )
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @app.get("/api/firewalls/{config_id}/rules/{rule_uuid}")
+    def get_firewall_rule(config_id: str, rule_uuid: str) -> Dict[str, object]:
+        """Obtiene los detalles de una regla específica."""
+        _, gateway = _get_firewall(config_id)
+        try:
+            rule = gateway.get_firewall_rule(rule_uuid)
+            if not rule:
+                raise HTTPException(status_code=404, detail="Regla no encontrada")
+            return {"rule": rule}
+        except NotImplementedError:
+            raise HTTPException(
+                status_code=501,
+                detail="Obtención de reglas no soportado para este firewall"
+            )
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @app.post("/api/firewalls/{config_id}/rules/{rule_uuid}/toggle")
+    def toggle_firewall_rule(config_id: str, rule_uuid: str, enabled: bool = True) -> Dict[str, object]:
+        """Habilita o deshabilita una regla de firewall."""
+        _, gateway = _get_firewall(config_id)
+        try:
+            success = gateway.toggle_firewall_rule(rule_uuid, enabled)
+            if not success:
+                raise HTTPException(status_code=400, detail="No se pudo cambiar el estado de la regla")
+            return {
+                "status": "ok",
+                "rule_uuid": rule_uuid,
+                "enabled": enabled,
+                "message": f"Regla {'habilitada' if enabled else 'deshabilitada'} correctamente"
+            }
+        except NotImplementedError:
+            raise HTTPException(
+                status_code=501,
+                detail="Toggle de reglas no soportado para este firewall"
+            )
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @app.delete("/api/firewalls/{config_id}/rules/{rule_uuid}")
+    def delete_firewall_rule(config_id: str, rule_uuid: str) -> Dict[str, object]:
+        """Elimina una regla de firewall."""
+        _, gateway = _get_firewall(config_id)
+        try:
+            success = gateway.delete_firewall_rule(rule_uuid)
+            if not success:
+                raise HTTPException(status_code=400, detail="No se pudo eliminar la regla")
+            return {
+                "status": "ok",
+                "rule_uuid": rule_uuid,
+                "message": "Regla eliminada correctamente"
+            }
+        except NotImplementedError:
+            raise HTTPException(
+                status_code=501,
+                detail="Eliminación de reglas no soportado para este firewall"
+            )
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
 
     @app.get("/api/firewalls/{config_id}/aliases")
     def list_firewall_aliases(config_id: str) -> Dict[str, object]:

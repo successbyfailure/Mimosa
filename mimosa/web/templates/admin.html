@@ -7,6 +7,18 @@
   .tab-panel { display:none; }
   .tab-panel.active { display:block; }
   .pill.warn { background: rgba(251,191,36,.15); color:#fbbf24; }
+  .offense-direct { background: rgba(248,113,113,.12); }
+  .offense-warning { background: rgba(251,191,36,.12); }
+  .offense-direct td, .offense-warning td { transition: background .2s ease; }
+
+  /* Toggle Switch */
+  .toggle-switch { position: relative; display: inline-block; width: 48px; height: 24px; }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #64748b; transition: .3s; border-radius: 24px; }
+  .toggle-slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; }
+  .toggle-switch input:checked + .toggle-slider { background-color: #22c55e; }
+  .toggle-switch input:checked + .toggle-slider:before { transform: translateX(24px); }
+  .toggle-switch input:disabled + .toggle-slider { opacity: 0.5; cursor: not-allowed; }
 </style>
 
 <div class="tabs">
@@ -412,6 +424,38 @@
     </div>
   </section>
 
+  <section class="card space" style="margin-top:16px;">
+    <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
+      <div>
+        <h2 style="margin:0">Reglas de Firewall</h2>
+        <div class="muted">Gestiona las reglas de bloqueo en OPNsense creadas por Mimosa.</div>
+      </div>
+      <div class="flex" style="gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+        <select id="rules-fw-select" class="block-fw-select" style="min-width:220px"></select>
+        <button class="secondary" onclick="loadFirewallRules()">Actualizar</button>
+      </div>
+    </div>
+    <div id="rules-status-message" class="muted" style="margin-top:6px;"></div>
+    <div style="overflow:auto; max-height:420px; margin-top:12px; border:1px solid rgba(255,255,255,.05); border-radius:12px;">
+      <table>
+        <thead>
+          <tr>
+            <th>Descripción</th>
+            <th>Estado</th>
+            <th>Tipo</th>
+            <th>Interfaz</th>
+            <th>Acción</th>
+            <th>Origen</th>
+            <th>Activar/Desactivar</th>
+          </tr>
+        </thead>
+        <tbody id="rules-table">
+          <tr><td colspan="7" class="muted">Cargando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
 </section>
 
 <section id="tab-offenses" class="tab-panel">
@@ -430,13 +474,14 @@
           <tr>
             <th>Fecha</th>
             <th>IP</th>
+            <th>Plugin</th>
             <th>Descripción</th>
             <th>Severidad</th>
             <th></th>
           </tr>
         </thead>
         <tbody id="offense-table">
-          <tr><td colspan="5" class="muted">Cargando...</td></tr>
+          <tr><td colspan="6" class="muted">Cargando...</td></tr>
         </tbody>
       </table>
     </div>
@@ -447,15 +492,20 @@
       <div>
         <h2 style="margin:0">Reglas de escalado</h2>
         <div class="muted">Define cuándo una ofensa debe convertirse en bloqueo automático.</div>
+        <div class="muted" style="margin-top:4px;">Puedes usar comodines como <strong>*</strong> y <strong>?</strong> en plugin, severidad, event_id o descripción.</div>
         <div class="muted" style="margin-top:4px;">Los umbrales se aplican solo si se indica un valor y se evaluan con la condición <strong>&gt; X</strong>.</div>
       </div>
       <button class="secondary" onclick="loadRules()">Actualizar</button>
     </div>
     <div class="grid" style="grid-template-columns: 1.1fr 1fr; gap: 18px; align-items:start;">
       <form id="rule-form" class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
-        <h3 style="margin-top:0">Añadir regla</h3>
+        <h3 style="margin-top:0" id="rule-form-title">Añadir regla</h3>
+        <input type="hidden" name="rule_id" value="" />
+        <input type="hidden" name="event_id" value="*" />
         <label>Plugin</label>
-        <input name="plugin" placeholder="auth" value="*" />
+        <select name="plugin" id="rule-plugin-select">
+          <option value="*">Cualquiera</option>
+        </select>
         <label>Severidad</label>
         <select name="severity">
           <option value="*" selected>Cualquiera</option>
@@ -464,7 +514,7 @@
           <option value="alto">Alto</option>
         </select>
         <label>Descripción (coincidencia)</label>
-        <input name="description" placeholder="Texto a buscar" value="*" />
+        <input name="description" placeholder="Ej: *host=desconocido* o host=example.org path=/wp-admin" value="*" />
         <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px;">
           <div>
             <label>Ofensas última hora (&gt;=)</label>
@@ -483,7 +533,10 @@
             <input name="block_minutes" type="number" min="0" placeholder="60" />
           </div>
         </div>
-        <button type="submit" style="margin-top:12px;">Guardar regla</button>
+        <div class="flex" style="margin-top:12px; flex-wrap:wrap;">
+          <button type="submit">Guardar regla</button>
+          <button type="button" class="secondary" id="rule-cancel-btn" onclick="cancelRuleEdit()" style="display:none;">Cancelar edición</button>
+        </div>
         <div id="rule-message" class="muted"></div>
       </form>
 
@@ -781,6 +834,8 @@ let editingPolicyIndex = null;
 let portDetectorRules = [];
 let editingPortRuleIndex = null;
 let ipPluginChart = null;
+let rulesCache = [];
+let editingRuleId = null;
 const editModal = document.getElementById('edit-modal');
 const editForm = document.getElementById('edit-form');
 const syncPreferenceKey = 'mimosa_sync_with_firewall';
@@ -806,11 +861,12 @@ function switchTab(tab) {
   document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
   document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.toggle('active', panel.id === `tab-${tab}`));
   if (tab === 'blocks') refreshBlocks();
-  if (tab === 'offenses') { loadOffenses(); loadRules(); }
+  if (tab === 'offenses') { loadFirewalls(); loadOffenses(); loadRules(); }
   if (tab === 'ips') loadIps();
   if (tab === 'whitelist') { loadWhitelist(); loadBlacklist(); }
   if (tab === 'firewall') {
     loadFirewallAliases();
+    loadFirewallRules();
   }
   if (tab === 'config') {
     loadBlockingSettings();
@@ -1669,6 +1725,138 @@ async function loadFirewallAliases() {
   }
 }
 
+async function loadFirewallRules() {
+  const statusEl = document.getElementById('rules-status-message');
+  const tbody = document.getElementById('rules-table');
+
+  if (statusEl) {
+    statusEl.textContent = '';
+    statusEl.style.color = '';
+  }
+
+  if (!selectedFirewallId) {
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">Configura un firewall para ver las reglas.</td></tr>';
+    if (statusEl) statusEl.textContent = 'Selecciona un firewall para consultar las reglas.';
+    return;
+  }
+
+  tbody.innerHTML = '<tr><td colspan="7" class="muted">Cargando...</td></tr>';
+
+  try {
+    const res = await fetch(`/api/firewalls/${selectedFirewallId}/rules`);
+    const data = await res.json();
+
+    if (!res.ok) {
+      tbody.innerHTML = '<tr><td colspan="7" class="muted">No se pudo cargar las reglas.</td></tr>';
+      if (statusEl) {
+        statusEl.textContent = data.detail || 'No se pudieron consultar las reglas.';
+        statusEl.style.color = '#fca5a5';
+      }
+      return;
+    }
+
+    const rules = data.rules || [];
+    tbody.innerHTML = '';
+
+    if (!rules.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="muted">No hay reglas de Mimosa configuradas.</td></tr>';
+      if (statusEl) statusEl.textContent = 'No se encontraron reglas de Mimosa.';
+      return;
+    }
+
+    rules.forEach(rule => {
+      const row = document.createElement('tr');
+      const enabled = rule.enabled === '1' || rule.enabled === 1 || rule.enabled === true;
+      const statusBadge = enabled
+        ? '<span style="background:#22c55e; color:#000; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600;">ACTIVA</span>'
+        : '<span style="background:#64748b; color:#fff; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600;">INACTIVA</span>';
+
+      const ruleType = rule.type || 'N/A';
+      const ruleInterface = (rule.interface || 'N/A').toUpperCase();
+      const ruleAction = (rule.action || 'N/A').toUpperCase();
+      const ruleSource = rule.source_net || 'any';
+
+      const toggleButton = `
+        <label class="toggle-switch">
+          <input type="checkbox" ${enabled ? 'checked' : ''}
+                 onchange="toggleFirewallRule('${rule.uuid}', ${enabled})">
+          <span class="toggle-slider"></span>
+        </label>
+      `;
+
+      row.innerHTML = `
+        <td>${rule.description || 'Sin descripción'}</td>
+        <td>${statusBadge}</td>
+        <td>${ruleType}</td>
+        <td>${ruleInterface}</td>
+        <td style="color: ${ruleAction === 'BLOCK' ? '#fca5a5' : '#a5d6fc'}">${ruleAction}</td>
+        <td><code style="font-size:12px;">${ruleSource}</code></td>
+        <td style="text-align:center;">${toggleButton}</td>
+      `;
+      tbody.appendChild(row);
+    });
+
+    if (statusEl) {
+      const activeCount = rules.filter(r => r.enabled === '1' || r.enabled === 1 || r.enabled === true).length;
+      statusEl.textContent = `Total: ${rules.length} reglas · Activas: ${activeCount} · Inactivas: ${rules.length - activeCount}`;
+    }
+  } catch (error) {
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">Error al cargar las reglas.</td></tr>';
+    if (statusEl) {
+      statusEl.textContent = 'Error al conectar con el servidor.';
+      statusEl.style.color = '#fca5a5';
+    }
+  }
+}
+
+async function toggleFirewallRule(ruleUuid, currentState) {
+  const statusEl = document.getElementById('rules-status-message');
+  const newState = !currentState;
+
+  if (statusEl) {
+    statusEl.textContent = 'Actualizando regla...';
+    statusEl.style.color = '#fbbf24';
+  }
+
+  try {
+    const res = await fetch(`/api/firewalls/${selectedFirewallId}/rules/${ruleUuid}/toggle?enabled=${newState}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      if (statusEl) {
+        statusEl.textContent = data.detail || 'Error al actualizar la regla.';
+        statusEl.style.color = '#fca5a5';
+      }
+      // Reload to restore correct state
+      setTimeout(() => loadFirewallRules(), 1000);
+      return;
+    }
+
+    if (statusEl) {
+      statusEl.textContent = data.message || 'Regla actualizada correctamente.';
+      statusEl.style.color = '#22c55e';
+      setTimeout(() => {
+        statusEl.textContent = '';
+        statusEl.style.color = '';
+      }, 3000);
+    }
+
+    // Reload rules to show updated state
+    loadFirewallRules();
+  } catch (error) {
+    if (statusEl) {
+      statusEl.textContent = 'Error al conectar con el servidor.';
+      statusEl.style.color = '#fca5a5';
+    }
+    // Reload to restore correct state
+    setTimeout(() => loadFirewallRules(), 1000);
+  }
+}
+
 function updateBlockTableMessage(message) {
   const tbody = document.getElementById('block-table');
   tbody.innerHTML = `<tr><td colspan="2" class="muted">${message}</td></tr>`;
@@ -1766,6 +1954,7 @@ function handleFirewallChange(event) {
   });
   refreshBlocks();
   loadFirewallAliases();
+  loadFirewallRules();
 }
 
 async function submitBlockForm(event, messageId) {
@@ -1826,16 +2015,56 @@ async function loadOffenses() {
   const tbody = document.getElementById('offense-table');
   tbody.innerHTML = '';
   if (!data.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="muted">No hay ofensas registradas.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="muted">No hay ofensas registradas.</td></tr>';
     return;
   }
+  if (!rulesCache.length) {
+    await loadRules();
+  }
+  let blocksByIp = {};
+  try {
+    const resIps = await fetch('/api/ips?limit=200');
+    if (resIps.ok) {
+      const ips = await resIps.json();
+      blocksByIp = ips.reduce((acc, item) => {
+        acc[item.ip] = item.blocks || 0;
+        return acc;
+      }, {});
+    }
+  } catch (error) {
+    blocksByIp = {};
+  }
+
+  const now = Date.now();
+  const countsByIp = data.reduce((acc, offense) => {
+    const ip = offense.source_ip;
+    if (!acc[ip]) {
+      acc[ip] = { total: 0, last_hour: 0 };
+    }
+    acc[ip].total += 1;
+    const createdAt = Date.parse(offense.created_at);
+    if (!Number.isNaN(createdAt) && now - createdAt <= 3600 * 1000) {
+      acc[ip].last_hour += 1;
+    }
+    return acc;
+  }, {});
+
   data.forEach(item => {
     const row = document.createElement('tr');
-    const safeReason = JSON.stringify(item.description || '');
+    const safeReason = JSON.stringify(item.description_clean || item.description || '');
+    const plugin = item.plugin || 'desconocido';
+    const description = item.description_clean || item.description || '-';
+    const status = evaluateOffenseStatus(item, countsByIp, blocksByIp);
+    if (status === 'direct') {
+      row.classList.add('offense-direct');
+    } else if (status === 'warning') {
+      row.classList.add('offense-warning');
+    }
     row.innerHTML = `
       <td>${new Date(item.created_at).toLocaleString()}</td>
       <td>${item.source_ip}</td>
-      <td>${item.description}</td>
+      <td>${plugin}</td>
+      <td>${description}</td>
       <td>${item.severity}</td>
       <td style="text-align:right"><button class="secondary" onclick="blockOffense('${item.source_ip}', ${safeReason})">Bloquear</button></td>
     `;
@@ -1843,17 +2072,125 @@ async function loadOffenses() {
   });
 }
 
+function globMatch(pattern, value) {
+  if (!pattern || pattern === '*') return true;
+  const safeValue = value || '';
+  if (!pattern.includes('*') && !pattern.includes('?')) {
+    return pattern === safeValue;
+  }
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`^${escaped.replace(/\\*/g, '.*').replace(/\\?/g, '.')}$`);
+  return regex.test(safeValue);
+}
+
+function evaluateOffenseStatus(offense, countsByIp, blocksByIp) {
+  const rules = rulesCache || [];
+  if (!rules.length) return '';
+  const plugin = offense.plugin || offense.context?.plugin || '';
+  const eventId = offense.context?.event_id || offense.context?.eventId || '';
+  const severity = offense.severity || '';
+  const description = offense.description || '';
+  const counts = countsByIp[offense.source_ip] || { total: 0, last_hour: 0 };
+  const totalBlocks = blocksByIp[offense.source_ip] || 0;
+
+  let warning = false;
+  for (const rule of rules) {
+    if (!globMatch(rule.plugin, plugin)) continue;
+    if (!globMatch(rule.event_id, eventId)) continue;
+    if (!globMatch(rule.severity, severity)) continue;
+    if (!globMatch(rule.description, description)) continue;
+
+    const thresholds = [
+      { value: counts.last_hour, ruleValue: rule.min_last_hour },
+      { value: counts.total, ruleValue: rule.min_total },
+      { value: totalBlocks, ruleValue: rule.min_blocks_total },
+    ];
+
+    const passes = thresholds.every(entry => !entry.ruleValue || entry.ruleValue <= 0 || entry.value > entry.ruleValue);
+    if (passes) {
+      return 'direct';
+    }
+
+    const needsMore = thresholds.some(entry => entry.ruleValue && entry.ruleValue > 0 && entry.value <= entry.ruleValue);
+    if (needsMore) {
+      warning = true;
+    }
+  }
+
+  return warning ? 'warning' : '';
+}
+
+async function loadRulePlugins(force = false) {
+  if (!pluginsCache.length || force) {
+    const res = await fetch('/api/plugins');
+    if (res.ok) {
+      pluginsCache = await res.json();
+    }
+  }
+  const select = document.getElementById('rule-plugin-select');
+  if (!select) return;
+  const currentValue = select.value || '*';
+  select.innerHTML = '';
+  const anyOption = document.createElement('option');
+  anyOption.value = '*';
+  anyOption.textContent = 'Cualquiera';
+  select.appendChild(anyOption);
+  const pluginNames = new Set(['manual']);
+  (pluginsCache || []).forEach(plugin => {
+    if (plugin?.name) {
+      pluginNames.add(plugin.name);
+    }
+  });
+  Array.from(pluginNames).sort().forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    select.appendChild(opt);
+  });
+  if (![...select.options].some(opt => opt.value === currentValue)) {
+    const custom = document.createElement('option');
+    custom.value = currentValue;
+    custom.textContent = currentValue;
+    select.appendChild(custom);
+  }
+  select.value = currentValue;
+}
+
+function setRuleFormState(isEditing) {
+  const title = document.getElementById('rule-form-title');
+  const cancelBtn = document.getElementById('rule-cancel-btn');
+  if (title) title.textContent = isEditing ? 'Editar regla' : 'Añadir regla';
+  if (cancelBtn) cancelBtn.style.display = isEditing ? 'inline-flex' : 'none';
+}
+
+function cancelRuleEdit() {
+  const form = document.getElementById('rule-form');
+  if (!form) return;
+  form.reset();
+  form.rule_id.value = '';
+  form.event_id.value = '*';
+  form.plugin.value = '*';
+  form.description.value = '*';
+  form.min_last_hour.value = 0;
+  form.min_total.value = 0;
+  form.min_blocks_total.value = 0;
+  editingRuleId = null;
+  setRuleFormState(false);
+}
+
 async function loadRules() {
   const tbody = document.getElementById('rule-table');
   const message = document.getElementById('rule-message');
   tbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando...</td></tr>';
   message.textContent = '';
+  await loadRulePlugins();
   const res = await fetch('/api/rules');
   if (!res.ok) {
     tbody.innerHTML = '<tr><td colspan="8" class="muted">No se pudieron cargar las reglas.</td></tr>';
     return;
   }
   const data = await res.json();
+  rulesCache = data;
   tbody.innerHTML = '';
   if (!data.length) {
     tbody.innerHTML = '<tr><td colspan="8" class="muted">Sin reglas configuradas.</td></tr>';
@@ -1870,16 +2207,38 @@ async function loadRules() {
       <td>${rule.min_total}</td>
       <td>${rule.min_blocks_total}</td>
       <td>${duration}</td>
-      <td style="text-align:right"><button class="secondary" onclick="deleteRule(${rule.id})">Eliminar</button></td>
+      <td style="text-align:right; display:flex; gap:8px; justify-content:flex-end;">
+        <button class="secondary" onclick="editRule(${rule.id})">Editar</button>
+        <button class="secondary" onclick="deleteRule(${rule.id})">Eliminar</button>
+      </td>
     `;
     tbody.appendChild(row);
   });
+}
+
+function editRule(ruleId) {
+  const rule = (rulesCache || []).find(item => item.id === ruleId);
+  const form = document.getElementById('rule-form');
+  if (!rule || !form) return;
+  editingRuleId = ruleId;
+  form.rule_id.value = rule.id;
+  form.event_id.value = rule.event_id || '*';
+  form.severity.value = rule.severity || '*';
+  form.description.value = rule.description || '*';
+  form.min_last_hour.value = rule.min_last_hour ?? 0;
+  form.min_total.value = rule.min_total ?? 0;
+  form.min_blocks_total.value = rule.min_blocks_total ?? 0;
+  form.block_minutes.value = rule.block_minutes ?? '';
+  form.plugin.value = rule.plugin || '*';
+  setRuleFormState(true);
 }
 
 async function submitRule(event) {
   event.preventDefault();
   const form = event.target;
   const payload = Object.fromEntries(new FormData(form));
+  const ruleId = payload.rule_id;
+  delete payload.rule_id;
   ['min_last_hour', 'min_total', 'min_blocks_total', 'block_minutes'].forEach(key => {
     if (payload[key] === '') {
       delete payload[key];
@@ -1887,21 +2246,18 @@ async function submitRule(event) {
     }
     payload[key] = Number(payload[key]);
   });
-  const res = await fetch('/api/rules', {
-    method: 'POST',
+  const endpoint = ruleId ? `/api/rules/${ruleId}` : '/api/rules';
+  const method = ruleId ? 'PUT' : 'POST';
+  const res = await fetch(endpoint, {
+    method,
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
   });
   const message = document.getElementById('rule-message');
   if (res.ok) {
-    message.textContent = 'Regla guardada correctamente';
+    message.textContent = ruleId ? 'Regla actualizada correctamente' : 'Regla guardada correctamente';
     message.style.color = '#67e8f9';
-    form.reset();
-    form.plugin.value = '*';
-    form.description.value = '*';
-    form.min_last_hour.value = 0;
-    form.min_total.value = 0;
-    form.min_blocks_total.value = 0;
+    cancelRuleEdit();
     loadRules();
   } else {
     message.textContent = 'No se pudo guardar la regla';
@@ -1917,8 +2273,11 @@ async function deleteRule(ruleId) {
 async function blockOffense(ip, description) {
   updateOffenseMessage('');
   if (!selectedFirewallId) {
-    updateOffenseMessage('Configura o selecciona un firewall antes de bloquear.', '#fca5a5');
-    return;
+    await loadFirewalls();
+    if (!selectedFirewallId) {
+      updateOffenseMessage('Configura o selecciona un firewall antes de bloquear.', '#fca5a5');
+      return;
+    }
   }
   const payload = {
     ip,

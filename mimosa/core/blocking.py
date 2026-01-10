@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
 import sqlite3
 from pathlib import Path
@@ -27,10 +27,19 @@ class BlockEntry:
 
     def to_dict(self) -> Dict[str, object]:
         payload = asdict(self)
-        payload["created_at"] = self.created_at.isoformat()
-        payload["expires_at"] = self.expires_at.isoformat() if self.expires_at else None
-        payload["synced_at"] = self.synced_at.isoformat() if self.synced_at else None
-        payload["removed_at"] = self.removed_at.isoformat() if self.removed_at else None
+        def _iso(dt: Optional[datetime]) -> Optional[str]:
+            if not dt:
+                return None
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
+            return dt.isoformat()
+
+        payload["created_at"] = _iso(self.created_at)
+        payload["expires_at"] = _iso(self.expires_at)
+        payload["synced_at"] = _iso(self.synced_at)
+        payload["removed_at"] = _iso(self.removed_at)
         return payload
 
 

@@ -71,6 +71,7 @@ Esta es la guía completa de la documentación de Mimosa. Usa este índice para 
 
 Scripts disponibles:
 - **diagnose_opnsense.py** - Diagnóstico de funciones OPNsense
+- **verify_firewall_rules.py** - Verificación de reglas de firewall de Mimosa
 
 Incluye:
 - Descripción de cada script
@@ -124,7 +125,8 @@ Mimosa/
 │
 ├── scripts/                     # Scripts de utilidad
 │   ├── README.md               # Documentación de scripts
-│   └── diagnose_opnsense.py    # Diagnóstico OPNsense
+│   ├── diagnose_opnsense.py    # Diagnóstico OPNsense
+│   └── verify_firewall_rules.py # Verificación de reglas
 │
 ├── reference_docs/              # Documentación de referencia
 │   └── api-opnsense.md         # API de OPNsense
@@ -135,9 +137,8 @@ Mimosa/
 ├── mimosa/                      # Código fuente
 │   ├── core/                   # Lógica de negocio
 │   ├── web/                    # API y dashboard
-│   ├── bot/                    # Integración Telegram
-│   ├── proxy_trap/             # Plugin proxy trap
-│   └── tasks/                  # Tareas programadas
+│   ├── bot/                    # Placeholder (sin implementación)
+│   └── tasks/                  # Placeholder (sin implementación)
 │
 ├── tests/                       # Tests unitarios e integración
 ├── data/                        # Datos de producción (ignorado)

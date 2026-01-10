@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Iterable, List, Optional
 
@@ -53,7 +54,11 @@ class OffenseRule:
             return field == "*" or field == ""
 
         def _match(field: str, value: str) -> bool:
-            return _is_wildcard(field) or field == value
+            if _is_wildcard(field):
+                return True
+            if "*" in field or "?" in field:
+                return fnmatchcase(value, field)
+            return field == value
 
         def _passes_threshold(observed: int, threshold: int) -> bool:
             if threshold <= 0:
@@ -140,6 +145,32 @@ class OffenseRuleStore:
                 ),
             )
             rule.id = cursor.lastrowid
+        return rule
+
+    def update(self, rule_id: int, rule: OffenseRule) -> Optional[OffenseRule]:
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE offense_rules
+                SET plugin = ?, event_id = ?, severity = ?, description = ?,
+                    min_last_hour = ?, min_total = ?, min_blocks_total = ?, block_minutes = ?
+                WHERE id = ?;
+                """,
+                (
+                    rule.plugin,
+                    rule.event_id,
+                    rule.severity,
+                    rule.description,
+                    rule.min_last_hour,
+                    rule.min_total,
+                    rule.min_blocks_total,
+                    rule.block_minutes,
+                    rule_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                return None
+        rule.id = rule_id
         return rule
 
     def delete(self, rule_id: int) -> None:

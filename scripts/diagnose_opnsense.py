@@ -70,6 +70,30 @@ def test_get_status(client: OPNsenseClient) -> Dict[str, Any]:
             for protocol, details in status["ports_alias_status"].items():
                 print(f"     * {protocol}: listo={details['ready']}, creado={details['created']}")
 
+        if "firewall_rules_ready" in status:
+            print(f"   - Reglas de firewall:")
+            print(f"     * Listo: {status.get('firewall_rules_ready')}")
+            print(f"     * Creado: {status.get('firewall_rules_created')}")
+            print(f"     * Actualizado: {status.get('firewall_rules_updated')}")
+            if "firewall_rules_details" in status:
+                created = status["firewall_rules_details"].get("created", {})
+                updated = status["firewall_rules_details"].get("updated", {})
+                print(
+                    "     * Regla whitelist: "
+                    f"{'creada' if created.get('whitelist') else 'existente'}, "
+                    f"{'actualizada' if updated.get('whitelist') else 'sin cambios'}"
+                )
+                print(
+                    "     * Regla temporal: "
+                    f"{'creada' if created.get('temporal') else 'existente'}, "
+                    f"{'actualizada' if updated.get('temporal') else 'sin cambios'}"
+                )
+                print(
+                    "     * Regla blacklist: "
+                    f"{'creada' if created.get('blacklist') else 'existente'}, "
+                    f"{'actualizada' if updated.get('blacklist') else 'sin cambios'}"
+                )
+
         return status
     except Exception as exc:
         print(f"❌ Error obteniendo estado: {exc}")

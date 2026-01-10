@@ -155,3 +155,38 @@ class FirewallGateway:
         """Fuerza un flush de estados en el firewall remoto."""
 
         raise NotImplementedError
+
+    def list_firewall_rules(self) -> List[Dict[str, object]]:
+        """Lista las reglas de firewall gestionadas por Mimosa."""
+
+        raise NotImplementedError
+
+    def get_firewall_rule(self, rule_uuid: str) -> Dict[str, object]:
+        """Obtiene los detalles de una regla de firewall específica."""
+
+        raise NotImplementedError
+
+    def toggle_firewall_rule(self, rule_uuid: str, enabled: bool) -> bool:
+        """Habilita o deshabilita una regla de firewall.
+
+        Args:
+            rule_uuid: UUID de la regla
+            enabled: True para habilitar, False para deshabilitar
+
+        Returns:
+            True si se aplicó el cambio exitosamente
+        """
+
+        raise NotImplementedError
+
+    def delete_firewall_rule(self, rule_uuid: str) -> bool:
+        """Elimina una regla de firewall.
+
+        Args:
+            rule_uuid: UUID de la regla a eliminar
+
+        Returns:
+            True si se eliminó exitosamente
+        """
+
+        raise NotImplementedError

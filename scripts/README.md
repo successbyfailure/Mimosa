@@ -53,16 +53,59 @@ Resultado: 7/7 pruebas exitosas
 
 ---
 
+### 🔒 verify_firewall_rules.py
+**Verificación de Reglas de Firewall de Mimosa**
+
+Script que verifica las reglas de firewall creadas automáticamente por Mimosa en OPNsense.
+
+**Requisitos:**
+- Configuración de firewall en `data/firewalls.json`
+- Firewall OPNsense accesible
+
+**Uso:**
+```bash
+# Desde Docker (recomendado)
+docker exec mimosa python scripts/verify_firewall_rules.py
+```
+
+**Qué Verifica:**
+1. Existencia de reglas de Mimosa
+2. Estado de las reglas (habilitadas/deshabilitadas)
+3. Configuración correcta (acción, interfaz, protocolo)
+4. Origen y destino de las reglas
+
+**Salida:**
+```
+🔥 Verificación de Reglas de Firewall de Mimosa
+================================================
+
+✅ Encontradas 3 reglas de Mimosa:
+   • Mimosa - Whitelist (allow) (UUID: xxx)
+   • Mimosa - Temporal blocks (UUID: yyy)
+   • Mimosa - Permanent blacklist (UUID: zzz)
+
+📖 Interpretación:
+   • Las reglas están activas y bloqueando tráfico
+```
+
+**Notas:**
+- Las reglas se crean automáticamente en el primer arranque
+- Se pueden verificar en: Firewall → Automation → Filter
+- La regla whitelist debe evaluarse antes que las reglas de bloqueo
+
+---
+
 ## 📂 Estructura de Directorios
 
 ```
 Mimosa/
-├── scripts/              # Scripts de utilidad (este directorio)
-│   ├── README.md        # Esta documentación
-│   └── diagnose_opnsense.py
-├── data/                # Datos de producción (ignorado en git)
-├── tests/               # Tests unitarios
-└── reference_docs/      # Documentación de referencia
+├── scripts/                    # Scripts de utilidad (este directorio)
+│   ├── README.md              # Esta documentación
+│   ├── diagnose_opnsense.py   # Diagnóstico completo
+│   └── verify_firewall_rules.py # Verificación de reglas
+├── data/                      # Datos de producción (ignorado en git)
+├── tests/                     # Tests unitarios
+└── reference_docs/            # Documentación de referencia
 ```
 
 ## 🔧 Mantenimiento

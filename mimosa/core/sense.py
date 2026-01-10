@@ -12,7 +12,30 @@ from mimosa.core.api import FirewallGateway
 
 TEMPORAL_ALIAS_NAME = "mimosa_temporal_list"
 BLACKLIST_ALIAS_NAME = "mimosa_blacklist"
+WHITELIST_ALIAS_NAME = "mimosa_whitelist"
 PORT_ALIAS_NAMES = {"tcp": "mimosa_ports_tcp", "udp": "mimosa_ports_udp"}
+FIREWALL_RULE_DESCRIPTIONS = {
+    "whitelist": "Mimosa - Whitelist (allow)",
+    "temporal": "Mimosa - Temporal blocks",
+    "blacklist": "Mimosa - Permanent blacklist",
+}
+FIREWALL_RULE_SPECS = {
+    "whitelist": {
+        "alias_name": WHITELIST_ALIAS_NAME,
+        "action": "pass",
+        "sequence": 1,
+    },
+    "temporal": {
+        "alias_name": TEMPORAL_ALIAS_NAME,
+        "action": "block",
+        "sequence": 2,
+    },
+    "blacklist": {
+        "alias_name": BLACKLIST_ALIAS_NAME,
+        "action": "block",
+        "sequence": 3,
+    },
+}
 
 
 class _BaseSenseClient(FirewallGateway):
@@ -104,6 +127,9 @@ class _BaseSenseClient(FirewallGateway):
             return status
         status["available"] = True
 
+        whitelist_created = self._ensure_alias_exists(
+            WHITELIST_ALIAS_NAME, "Mimosa whitelist"
+        )
         temporal_created = self._ensure_alias_exists(
             self.temporal_alias, "Mimosa temporal blocks"
         )
@@ -111,8 +137,9 @@ class _BaseSenseClient(FirewallGateway):
             self.blacklist_alias, "Mimosa blacklist"
         )
         status["alias_ready"] = True
-        status["alias_created"] = temporal_created or blacklist_created
+        status["alias_created"] = whitelist_created or temporal_created or blacklist_created
         status["alias_details"] = {
+            "whitelist": {"name": WHITELIST_ALIAS_NAME, "created": whitelist_created},
             "temporal": {"name": self.temporal_alias, "created": temporal_created},
             "blacklist": {"name": self.blacklist_alias, "created": blacklist_created},
         }
@@ -136,10 +163,33 @@ class _BaseSenseClient(FirewallGateway):
             entry.get("created") for entry in ports_status.values()
         )
 
+        # Asegurar que existan las reglas de firewall para los alias
+        rules_status = {
+            "created": {"whitelist": False, "temporal": False, "blacklist": False},
+            "updated": {"whitelist": False, "temporal": False, "blacklist": False},
+        }
+        try:
+            rules_status = self._ensure_firewall_rules_exist()
+            status["firewall_rules_ready"] = True
+            status["firewall_rules_created"] = any(rules_status["created"].values())
+            status["firewall_rules_updated"] = any(rules_status["updated"].values())
+            status["firewall_rules_details"] = rules_status
+        except (NotImplementedError, AttributeError):
+            # Cliente no soporta reglas de firewall
+            status["firewall_rules_ready"] = False
+            status["firewall_rules_created"] = False
+
         alias_created = status["alias_created"]
         ports_alias_created = status["ports_alias_created"]
+        rules_created_any = status.get("firewall_rules_created", False)
+        rules_updated_any = status.get("firewall_rules_updated", False)
 
-        if (alias_created or ports_alias_created) and self._apply_changes:
+        if (
+            alias_created
+            or ports_alias_created
+            or rules_created_any
+            or rules_updated_any
+        ) and self._apply_changes:
             self.apply_changes()
             status["applied_changes"] = True
 
@@ -499,6 +549,407 @@ class OPNsenseClient(_BaseSenseClient):
 
         self._apply_changes_if_enabled()
 
+    def _find_rule_by_description(
+        self, description: str
+    ) -> tuple[Optional[str], Optional[Dict[str, object]]]:
+        """Busca una regla de firewall por su descripción y devuelve su UUID.
+
+        Usa el endpoint /get en lugar de /searchRule porque searchRule puede
+        no devolver todas las reglas dependiendo de filtros internos.
+        """
+        try:
+            response = self._request("GET", "/api/firewall/filter/get")
+            data = response.json()
+
+            # Las reglas están en filter.rules.rule como un dict UUID -> rule_data
+            rules = data.get("filter", {}).get("rules", {}).get("rule", {})
+
+            for uuid, rule in rules.items():
+                # La descripción puede estar en diferentes campos
+                rule_desc = rule.get("description", "")
+                # En algunos casos puede ser un dict con 'value'
+                if isinstance(rule_desc, dict):
+                    rule_desc = rule_desc.get("value", "")
+
+                if rule_desc == description:
+                    return uuid, rule
+
+            return None, None
+        except httpx.HTTPError:
+            return None, None
+
+    def _extract_rule_scalar(self, value: object) -> Optional[str]:
+        if isinstance(value, dict):
+            if "value" in value:
+                return str(value.get("value"))
+            if "selected" in value:
+                return str(value.get("selected"))
+        if value is None:
+            return None
+        return str(value)
+
+    def _extract_selected_key(self, value: object) -> Optional[str]:
+        if isinstance(value, dict):
+            for key, entry in value.items():
+                if isinstance(entry, dict) and entry.get("selected") == 1:
+                    return str(key)
+        return None
+
+    def _extract_selected_value(self, value: object) -> Optional[str]:
+        if isinstance(value, dict):
+            for key, entry in value.items():
+                if isinstance(entry, dict) and entry.get("selected") == 1:
+                    return str(entry.get("value", key))
+        return None
+
+    def _create_firewall_rule(
+        self,
+        alias_name: str,
+        description: str,
+        action: str = "block",
+        interface: str = "wan",
+        log: bool = True,
+        sequence: Optional[int] = None
+    ) -> str:
+        """Crea una regla de firewall para un alias.
+
+        Args:
+            alias_name: Nombre del alias
+            description: Descripción de la regla
+            action: Acción de la regla ("block" o "pass")
+            interface: Interfaz donde aplicar (default: wan)
+            log: Si loguear las coincidencias
+            sequence: Número de secuencia (orden) de la regla. Menor = mayor prioridad
+
+        Returns:
+            UUID de la regla creada
+        """
+        rule_data = {
+            "enabled": "1",
+            "action": action,
+            "quick": "1",
+            "interface": interface,
+            "direction": "in",
+            "ipprotocol": "inet",
+            "protocol": "any",
+            "source_net": alias_name,
+            "destination_net": "any",
+            "description": description,
+            "log": "1" if log else "0",
+        }
+
+        # Agregar secuencia si se especifica (para ordenar reglas)
+        if sequence is not None:
+            rule_data["sequence"] = str(sequence)
+
+        payload = {"rule": rule_data}
+
+        response = self._request("POST", "/api/firewall/filter/addRule", json=payload)
+        result = response.json()
+
+        if result.get("result") != "saved":
+            raise RuntimeError(f"No se pudo crear la regla de firewall: {result}")
+
+        return result.get("uuid", "")
+
+    def _update_firewall_rule(
+        self,
+        rule_uuid: str,
+        current_rule: Dict[str, object],
+        *,
+        alias_name: str,
+        description: str,
+        action: str,
+        interface: str,
+        sequence: int,
+    ) -> None:
+        direction = self._extract_selected_key(current_rule.get("direction")) or "in"
+        ipprotocol = self._extract_selected_key(current_rule.get("ipprotocol")) or "inet"
+        protocol = self._extract_selected_key(current_rule.get("protocol")) or "any"
+        interface_value = (
+            self._extract_selected_key(current_rule.get("interface")) or interface
+        )
+
+        rule_data = {
+            "enabled": self._extract_rule_scalar(current_rule.get("enabled")) or "1",
+            "action": action,
+            "quick": self._extract_rule_scalar(current_rule.get("quick")) or "1",
+            "interface": interface_value,
+            "direction": direction,
+            "ipprotocol": ipprotocol,
+            "protocol": protocol,
+            "source_net": alias_name,
+            "destination_net": self._extract_rule_scalar(current_rule.get("destination_net")) or "any",
+            "description": description,
+            "log": self._extract_rule_scalar(current_rule.get("log")) or "1",
+            "sequence": str(sequence),
+        }
+        payload = {"rule": rule_data}
+        response = self._request(
+            "POST", f"/api/firewall/filter/setRule/{rule_uuid}", json=payload
+        )
+        result = response.json()
+        if result.get("result") != "saved":
+            raise RuntimeError(f"No se pudo actualizar la regla de firewall: {result}")
+
+    def _ensure_firewall_rules_exist(
+        self, interface: str = "wan"
+    ) -> Dict[str, Dict[str, bool]]:
+        """Asegura que existan las reglas de firewall para los alias de Mimosa.
+
+        Crea tres reglas si no existen (en orden de evaluación):
+        1. Regla para PERMITIR whitelist (mimosa_whitelist) - sequence 1
+        2. Regla para BLOQUEAR alias temporal (mimosa_temporal_list) - sequence 2
+        3. Regla para BLOQUEAR blacklist permanente (mimosa_blacklist) - sequence 3
+
+        Args:
+            interface: Interfaz donde crear las reglas (default: wan)
+
+        Returns:
+            Dict con estado de creación y actualización:
+            {"created": {...}, "updated": {...}}
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+        created = {"whitelist": False, "temporal": False, "blacklist": False}
+        updated = {"whitelist": False, "temporal": False, "blacklist": False}
+
+        for rule_type, spec in FIREWALL_RULE_SPECS.items():
+            description = FIREWALL_RULE_DESCRIPTIONS[rule_type]
+            rule_uuid, rule_data = self._find_rule_by_description(description)
+            alias_name = spec["alias_name"]
+
+            if not rule_uuid:
+                try:
+                    self._create_firewall_rule(
+                        alias_name=alias_name,
+                        description=description,
+                        action=spec["action"],
+                        interface=interface,
+                        sequence=spec["sequence"],
+                    )
+                    created[rule_type] = True
+                except Exception as exc:
+                    logger.warning(
+                        "No se pudo crear la regla %s (%s): %s",
+                        rule_type,
+                        description,
+                        exc,
+                    )
+                continue
+
+            if not rule_data:
+                continue
+
+            current_action = self._extract_selected_key(rule_data.get("action")) or ""
+            current_interface = (
+                self._extract_selected_value(rule_data.get("interface")) or ""
+            )
+            current_source = self._extract_rule_scalar(rule_data.get("source_net")) or ""
+            current_sequence_raw = self._extract_rule_scalar(rule_data.get("sequence"))
+            try:
+                current_sequence = int(current_sequence_raw) if current_sequence_raw else None
+            except ValueError:
+                current_sequence = None
+
+            needs_update = (
+                current_action.lower() != spec["action"]
+                or current_interface.lower() != interface.lower()
+                or current_source != alias_name
+                or current_sequence != spec["sequence"]
+            )
+
+            if not needs_update:
+                continue
+
+            try:
+                current_rule = self.get_firewall_rule(rule_uuid)
+                if not current_rule:
+                    current_rule = {}
+                self._update_firewall_rule(
+                    rule_uuid,
+                    current_rule,
+                    alias_name=alias_name,
+                    description=description,
+                    action=spec["action"],
+                    interface=interface,
+                    sequence=spec["sequence"],
+                )
+                updated[rule_type] = True
+            except Exception as exc:
+                logger.warning(
+                    "No se pudo actualizar la regla %s (%s): %s",
+                    rule_type,
+                    description,
+                    exc,
+                )
+
+        return {"created": created, "updated": updated}
+
+    def list_firewall_rules(self) -> List[Dict[str, object]]:
+        """Lista las reglas de firewall gestionadas por Mimosa."""
+        try:
+            response = self._request("GET", "/api/firewall/filter/get")
+            data = response.json()
+            rules_dict = data.get("filter", {}).get("rules", {}).get("rule", {})
+
+            mimosa_rules = []
+            for uuid, rule in rules_dict.items():
+                # Obtener descripción
+                desc = rule.get("description", "")
+                if isinstance(desc, dict):
+                    desc = desc.get("value", "")
+
+                # Solo reglas de Mimosa
+                if desc in FIREWALL_RULE_DESCRIPTIONS.values():
+                    # Extraer valores útiles
+                    enabled = rule.get("enabled", "0")
+
+                    # Obtener acción seleccionada
+                    action_dict = rule.get("action", {})
+                    action = "unknown"
+                    if isinstance(action_dict, dict):
+                        for key, value in action_dict.items():
+                            if isinstance(value, dict) and value.get("selected") == 1:
+                                action = key.lower()
+                                break
+
+                    # Obtener interfaz seleccionada
+                    interface_dict = rule.get("interface", {})
+                    interface = "unknown"
+                    if isinstance(interface_dict, dict):
+                        for key, value in interface_dict.items():
+                            if isinstance(value, dict) and value.get("selected") == 1:
+                                interface = value.get("value", key)
+                                break
+
+                    # Obtener origen
+                    source = rule.get("source_net", "")
+                    if isinstance(source, dict):
+                        source = source.get("value", "")
+
+                    # Determinar el tipo de regla basándose en la descripción
+                    rule_type = "unknown"
+                    if "Whitelist" in desc:
+                        rule_type = "whitelist"
+                    elif "Temporal" in desc:
+                        rule_type = "temporal"
+                    elif "blacklist" in desc.lower():
+                        rule_type = "blacklist"
+
+                    mimosa_rules.append({
+                        "uuid": uuid,
+                        "description": desc,
+                        "enabled": enabled == "1",
+                        "action": action,
+                        "interface": interface,
+                        "source_net": source,
+                        "type": rule_type
+                    })
+
+            return mimosa_rules
+        except httpx.HTTPError:
+            return []
+
+    def get_firewall_rule(self, rule_uuid: str) -> Dict[str, object]:
+        """Obtiene los detalles de una regla de firewall específica."""
+        try:
+            response = self._request("GET", f"/api/firewall/filter/getRule/{rule_uuid}")
+            data = response.json()
+            return data.get("rule", {})
+        except httpx.HTTPError:
+            return {}
+
+    def toggle_firewall_rule(self, rule_uuid: str, enabled: bool) -> bool:
+        """Habilita o deshabilita una regla de firewall.
+
+        Usa el endpoint toggleRule de OPNsense que es más simple y confiable
+        que setRule para cambiar solo el estado enabled/disabled.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        try:
+            # Verificar que la regla existe
+            current_rule = self.get_firewall_rule(rule_uuid)
+            if not current_rule:
+                logger.error(f"Rule {rule_uuid} not found")
+                return False
+
+            # Obtener estado actual
+            current_enabled = current_rule.get("enabled", {})
+            if isinstance(current_enabled, dict):
+                current_enabled = current_enabled.get("selected", "0")
+
+            logger.info(f"Rule {rule_uuid} current status: {current_enabled}, target: {enabled}")
+
+            # Determinar si necesita toggle
+            is_currently_enabled = str(current_enabled) == "1"
+            needs_toggle = is_currently_enabled != enabled
+
+            if not needs_toggle:
+                logger.info(f"Rule already in desired state, no toggle needed")
+                return True
+
+            # Usar toggleRule endpoint de OPNsense
+            response = self._request("POST", f"/api/firewall/filter/toggleRule/{rule_uuid}")
+            result = response.json()
+
+            logger.info(f"ToggleRule response: {result}")
+
+            if result.get("result") == "saved" or result.get("changed") is True:
+                # Aplicar cambios si está configurado
+                if self._apply_changes:
+                    logger.info("Applying changes to firewall")
+                    self.apply_changes()
+                return True
+
+            logger.warning(f"ToggleRule did not succeed: {result}")
+            return False
+        except httpx.HTTPError as e:
+            logger.error(f"HTTPError toggling rule: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error toggling rule: {e}")
+            return False
+
+    def delete_firewall_rule(self, rule_uuid: str) -> bool:
+        """Elimina una regla de firewall."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        try:
+            # Verificar que la regla existe
+            current_rule = self.get_firewall_rule(rule_uuid)
+            if not current_rule:
+                logger.error(f"Rule {rule_uuid} not found")
+                return False
+
+            logger.info(f"Deleting rule {rule_uuid}")
+
+            # Eliminar regla usando delRule endpoint
+            response = self._request("POST", f"/api/firewall/filter/delRule/{rule_uuid}")
+            result = response.json()
+
+            logger.info(f"DelRule response: {result}")
+
+            if result.get("result") == "deleted":
+                # Aplicar cambios si está configurado
+                if self._apply_changes:
+                    logger.info("Applying changes to firewall")
+                    self.apply_changes()
+                return True
+
+            logger.warning(f"DelRule did not succeed: {result}")
+            return False
+        except httpx.HTTPError as e:
+            logger.error(f"HTTPError deleting rule: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error deleting rule: {e}")
+            return False
+
     @property
     def _status_endpoint(self) -> str:
         return "/api/core/firmware/status"
@@ -506,4 +957,3 @@ class OPNsenseClient(_BaseSenseClient):
     @property
     def _apply_endpoint(self) -> str:
         return "/api/firewall/filter/apply"
-

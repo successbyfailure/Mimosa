@@ -16,6 +16,11 @@
     <div class="number" id="offenses-24h">0</div>
     <div class="muted">Actividad de ayer a hoy</div>
   </div>
+  <div class="card">
+    <h2>Última hora</h2>
+    <div class="number" id="offenses-1h">0</div>
+    <div class="muted">Picos recientes</div>
+  </div>
 </section>
 
 <section class="grid stats space">
@@ -53,6 +58,11 @@
         <h2 style="margin: 0">Ofensas</h2>
         <div class="muted">Distribución por ventana temporal</div>
       </div>
+      <select id="offenses-range-selector" style="max-width: 160px;">
+        <option value="7d">Últimos 7 días</option>
+        <option value="24h">Últimas 24 horas</option>
+        <option value="1h">Última hora</option>
+      </select>
     </div>
     <canvas id="offenses-chart" height="200"></canvas>
   </div>
@@ -62,7 +72,7 @@
         <h2 style="margin: 0">Bloqueos</h2>
         <div class="muted">Histórico registrado</div>
       </div>
-      <select id="range-selector" style="max-width: 160px;">
+      <select id="blocks-range-selector" style="max-width: 160px;">
         <option value="7d">Últimos 7 días</option>
         <option value="24h">Últimas 24 horas</option>
         <option value="1h">Última hora</option>
@@ -122,6 +132,7 @@
 
 <script>
 let offenseChart, blockChart;
+let statsCache = null;
 
 function buildChart(ctx, label, data, borderColor) {
   return new Chart(ctx, {
@@ -138,6 +149,7 @@ function updateStatsCards(offenses = {}, blocks = {}) {
   document.getElementById('offenses-total').innerText = offenses.total ?? '—';
   document.getElementById('offenses-7d').innerText = offenses.last_7d ?? '—';
   document.getElementById('offenses-24h').innerText = offenses.last_24h ?? '—';
+  document.getElementById('offenses-1h').innerText = offenses.last_1h ?? '—';
   document.getElementById('blocks-total').innerText = blocks.total ?? '—';
   document.getElementById('blocks-7d').innerText = blocks.last_7d ?? '—';
   document.getElementById('blocks-24h').innerText = blocks.last_24h ?? '—';
@@ -150,7 +162,37 @@ function cleanCharts() {
   if (blockChart) blockChart.destroy();
 }
 
-async function loadStats(range = '7d') {
+function renderCharts(offenseRange, blockRange) {
+  if (!statsCache) {
+    cleanCharts();
+    return;
+  }
+
+  const offenses = statsCache.offenses || {};
+  const blocks = statsCache.blocks || {};
+  const offenseTimeline = offenses.timeline?.[offenseRange] || [];
+  const blockTimeline = blocks.timeline?.[blockRange] || [];
+
+  cleanCharts();
+  try {
+    offenseChart = buildChart(
+      document.getElementById('offenses-chart'),
+      'Ofensas',
+      offenseTimeline,
+      '#38bdf8',
+    );
+    blockChart = buildChart(
+      document.getElementById('blocks-chart'),
+      'Bloqueos',
+      blockTimeline,
+      '#22c55e',
+    );
+  } catch (error) {
+    console.error('No se pudieron renderizar las gráficas de estadísticas', error);
+  }
+}
+
+async function loadStats() {
   let data;
   try {
     const res = await fetch('/api/stats');
@@ -164,18 +206,12 @@ async function loadStats(range = '7d') {
     return;
   }
 
+  statsCache = data;
   updateStatsCards(data.offenses, data.blocks);
 
-  const offenseTimeline = data.offenses?.timeline?.[range] || [];
-  const blockTimeline = data.blocks?.timeline?.[range] || [];
-
-  cleanCharts();
-  try {
-    offenseChart = buildChart(document.getElementById('offenses-chart'), 'Ofensas', offenseTimeline, '#38bdf8');
-    blockChart = buildChart(document.getElementById('blocks-chart'), 'Bloqueos', blockTimeline, '#22c55e');
-  } catch (error) {
-    console.error('No se pudieron renderizar las gráficas de estadísticas', error);
-  }
+  const offenseRange = document.getElementById('offenses-range-selector')?.value || '7d';
+  const blockRange = document.getElementById('blocks-range-selector')?.value || '7d';
+  renderCharts(offenseRange, blockRange);
 }
 
 function renderTableMessage(tbody, message, colspan) {
@@ -254,8 +290,12 @@ function loadPluginStats() {
   loadPortDetectorStats();
 }
 
-document.getElementById('range-selector').addEventListener('change', (e) => {
-  loadStats(e.target.value);
+document.getElementById('offenses-range-selector').addEventListener('change', (e) => {
+  renderCharts(e.target.value, document.getElementById('blocks-range-selector').value);
+});
+
+document.getElementById('blocks-range-selector').addEventListener('change', (e) => {
+  renderCharts(document.getElementById('offenses-range-selector').value, e.target.value);
 });
 
 loadStats();
