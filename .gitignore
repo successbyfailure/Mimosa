@@ -4,6 +4,82 @@ __pycache__/
 *.pyo
 *.pyd
 *$py.class
-data/
-tests/data
+
+# Environment and sensitive files
+.env
+.env.*
+!.env.example
+!env.example
+!example.env
+*.key
+*.pem
+*.crt
+credentials.json
+secrets.json
+
+# Data and volumes
+data/*
+!data/.gitkeep
+tests/data/
+volumes/
+
+# Test environments
 tests/.env
+
+# Debug and diagnostic scripts (temporary - not in scripts/)
+debug_*.py
+test_port_*.py
+diagnose_*.py
+!scripts/diagnose_*.py
+!scripts/debug_*.py
+!scripts/test_*.py
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Backups
+*.bak
+*.backup
+*~
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Type checking
+.mypy_cache/
+.pytype/
+.pyre/
+
+
+node_modules/
+package-lock.json
+package.json
+.claude/

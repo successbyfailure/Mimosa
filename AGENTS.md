@@ -46,3 +46,17 @@ Mimosa es un núcleo de defensa para homelabs que coordina bloqueos temporales c
   - OPNsense: `TEST_FIREWALL_OPNSENSE_BASE_URL`, `TEST_FIREWALL_OPNSENSE_API_KEY`, `TEST_FIREWALL_OPNSENSE_API_SECRET`,
     `TEST_FIREWALL_OPNSENSE_ALIAS_NAME`, `TEST_FIREWALL_OPNSENSE_VERIFY_SSL`.
   - Ajustes comunes: `TEST_FIREWALL_APPLY_CHANGES` y `TEST_FIREWALL_TIMEOUT`.
+
+## Scripts de Utilidad
+El directorio `scripts/` contiene herramientas de diagnóstico y mantenimiento:
+- `diagnose_opnsense.py` - Diagnóstico completo de funciones de OPNsense
+
+Ver `scripts/README.md` para documentación detallada.
+
+## Estructura de Documentación
+- `README.md` - Documentación principal del proyecto
+- `AGENTS.md` - Este archivo (guía para contribuidores)
+- `CHANGELOG.md` - Historial de cambios
+- `SECURITY_REVIEW.md` - Auditoría de seguridad y mejores prácticas
+- `reference_docs/` - Documentación de APIs externas (OPNsense)
+- `scripts/README.md` - Documentación de scripts de utilidad

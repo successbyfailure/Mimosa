@@ -413,21 +413,88 @@ class OPNsenseClient(_BaseSenseClient):
         )
         return True
 
+    def _get_alias_uuid(self, alias_name: str) -> Optional[str]:
+        """Obtiene el UUID de un alias por su nombre."""
+        try:
+            response = self._request("GET", "/api/firewall/alias/searchItem")
+            data = response.json()
+            rows = data.get("rows", [])
+            alias_row = next((row for row in rows if row.get("name") == alias_name), None)
+            return alias_row.get("uuid") if alias_row else None
+        except httpx.HTTPError:
+            return None
+
     def _list_ports_alias(self, protocol: str) -> List[str | int]:
+        """Lista los puertos de un alias usando el endpoint getItem.
+
+        El endpoint alias_util/list no funciona correctamente para alias de tipo
+        'port', por lo que usamos getItem para obtener el contenido real.
+        """
         alias_name = self._ports_alias_name_for(protocol)
-        return self._list_alias_values(alias_name)
+        uuid = self._get_alias_uuid(alias_name)
+
+        if not uuid:
+            return []
+
+        try:
+            response = self._request("GET", f"/api/firewall/alias/getItem/{uuid}")
+            data = response.json()
+            content = data.get("alias", {}).get("content", {})
+
+            if not isinstance(content, dict):
+                return []
+
+            # Extraer solo los items con "selected": 1 que son números de puerto válidos
+            ports = []
+            for key, value in content.items():
+                if isinstance(value, dict) and value.get("selected") == 1:
+                    try:
+                        port_num = int(key)
+                        if 1 <= port_num <= 65535:
+                            ports.append(port_num)
+                    except (ValueError, TypeError):
+                        continue
+
+            return ports
+
+        except httpx.HTTPError:
+            return []
 
     def set_ports_alias(self, protocol: str, ports: Iterable[int]) -> None:  # type: ignore[override]
+        """Establece los puertos de un alias usando el endpoint setItem.
+
+        El endpoint alias_util/add no funciona correctamente para alias de tipo
+        'port', por lo que usamos setItem para actualizar el contenido completo.
+        """
         alias_name = self._ports_alias_name_for(protocol)
         self._ensure_ports_alias_exists(protocol)
-        self._request("POST", f"/api/firewall/alias_util/flush/{alias_name}")
 
+        uuid = self._get_alias_uuid(alias_name)
+        if not uuid:
+            raise RuntimeError(f"No se pudo obtener UUID del alias {alias_name}")
+
+        # Sanitizar y ordenar puertos
         sanitized = sorted({int(port) for port in ports if 1 <= int(port) <= 65535})
-        for port in sanitized:
-            self._request(
-                "POST",
-                f"/api/firewall/alias_util/add/{alias_name}",
-                json={"address": str(port)},
+
+        # El formato correcto para alias de tipo 'port' es con saltos de línea
+        content = "\n".join(str(port) for port in sanitized) if sanitized else ""
+
+        payload = {
+            "alias": {
+                "enabled": "1",
+                "name": alias_name,
+                "type": "port",
+                "content": content,
+                "description": "Mimosa published ports",
+            }
+        }
+
+        response = self._request("POST", f"/api/firewall/alias/setItem/{uuid}", json=payload)
+        result = response.json()
+
+        if result.get("result") != "saved":
+            raise RuntimeError(
+                f"No se pudo actualizar el alias de puertos: {result.get('validations', result)}"
             )
 
         self._apply_changes_if_enabled()

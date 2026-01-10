@@ -1,15 +1,85 @@
-__pycache__
+# Git
+.git
+.gitignore
+.github/
+
+# Python bytecode and cache
+__pycache__/
 *.pyc
 *.pyo
 *.pyd
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.pytype/
+.pyre/
+.cache/
+.coverage
+htmlcov/
+.tox/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment and sensitive files
+.env
+.env.*
+!env.example
+*.key
+*.pem
+*.crt
+credentials.json
+secrets.json
+
+# Data and volumes (should be mounted, not copied)
+data/
+volumes/
+tests/data/
+
+# Editor files
 *.swp
 *.swo
-.pytest_cache
-.mypy_cache
-.cache
-.venv
-venv
-.env
-.git
-.gitignore
+*~
+.vscode/
+.idea/
+.DS_Store
+
+# Build and Docker files
 Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Documentation (not needed in runtime)
+*.md
+!README.md
+LICENSE
+AGENTS.md
+CHANGELOG.md
+
+# Debug and diagnostic scripts
+debug_*.py
+diagnose_*.py
+test_port_*.py
+
+# Tests (not needed in production image)
+tests/
+.pytest_cache/
+
+# Logs and databases (should be in volumes)
+*.log
+logs/
+*.db
+*.sqlite
+*.sqlite3
+
+# Backups
+*.bak
+*.backup
+
+# Build artifacts
+dist/
+build/
+*.egg-info/

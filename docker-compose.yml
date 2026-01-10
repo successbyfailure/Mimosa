@@ -13,12 +13,12 @@ services:
       - ./.env:/app/.env
     restart: unless-stopped
 
-  watchtower:
-    image: containrrr/watchtower:1.7.1
-    container_name: mimosa-watchtower
-    command: --interval 60 --scope mimosa
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    labels:
-      - "com.centurylinklabs.watchtower.scope=mimosa"
-    restart: unless-stopped
+  #watchtower:
+  #  image: containrrr/watchtower:1.7.1
+  #  container_name: mimosa-watchtower
+  #  command: --interval 60 --scope mimosa
+  #  volumes:
+  #    - /var/run/docker.sock:/var/run/docker.sock
+  #  labels:
+  #    - "com.centurylinklabs.watchtower.scope=mimosa"
+  #  restart: unless-stopped
