@@ -22,6 +22,7 @@ data/*
 !data/.gitkeep
 tests/data/
 volumes/
+mimosanpm-agent/state/
 
 # Test environments
 tests/.env
