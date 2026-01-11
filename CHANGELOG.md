@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.31
+- **UI**: evita contenido mixto en cargas de Chart.js detrás de proxy HTTPS.
+
 ## 1.3.30
 - **OPNsense**: whitelist acepta FQDN resolviendo a IPs antes de sincronizar.
 

@@ -46,7 +46,7 @@
       .modal .panel { width: min(760px, 100%); background: var(--card); border-radius: 16px; border: 1px solid rgba(255,255,255,.08); box-shadow: 0 20px 80px rgba(0,0,0,.45); padding: 20px; }
       @media (max-width: 640px) { header { flex-wrap: wrap; } nav { width: 100%; } }
     </style>
-    <script src="{{ url_for('static', path='chart.umd.min.js') }}"></script>
+    <script src="{{ url_for('static', path='chart.umd.min.js') | replace('http://', '//') }}"></script>
   </head>
   <body>
     <header>
