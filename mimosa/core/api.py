@@ -141,6 +141,15 @@ class FirewallGateway:
 
         raise NotImplementedError
 
+    def expand_whitelist_entries(self, entries: List[str]) -> tuple[List[str], bool]:
+        """Normaliza entradas de whitelist para comparación/sincronización.
+
+        Devuelve una lista con las entradas expandidas y un flag que indica si
+        hubo entradas sin resolver (para evitar borrados destructivos).
+        """
+
+        return entries, False
+
     def add_to_blacklist(self, ip: str, reason: str = "") -> None:
         """Añade una IP a la lista negra permanente."""
 

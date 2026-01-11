@@ -331,7 +331,8 @@ def create_app(
             current = gateway.list_whitelist()
         except NotImplementedError:
             return []
-        desired_set = set(entry for entry in desired if entry)
+        expanded, had_unresolved = gateway.expand_whitelist_entries(desired)
+        desired_set = set(entry for entry in expanded if entry)
         current_set = set(entry for entry in current if entry)
 
         missing = []
@@ -346,7 +347,8 @@ def create_app(
                 continue
             if entry.endswith("/32") and entry[:-3] in desired_set:
                 continue
-            to_remove.append(entry)
+            if not had_unresolved:
+                to_remove.append(entry)
 
         for entry in missing:
             gateway.add_to_whitelist(entry)
@@ -988,7 +990,11 @@ def create_app(
     @app.post("/api/whitelist", status_code=201)
     def add_whitelist(payload: WhitelistInput) -> Dict[str, object]:
         entry = offense_store.add_whitelist(payload.cidr, payload.note)
-        _sync_whitelist_entry(entry.cidr)
+        try:
+            _sync_whitelist_entry(entry.cidr)
+        except RuntimeError as exc:
+            offense_store.delete_whitelist(entry.id)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {
             "id": entry.id,
             "cidr": entry.cidr,

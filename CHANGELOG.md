@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.30
+- **OPNsense**: whitelist acepta FQDN resolviendo a IPs antes de sincronizar.
+
 ## 1.3.29
 - **OPNsense**: normaliza entradas /32 en whitelist para evitar errores al añadir.
 

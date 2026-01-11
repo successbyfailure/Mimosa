@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import socket
 from typing import Dict, Iterable, List, Optional
 import httpx
 from mimosa.core.api import FirewallGateway
@@ -437,14 +438,42 @@ class OPNsenseClient(_BaseSenseClient):
             return str(network.network_address)
         return str(network)
 
+    def _resolve_whitelist_addresses(self, value: str) -> List[str]:
+        try:
+            network = ipaddress.ip_network(value, strict=False)
+        except ValueError:
+            network = None
+
+        if network is not None:
+            return [self._normalize_whitelist_address(value)]
+
+        try:
+            infos = socket.getaddrinfo(value, None)
+        except socket.gaierror:
+            return []
+
+        addresses = []
+        for info in infos:
+            ip = info[4][0]
+            if ip:
+                addresses.append(self._normalize_whitelist_address(ip))
+
+        return sorted(set(addresses))
+
     def add_to_whitelist(self, ip: str, reason: str = "") -> None:  # type: ignore[override]
-        normalized = self._normalize_whitelist_address(ip)
-        self._block_ip_backend(normalized, reason, alias_name=self.whitelist_alias)
+        addresses = self._resolve_whitelist_addresses(ip)
+        if not addresses:
+            raise RuntimeError(f"No se pudo resolver el host: {ip}")
+        for address in addresses:
+            self._block_ip_backend(address, reason, alias_name=self.whitelist_alias)
         self._apply_changes_if_enabled()
 
     def remove_from_whitelist(self, ip: str) -> None:  # type: ignore[override]
-        normalized = self._normalize_whitelist_address(ip)
-        self._unblock_ip_backend(normalized, alias_name=self.whitelist_alias)
+        addresses = self._resolve_whitelist_addresses(ip)
+        if not addresses:
+            return
+        for address in addresses:
+            self._unblock_ip_backend(address, alias_name=self.whitelist_alias)
         self._apply_changes_if_enabled()
 
     def list_whitelist(self) -> List[str]:  # type: ignore[override]
@@ -462,6 +491,19 @@ class OPNsenseClient(_BaseSenseClient):
             suffix = "/128" if ip.version == 6 else "/32"
             normalized.append(f"{entry}{suffix}")
         return normalized
+
+    def expand_whitelist_entries(self, entries: List[str]) -> tuple[List[str], bool]:  # type: ignore[override]
+        expanded: List[str] = []
+        had_unresolved = False
+        for entry in entries:
+            if not entry:
+                continue
+            addresses = self._resolve_whitelist_addresses(entry)
+            if addresses:
+                expanded.extend(addresses)
+            else:
+                had_unresolved = True
+        return expanded, had_unresolved
 
     def _list_ports_alias(self, protocol: str) -> List[str | int]:
         alias_name = self._ports_alias_name_for(protocol)
