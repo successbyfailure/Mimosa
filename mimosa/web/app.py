@@ -29,6 +29,7 @@ from mimosa.core.sense import (
     BLACKLIST_ALIAS_NAME,
     PORT_ALIAS_NAMES,
     TEMPORAL_ALIAS_NAME,
+    WHITELIST_ALIAS_NAME,
 )
 from mimosa.core.portdetector import (
     PortBindingError,
@@ -62,7 +63,7 @@ class FirewallInput(BaseModel):
     """Payload para crear y probar conexiones con firewalls."""
 
     name: str
-    type: Literal["opnsense"]
+    type: Literal["opnsense", "pfsense"]
     base_url: str | None = None
     api_key: str | None = None
     api_secret: str | None = None
@@ -302,6 +303,61 @@ def create_app(
             gateway_cache[config.id] = gateway
         return config, gateway
 
+    def _sync_whitelist_entry(cidr: str, *, remove: bool = False) -> None:
+        for config in config_store.list():
+            gateway = gateway_cache.get(config.id)
+            if not gateway:
+                gateway = build_firewall_gateway(config)
+                gateway_cache[config.id] = gateway
+            try:
+                gateway.ensure_ready()
+                if remove:
+                    gateway.remove_from_whitelist(cidr)
+                    continue
+                try:
+                    current = set(gateway.list_whitelist())
+                except NotImplementedError:
+                    continue
+                if cidr in current:
+                    continue
+                gateway.add_to_whitelist(cidr)
+            except NotImplementedError:
+                continue
+            except httpx.HTTPStatusError:
+                continue
+
+    def _sync_whitelist_full(gateway: FirewallGateway, desired: List[str]) -> List[str]:
+        try:
+            current = gateway.list_whitelist()
+        except NotImplementedError:
+            return []
+        desired_set = set(entry for entry in desired if entry)
+        current_set = set(entry for entry in current if entry)
+
+        missing = []
+        for entry in desired_set:
+            if entry in current_set or f"{entry}/32" in current_set:
+                continue
+            missing.append(entry)
+
+        to_remove = []
+        for entry in current_set:
+            if entry in desired_set:
+                continue
+            if entry.endswith("/32") and entry[:-3] in desired_set:
+                continue
+            to_remove.append(entry)
+
+        for entry in missing:
+            gateway.add_to_whitelist(entry)
+        for entry in to_remove:
+            gateway.remove_from_whitelist(entry)
+
+        try:
+            return gateway.list_whitelist()
+        except NotImplementedError:
+            return []
+
     def _serialize_block(entry: BlockEntry) -> Dict[str, object]:
         return entry.to_dict()
 
@@ -352,6 +408,54 @@ def create_app(
             "min_blocks_total": rule.min_blocks_total,
             "block_minutes": rule.block_minutes,
         }
+
+    def _parse_geo_point(raw: object) -> Optional[Dict[str, float]]:
+        if raw is None:
+            return None
+        if isinstance(raw, dict):
+            lat = raw.get("lat") or raw.get("latitude")
+            lon = raw.get("lon") or raw.get("lng") or raw.get("longitude")
+            if lat is None or lon is None:
+                return None
+            return {"lat": float(lat), "lon": float(lon)}
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return None
+            try:
+                payload = json.loads(text)
+                return _parse_geo_point(payload)
+            except json.JSONDecodeError:
+                pass
+            if "," in text:
+                parts = [part.strip() for part in text.split(",")]
+                if len(parts) >= 2:
+                    try:
+                        lat = float(parts[0])
+                        lon = float(parts[1])
+                        return {"lat": lat, "lon": lon}
+                    except ValueError:
+                        return None
+        return None
+
+    def _parse_geo_country(raw: object) -> Optional[Dict[str, Optional[str]]]:
+        if raw is None:
+            return None
+        if isinstance(raw, dict):
+            return {
+                "country": raw.get("country"),
+                "country_code": raw.get("country_code") or raw.get("countryCode"),
+            }
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return None
+            try:
+                payload = json.loads(text)
+                return _parse_geo_country(payload)
+            except json.JSONDecodeError:
+                return None
+        return None
 
     def _serialize_plugins() -> List[Dict[str, object]]:
         proxytrap_config = plugin_store.get_proxytrap()
@@ -667,8 +771,135 @@ def create_app(
     @app.get("/api/offenses")
     def list_offenses(limit: int = 100) -> List[Dict[str, object]]:
         offenses = offense_store.list_recent(limit)
-        return [_serialize_offense(offense) for offense in offenses]
+        serialized = [_serialize_offense(offense) for offense in offenses]
 
+        if not serialized:
+            return serialized
+
+        rules = rule_store.list() or [OffenseRule()]
+        now = datetime.utcnow()
+        latest_created = max(
+            (offense.created_at for offense in offenses), default=now
+        )
+        reference_time = latest_created
+
+        counts_by_ip: Dict[str, Dict[str, int]] = {}
+        for offense in offenses:
+            ip = offense.source_ip
+            counts_by_ip.setdefault(ip, {"total": 0, "last_hour": 0})
+            counts_by_ip[ip]["total"] += 1
+            if reference_time - offense.created_at <= timedelta(hours=1):
+                counts_by_ip[ip]["last_hour"] += 1
+
+        blocks_by_ip: Dict[str, int] = {}
+        for ip in counts_by_ip:
+            blocks_by_ip[ip] = block_manager.count_for_ip(ip)
+
+        for item, offense in zip(serialized, offenses):
+            context = offense.context or {}
+            plugin = item.get("plugin") or context.get("plugin") or ""
+            event_id = context.get("event_id") or context.get("eventId") or ""
+            severity = item.get("severity") or ""
+            description = item.get("description") or ""
+            description_clean = item.get("description_clean") or description
+
+            counts = counts_by_ip.get(offense.source_ip, {"total": 0, "last_hour": 0})
+            total_blocks = blocks_by_ip.get(offense.source_ip, 0)
+
+            status = ""
+            warning = False
+            for rule in rules:
+                if not rule.matches_fields(
+                    OffenseEvent(
+                        source_ip=offense.source_ip,
+                        plugin=plugin,
+                        event_id=event_id,
+                        severity=severity,
+                        description=description,
+                    )
+                ):
+                    if not rule.matches_fields(
+                        OffenseEvent(
+                            source_ip=offense.source_ip,
+                            plugin=plugin,
+                            event_id=event_id,
+                            severity=severity,
+                            description=description_clean,
+                        )
+                    ):
+                        continue
+
+                if rule.passes_thresholds(
+                    last_hour=counts["last_hour"],
+                    total=counts["total"],
+                    total_blocks=total_blocks,
+                ):
+                    status = "direct"
+                    break
+
+                warning = True
+
+            if status == "direct":
+                item["escalation_status"] = "direct"
+            elif warning:
+                item["escalation_status"] = "warning"
+            else:
+                item["escalation_status"] = ""
+
+        return serialized
+
+    @app.get("/api/offenses/heatmap")
+    def offenses_heatmap(limit: int = 300) -> Dict[str, object]:
+        profiles = offense_store.list_ip_profiles(limit)
+        aggregated: Dict[str, Dict[str, float]] = {}
+        total_points = 0
+
+        for profile in profiles:
+            point = _parse_geo_point(profile.geo)
+            if not point:
+                continue
+            key = f"{point['lat']:.4f},{point['lon']:.4f}"
+            if key not in aggregated:
+                aggregated[key] = {
+                    "lat": point["lat"],
+                    "lon": point["lon"],
+                    "count": 0,
+                }
+            aggregated[key]["count"] += max(int(profile.offenses), 1)
+            total_points += 1
+
+        return {
+            "points": list(aggregated.values()),
+            "total_profiles": len(profiles),
+            "points_count": total_points,
+        }
+
+    @app.get("/api/offenses/blocks_by_country")
+    def blocks_by_country(limit: int = 10, profile_limit: int = 2000) -> Dict[str, object]:
+        profiles = offense_store.list_ip_profiles(profile_limit)
+        aggregated: Dict[str, Dict[str, object]] = {}
+
+        for profile in profiles:
+            if not profile.blocks:
+                continue
+            meta = _parse_geo_country(profile.geo)
+            if not meta:
+                continue
+            key = meta.get("country_code") or meta.get("country")
+            if not key:
+                continue
+            entry = aggregated.get(key)
+            if not entry:
+                entry = {
+                    "country": meta.get("country") or key,
+                    "country_code": meta.get("country_code"),
+                    "blocks": 0,
+                }
+                aggregated[key] = entry
+            entry["blocks"] = int(entry["blocks"]) + int(profile.blocks)
+
+        ordered = sorted(aggregated.values(), key=lambda item: item["blocks"], reverse=True)
+        return {"countries": ordered[:limit], "total_profiles": len(profiles)}
     @app.post("/api/offenses", status_code=201)
     def create_offense(payload: OffenseInput) -> Dict[str, object]:
         context = payload.context.copy() if payload.context else {}
@@ -757,6 +988,7 @@ def create_app(
     @app.post("/api/whitelist", status_code=201)
     def add_whitelist(payload: WhitelistInput) -> Dict[str, object]:
         entry = offense_store.add_whitelist(payload.cidr, payload.note)
+        _sync_whitelist_entry(entry.cidr)
         return {
             "id": entry.id,
             "cidr": entry.cidr,
@@ -766,7 +998,13 @@ def create_app(
 
     @app.delete("/api/whitelist/{entry_id}", status_code=204, response_class=Response)
     def delete_whitelist(entry_id: int) -> Response:
+        entry = next(
+            (item for item in offense_store.list_whitelist() if item.id == entry_id),
+            None,
+        )
         offense_store.delete_whitelist(entry_id)
+        if entry:
+            _sync_whitelist_entry(entry.cidr, remove=True)
         return Response(status_code=204)
 
     @app.get("/api/blocks")
@@ -920,6 +1158,8 @@ def create_app(
         config, gateway = _get_firewall(config_id)
         try:
             gateway.ensure_ready()
+            desired = [entry.cidr for entry in offense_store.list_whitelist()]
+            whitelist_entries = _sync_whitelist_full(gateway, desired)
             block_entries = gateway.list_blocks()
             try:
                 blacklist_entries = gateway.list_blacklist()
@@ -938,7 +1178,9 @@ def create_app(
             "aliases": {
                 "temporal": TEMPORAL_ALIAS_NAME,
                 "blacklist": BLACKLIST_ALIAS_NAME,
+                "whitelist": WHITELIST_ALIAS_NAME,
             },
+            "whitelist_entries": whitelist_entries,
             "block_entries": block_entries,
             "blacklist_entries": blacklist_entries,
             "ports_aliases": getattr(

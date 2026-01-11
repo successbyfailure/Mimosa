@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 from mimosa.core.api import FirewallGateway
 from mimosa.core.sense import BLACKLIST_ALIAS_NAME, PORT_ALIAS_NAMES, TEMPORAL_ALIAS_NAME
 from mimosa.core.sense import OPNsenseClient
+from mimosa.core.pfrest import PFSenseRestClient
 
 
 @dataclass
@@ -132,8 +133,8 @@ class FirewallConfigStore:
             return None
 
         firewall_type = env.get("INITIAL_FIREWALL_TYPE", "opnsense").lower()
-        if firewall_type not in {"opnsense"}:
-            raise ValueError("INITIAL_FIREWALL_TYPE debe ser opnsense")
+        if firewall_type not in {"opnsense", "pfsense"}:
+            raise ValueError("INITIAL_FIREWALL_TYPE debe ser opnsense o pfsense")
 
         def _as_bool(value: str | None, default: bool) -> bool:
             if value is None:
@@ -161,6 +162,15 @@ def build_firewall_gateway(config: FirewallConfig) -> FirewallGateway:
 
     if config.type == "opnsense":
         return OPNsenseClient(
+            base_url=config.base_url or "",
+            api_key=config.api_key or "",
+            api_secret=config.api_secret or "",
+            verify_ssl=config.verify_ssl,
+            timeout=config.timeout,
+            apply_changes=config.apply_changes,
+        )
+    if config.type == "pfsense":
+        return PFSenseRestClient(
             base_url=config.base_url or "",
             api_key=config.api_key or "",
             api_secret=config.api_secret or "",

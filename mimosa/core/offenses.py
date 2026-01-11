@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import socket
 import sqlite3
 from dataclasses import dataclass
@@ -17,6 +18,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
+import httpx
+from urllib.parse import urlparse, urlunparse
 from mimosa.core.storage import DEFAULT_DB_PATH, ensure_database
 
 
@@ -460,10 +463,9 @@ class OffenseStore:
     def _enrich_ip(self, ip: str) -> Dict[str, Optional[str]]:
         """Obtiene información básica de la IP.
 
-        Se prioriza la velocidad y el funcionamiento offline: reverse DNS se
-        obtiene con la librería estándar y los campos de geolocalización y
-        whois quedan en ``None`` para permitir completarlos más adelante por
-        plugins especializados.
+        Reverse DNS se obtiene con la librería estándar. La geolocalización
+        se consulta solo si se habilita explícitamente con
+        ``MIMOSA_GEOIP_ENABLED=true``.
         """
 
         reverse_dns: Optional[str] = None
@@ -472,7 +474,55 @@ class OffenseStore:
         except Exception:  # pragma: no cover - dependiente de red/resolución
             reverse_dns = None
 
-        return {"geo": None, "whois": None, "reverse_dns": reverse_dns}
+        geo = self._lookup_geo(ip)
+        return {"geo": geo, "whois": None, "reverse_dns": reverse_dns}
+
+    def _lookup_geo(self, ip: str) -> Optional[str]:
+        enabled = os.getenv("MIMOSA_GEOIP_ENABLED", "false").lower() == "true"
+        if not enabled:
+            return None
+        provider = os.getenv("MIMOSA_GEOIP_PROVIDER", "ip-api").lower()
+        if provider != "ip-api":
+            return None
+        base_url = os.getenv("MIMOSA_GEOIP_ENDPOINT", "http://ip-api.com/json")
+        fields = "status,message,lat,lon,country,countryCode,regionName,city,timezone"
+        url = f"{base_url.rstrip('/')}/{ip}"
+        data = self._fetch_geo_payload(url, fields)
+        if not data and base_url.startswith("https://ip-api.com"):
+            parsed = urlparse(url)
+            fallback = parsed._replace(scheme="http")
+            data = self._fetch_geo_payload(urlunparse(fallback), fields)
+        if not data:
+            return None
+        payload = {
+            "lat": data.get("lat"),
+            "lon": data.get("lon"),
+            "city": data.get("city"),
+            "region": data.get("regionName"),
+            "country": data.get("country"),
+            "country_code": data.get("countryCode"),
+            "timezone": data.get("timezone"),
+            "provider": "ip-api",
+        }
+        if payload.get("lat") is None or payload.get("lon") is None:
+            return None
+        return json.dumps(payload)
+
+    def _fetch_geo_payload(self, url: str, fields: str) -> Optional[Dict[str, object]]:
+        try:
+            response = httpx.get(
+                url,
+                params={"fields": fields},
+                timeout=3.0,
+            )
+            data = response.json()
+        except httpx.HTTPError:
+            return None
+        except json.JSONDecodeError:
+            return None
+        if data.get("status") != "success":
+            return None
+        return data
 
     def reset(self) -> None:
         """Limpia ofensas y perfiles almacenados.
@@ -489,4 +539,3 @@ class OffenseStore:
         except sqlite3.DatabaseError:
             db_path.unlink(missing_ok=True)
         ensure_database(db_path)
-

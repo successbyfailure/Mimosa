@@ -6,6 +6,13 @@
   .tab-btn.active { background: linear-gradient(120deg, #38bdf8, #6366f1); color:white; box-shadow: 0 10px 30px rgba(99,102,241,.35); }
   .tab-panel { display:none; }
   .tab-panel.active { display:block; }
+  .plugin-tabs { margin-top: 12px; }
+  .plugin-tabs .tab-btn { padding: 8px 12px; font-size: 13px; }
+  .plugin-panel { display: none; }
+  .plugin-panel.active { display: block; }
+  th.sortable { cursor: pointer; user-select: none; }
+  .sort-indicator { margin-left: 6px; font-size: 11px; opacity: 0.6; }
+  .flag-badge { font-size: 16px; }
   .pill.warn { background: rgba(251,191,36,.15); color:#fbbf24; }
   tr.offense-direct td { background: rgba(248,113,113,.12); }
   tr.offense-warning td { background: rgba(251,191,36,.12); }
@@ -75,6 +82,7 @@
         <label>Tipo</label>
         <select name="type">
           <option value="opnsense">OPNsense</option>
+          <option value="pfsense">pfSense (pfrest)</option>
         </select>
       </div>
       <div>
@@ -151,90 +159,102 @@
     <div id="plugin-list" class="muted" style="margin-top:4px;">Cargando plugins...</div>
   </section>
 
-  <div class="grid" style="grid-template-columns: 1.25fr 1fr; gap: 18px; align-items:start;">
-    <div class="grid" style="grid-template-rows: auto auto auto auto; gap: 18px;">
-      <form id="proxytrap-form" class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
-        <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
-          <div>
-            <h3 style="margin-top:0">ProxyTrap</h3>
-            <div class="muted">Servidor honeypot HTTP ligero.</div>
-          </div>
-          <span class="pill warn" style="display:none;" id="proxytrap-warning">Deshabilitado</span>
-        </div>
-        <label style="display:flex; gap:8px; align-items:center;">
-          <input type="checkbox" name="enabled" style="width:auto;" />
-          Habilitar servidor ProxyTrap
-        </label>
-        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px; align-items:end;">
-          <div>
-            <label>Puerto de escucha</label>
-            <input name="port" type="number" min="1" max="65535" value="8081" />
-          </div>
-          <div>
-            <label>Respuesta al ofensor</label>
-            <select name="response_type" onchange="toggleCustomHtml()">
-              <option value="silence">Silencio (204)</option>
-              <option value="404">404 Not Found</option>
-              <option value="custom">HTML personalizado</option>
-            </select>
-          </div>
-          <div>
-            <label>Severidad por defecto</label>
-            <select name="default_severity">
-              <option value="bajo">Bajo</option>
-              <option value="medio">Medio</option>
-              <option value="alto" selected>Alto</option>
-            </select>
-          </div>
-        </div>
-        <div id="custom-html-wrapper" style="display:none;">
-          <label>HTML personalizado</label>
-          <textarea name="custom_html" rows="4" placeholder="&lt;h1&gt;No permitido&lt;/h1&gt;"></textarea>
-        </div>
-        <button type="submit" style="margin-top:12px;">Guardar configuración</button>
-        <div id="proxytrap-message" class="muted"></div>
-      </form>
+  <div class="tabs plugin-tabs">
+    <button class="tab-btn active plugin-tab-btn" data-plugin-tab="proxytrap" onclick="switchPluginTab('proxytrap')">ProxyTrap</button>
+    <button class="tab-btn plugin-tab-btn" data-plugin-tab="portdetector" onclick="switchPluginTab('portdetector')">Port Detector</button>
+    <button class="tab-btn plugin-tab-btn" data-plugin-tab="mimosanpm" onclick="switchPluginTab('mimosanpm')">MimosaNPM</button>
+  </div>
 
-      <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
-        <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
-          <div>
-            <h3 style="margin-top:0">Severidad por dominio</h3>
-            <div class="muted">Define reglas específicas (soporta wildcard) y una opción comodín.</div>
+  <div id="plugin-proxytrap" class="plugin-panel active">
+    <div class="grid" style="grid-template-columns: 1.25fr 1fr; gap: 18px; align-items:start;">
+      <div class="grid" style="grid-template-rows: auto auto; gap: 18px;">
+        <form id="proxytrap-form" class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+          <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
+            <div>
+              <h3 style="margin-top:0">ProxyTrap</h3>
+              <div class="muted">Servidor honeypot HTTP ligero.</div>
+            </div>
+            <span class="pill warn" style="display:none;" id="proxytrap-warning">Deshabilitado</span>
           </div>
-          <button class="secondary" onclick="resetProxytrapDefaults()">Restaurar defaults</button>
-        </div>
-        <form id="proxytrap-policy-form" class="grid" style="grid-template-columns: 2fr 1fr auto; gap: 10px; align-items:end;">
-          <div>
-            <label>Dominio / patrón</label>
-            <input name="pattern" required placeholder="admin.ejemplo.com o *.intranet" />
+          <label style="display:flex; gap:8px; align-items:center;">
+            <input type="checkbox" name="enabled" style="width:auto;" />
+            Habilitar servidor ProxyTrap
+          </label>
+          <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px; align-items:end;">
+            <div>
+              <label>Puerto de escucha</label>
+              <input name="port" type="number" min="1" max="65535" value="8081" />
+            </div>
+            <div>
+              <label>Respuesta al ofensor</label>
+              <select name="response_type" onchange="toggleCustomHtml()">
+                <option value="silence">Silencio (204)</option>
+                <option value="404">404 Not Found</option>
+                <option value="custom">HTML personalizado</option>
+              </select>
+            </div>
+            <div>
+              <label>Severidad por defecto</label>
+              <select name="default_severity">
+                <option value="bajo">Bajo</option>
+                <option value="medio">Medio</option>
+                <option value="alto" selected>Alto</option>
+              </select>
+            </div>
           </div>
-          <div>
-            <label>Severidad</label>
-            <select name="severity">
-              <option value="bajo">Bajo</option>
-              <option value="medio">Medio</option>
-              <option value="alto" selected>Alto</option>
-            </select>
+          <div id="custom-html-wrapper" style="display:none;">
+            <label>HTML personalizado</label>
+            <textarea name="custom_html" rows="4" placeholder="&lt;h1&gt;No permitido&lt;/h1&gt;"></textarea>
           </div>
-          <button type="submit">Añadir</button>
+          <button type="submit" style="margin-top:12px;">Guardar configuración</button>
+          <div id="proxytrap-message" class="muted"></div>
         </form>
-        <div id="proxytrap-policy-message" class="muted" style="margin-top:6px;"></div>
-        <div style="max-height:240px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px; margin-top:8px;">
-          <table>
-            <thead>
-              <tr>
-                <th>Patrón</th>
-                <th>Severidad</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="proxytrap-policy-table">
-              <tr><td colspan="3" class="muted">Sin reglas.</td></tr>
-            </tbody>
-          </table>
+
+        <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
+          <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
+            <div>
+              <h3 style="margin-top:0">Severidad por dominio</h3>
+              <div class="muted">Define reglas específicas (soporta wildcard) y una opción comodín.</div>
+            </div>
+            <button class="secondary" onclick="resetProxytrapDefaults()">Restaurar defaults</button>
+          </div>
+          <form id="proxytrap-policy-form" class="grid" style="grid-template-columns: 2fr 1fr auto; gap: 10px; align-items:end;">
+            <div>
+              <label>Dominio / patrón</label>
+              <input name="pattern" required placeholder="admin.ejemplo.com o *.intranet" />
+            </div>
+            <div>
+              <label>Severidad</label>
+              <select name="severity">
+                <option value="bajo">Bajo</option>
+                <option value="medio">Medio</option>
+                <option value="alto" selected>Alto</option>
+              </select>
+            </div>
+            <button type="submit">Añadir</button>
+          </form>
+          <div id="proxytrap-policy-message" class="muted" style="margin-top:6px;"></div>
+          <div style="max-height:240px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px; margin-top:8px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Patrón</th>
+                  <th>Severidad</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="proxytrap-policy-table">
+                <tr><td colspan="3" class="muted">Sin reglas.</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
+    </div>
+  </div>
 
+  <div id="plugin-portdetector" class="plugin-panel">
+    <div class="grid" style="grid-template-columns: 1fr; gap: 18px; align-items:start;">
       <div class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
         <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
           <div>
@@ -324,7 +344,11 @@
           </table>
         </div>
       </div>
+    </div>
+  </div>
 
+  <div id="plugin-mimosanpm" class="plugin-panel">
+    <div class="grid" style="grid-template-columns: 1fr; gap: 18px; align-items:start;">
       <form id="mimosanpm-form" class="card" style="background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
         <div class="flex space" style="justify-content: space-between; align-items:flex-start;">
           <div>
@@ -364,7 +388,6 @@
         <div id="mimosanpm-message" class="muted"></div>
       </form>
     </div>
-
   </div>
 </section>
 
@@ -682,16 +705,17 @@
         <table>
           <thead>
             <tr>
-              <th>IP</th>
-              <th>Reverse DNS</th>
-              <th>Ofensas</th>
-              <th>Bloqueos</th>
-              <th>Última vista</th>
+              <th class="sortable" onclick="sortIpTable('ip')">IP <span class="sort-indicator" data-key="ip"></span></th>
+              <th>País</th>
+              <th class="sortable" onclick="sortIpTable('reverse_dns')">Reverse DNS <span class="sort-indicator" data-key="reverse_dns"></span></th>
+              <th class="sortable" onclick="sortIpTable('offenses')">Ofensas <span class="sort-indicator" data-key="offenses"></span></th>
+              <th class="sortable" onclick="sortIpTable('blocks')">Bloqueos <span class="sort-indicator" data-key="blocks"></span></th>
+              <th class="sortable" onclick="sortIpTable('last_seen')">Última vista <span class="sort-indicator" data-key="last_seen"></span></th>
               <th></th>
             </tr>
           </thead>
           <tbody id="ip-table">
-            <tr><td colspan="6" class="muted">Cargando...</td></tr>
+            <tr><td colspan="7" class="muted">Cargando...</td></tr>
           </tbody>
         </table>
       </div>
@@ -789,6 +813,7 @@
         <label>Tipo</label>
         <select name="type">
           <option value="opnsense">OPNsense</option>
+          <option value="pfsense">pfSense (pfrest)</option>
         </select>
       </div>
       <div>
@@ -836,6 +861,7 @@ let editingPortRuleIndex = null;
 let ipPluginChart = null;
 let rulesCache = [];
 let editingRuleId = null;
+let autoRefreshTimer = null;
 const editModal = document.getElementById('edit-modal');
 const editForm = document.getElementById('edit-form');
 const syncPreferenceKey = 'mimosa_sync_with_firewall';
@@ -874,7 +900,32 @@ function switchTab(tab) {
   }
   if (tab === 'plugins') {
     loadPlugins();
+    if (!document.querySelector('.plugin-tab-btn.active')) {
+      switchPluginTab('proxytrap');
+    }
   }
+}
+
+function switchPluginTab(tab) {
+  document.querySelectorAll('.plugin-tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.pluginTab === tab);
+  });
+  document.querySelectorAll('.plugin-panel').forEach(panel => {
+    panel.classList.toggle('active', panel.id === `plugin-${tab}`);
+  });
+}
+
+function refreshActiveTab() {
+  const active = document.querySelector('.tab-btn.active');
+  if (!active) return;
+  const tab = active.dataset.tab;
+  if (tab === 'blocks') refreshBlocks();
+  if (tab === 'offenses') { loadOffenses(); loadRules(); }
+  if (tab === 'ips') loadIps();
+  if (tab === 'whitelist') { loadWhitelist(); loadBlacklist(); }
+  if (tab === 'firewall') { loadFirewallAliases(); loadFirewallRules(); }
+  if (tab === 'plugins') loadPlugins();
+  if (tab === 'config') { loadBlockingSettings(); loadFirewalls(); }
 }
 
 function closeEditModal() {
@@ -2039,43 +2090,50 @@ async function loadOffenses() {
     tbody.innerHTML = '<tr><td colspan="6" class="muted">No hay ofensas registradas.</td></tr>';
     return;
   }
-  if (!rulesCache.length) {
-    await loadRules();
-  }
+  const hasBackendStatus = data.some(item => item.escalation_status);
+  let countsByIp = {};
   let blocksByIp = {};
-  try {
-    const resIps = await fetch('/api/ips?limit=200');
-    if (resIps.ok) {
-      const ips = await resIps.json();
-      blocksByIp = ips.reduce((acc, item) => {
-        acc[item.ip] = item.blocks || 0;
-        return acc;
-      }, {});
+  if (!hasBackendStatus) {
+    if (!rulesCache.length) {
+      await loadRules();
     }
-  } catch (error) {
-    blocksByIp = {};
-  }
+    try {
+      const resIps = await fetch('/api/ips?limit=200');
+      if (resIps.ok) {
+        const ips = await resIps.json();
+        blocksByIp = ips.reduce((acc, item) => {
+          acc[item.ip] = item.blocks || 0;
+          return acc;
+        }, {});
+      }
+    } catch (error) {
+      blocksByIp = {};
+    }
 
-  const now = Date.now();
-  const countsByIp = data.reduce((acc, offense) => {
-    const ip = offense.source_ip;
-    if (!acc[ip]) {
-      acc[ip] = { total: 0, last_hour: 0 };
-    }
-    acc[ip].total += 1;
-    const createdAt = Date.parse(offense.created_at);
-    if (!Number.isNaN(createdAt) && now - createdAt <= 3600 * 1000) {
-      acc[ip].last_hour += 1;
-    }
-    return acc;
-  }, {});
+    const latestTimestamp = Math.max(
+      ...data.map(item => Date.parse(item.created_at)).filter(ts => !Number.isNaN(ts))
+    );
+    const referenceTime = Number.isFinite(latestTimestamp) ? latestTimestamp : Date.now();
+    countsByIp = data.reduce((acc, offense) => {
+      const ip = offense.source_ip;
+      if (!acc[ip]) {
+        acc[ip] = { total: 0, last_hour: 0 };
+      }
+      acc[ip].total += 1;
+      const createdAt = Date.parse(offense.created_at);
+      if (!Number.isNaN(createdAt) && referenceTime - createdAt <= 3600 * 1000) {
+        acc[ip].last_hour += 1;
+      }
+      return acc;
+    }, {});
+  }
 
   data.forEach(item => {
     const row = document.createElement('tr');
     const safeReason = JSON.stringify(item.description_clean || item.description || '');
     const plugin = item.plugin || 'desconocido';
     const description = item.description_clean || item.description || '-';
-    const status = evaluateOffenseStatus(item, countsByIp, blocksByIp);
+    const status = item.escalation_status || evaluateOffenseStatus(item, countsByIp, blocksByIp);
     if (status === 'direct') {
       row.classList.add('offense-direct');
     } else if (status === 'warning') {
@@ -2111,6 +2169,7 @@ function evaluateOffenseStatus(offense, countsByIp, blocksByIp) {
   const eventId = offense.context?.event_id || offense.context?.eventId || '';
   const severity = offense.severity || '';
   const description = offense.description || '';
+  const descriptionClean = offense.description_clean || description;
   const counts = countsByIp[offense.source_ip] || { total: 0, last_hour: 0 };
   const totalBlocks = blocksByIp[offense.source_ip] || 0;
 
@@ -2119,7 +2178,9 @@ function evaluateOffenseStatus(offense, countsByIp, blocksByIp) {
     if (!globMatch(rule.plugin, plugin)) continue;
     if (!globMatch(rule.event_id, eventId)) continue;
     if (!globMatch(rule.severity, severity)) continue;
-    if (!globMatch(rule.description, description)) continue;
+    const matchesDescription = globMatch(rule.description, description)
+      || globMatch(rule.description, descriptionClean);
+    if (!matchesDescription) continue;
 
     const thresholds = [
       { value: counts.last_hour, ruleValue: rule.min_last_hour },
@@ -2330,19 +2391,70 @@ function updateOffenseMessage(text, color = '') {
   message.style.color = color;
 }
 
-async function loadIps() {
-  const res = await fetch('/api/ips');
-  const data = await res.json();
+let ipSortKey = 'last_seen';
+let ipSortDir = 'desc';
+let ipCache = [];
+
+function sortIpTable(key) {
+  if (ipSortKey === key) {
+    ipSortDir = ipSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    ipSortKey = key;
+    ipSortDir = key === 'last_seen' ? 'desc' : 'asc';
+  }
+  renderIps();
+}
+
+function updateIpSortIndicators() {
+  document.querySelectorAll('.sort-indicator').forEach(indicator => {
+    const key = indicator.dataset.key;
+    if (key === ipSortKey) {
+      indicator.textContent = ipSortDir === 'asc' ? '▲' : '▼';
+    } else {
+      indicator.textContent = '';
+    }
+  });
+}
+
+function renderIps() {
   const tbody = document.getElementById('ip-table');
   tbody.innerHTML = '';
-  if (!data.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="muted">No hay IPs registradas aún.</td></tr>';
+  if (!ipCache.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">No hay IPs registradas aún.</td></tr>';
+    updateIpSortIndicators();
     return;
   }
-  data.forEach(item => {
+
+  const sorted = [...ipCache].sort((a, b) => {
+    let av = a[ipSortKey];
+    let bv = b[ipSortKey];
+    if (ipSortKey === 'offenses' || ipSortKey === 'blocks') {
+      av = Number(av || 0);
+      bv = Number(bv || 0);
+      return av - bv;
+    }
+    if (ipSortKey === 'last_seen') {
+      av = Date.parse(av || '') || 0;
+      bv = Date.parse(bv || '') || 0;
+      return av - bv;
+    }
+    av = (av || '').toString().toLowerCase();
+    bv = (bv || '').toString().toLowerCase();
+    return av.localeCompare(bv, undefined, { numeric: true });
+  });
+
+  if (ipSortDir === 'desc') {
+    sorted.reverse();
+  }
+
+  sorted.forEach(item => {
+    const geo = parseGeoMeta(item.geo);
+    const flag = geo.code ? countryCodeToFlag(geo.code) : '—';
+    const countryLabel = geo.country || 'Sin datos';
     const row = document.createElement('tr');
     row.innerHTML = `
       <td>${item.ip}</td>
+      <td><span class="flag-badge" title="${countryLabel}">${flag}</span></td>
       <td>${item.reverse_dns || '-'}</td>
       <td>${item.offenses}</td>
       <td>${item.blocks}</td>
@@ -2354,6 +2466,42 @@ async function loadIps() {
     `;
     tbody.appendChild(row);
   });
+
+  updateIpSortIndicators();
+}
+
+function parseGeoMeta(raw) {
+  if (!raw) return { country: '', code: '' };
+  if (typeof raw === 'object') {
+    return {
+      country: raw.country || '',
+      code: (raw.country_code || raw.countryCode || '').toUpperCase(),
+    };
+  }
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return parseGeoMeta(parsed);
+    } catch (error) {
+      return { country: '', code: '' };
+    }
+  }
+  return { country: '', code: '' };
+}
+
+function countryCodeToFlag(code) {
+  if (!code || code.length !== 2) return '—';
+  const base = 0x1F1E6;
+  const first = code.charCodeAt(0) - 65 + base;
+  const second = code.charCodeAt(1) - 65 + base;
+  return String.fromCodePoint(first, second);
+}
+
+async function loadIps() {
+  const res = await fetch('/api/ips');
+  const data = await res.json();
+  ipCache = Array.isArray(data) ? data : [];
+  renderIps();
 }
 
 async function showIpDetail(ip) {
@@ -2634,5 +2782,7 @@ loadIps();
 loadWhitelist();
 loadBlacklist();
 loadPlugins();
+if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+autoRefreshTimer = setInterval(refreshActiveTab, 30000);
 </script>
 {% endblock %}

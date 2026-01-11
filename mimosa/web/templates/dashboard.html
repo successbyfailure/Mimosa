@@ -1,5 +1,30 @@
 {% extends "base.html" %}
 {% block content %}
+<style>
+  .dash-tabs { display:flex; gap:10px; margin-bottom:18px; flex-wrap:wrap; }
+  .dash-tab { background: rgba(255,255,255,.05); color: var(--text); border: 1px solid rgba(255,255,255,.08); padding: 8px 14px; border-radius: 12px; cursor:pointer; font-weight:700; }
+  .dash-tab.active { background: linear-gradient(120deg, #38bdf8, #6366f1); color:white; box-shadow: 0 10px 30px rgba(99,102,241,.35); }
+  .dash-panel { display:none; }
+  .dash-panel.active { display:block; }
+  .heatmap-card { background: rgba(17,24,39,.75); border-radius: 16px; padding: 16px; border: 1px solid rgba(255,255,255,.05); }
+  .heatmap-grid { display: grid; grid-template-columns: 1.4fr 0.6fr; gap: 14px; align-items: start; margin-top: 12px; }
+  .heatmap-map { width: 100%; height: 380px; border-radius: 12px; border: 1px solid rgba(255,255,255,.06); overflow: hidden; }
+  .heatmap-rank { border: 1px solid rgba(255,255,255,.06); border-radius: 12px; padding: 12px; background: rgba(15,23,42,.6); }
+  .heatmap-rank table { width: 100%; border-collapse: collapse; }
+  .heatmap-rank th, .heatmap-rank td { padding: 6px 8px; font-size: 12px; text-align: left; }
+  .heatmap-flag { font-size: 16px; }
+  .heatmap-label { background: rgba(15,23,42,.85); color: #fef08a; border: 1px solid rgba(251,191,36,.6); border-radius: 10px; padding: 2px 6px; font-size: 11px; font-weight: 700; box-shadow: 0 6px 18px rgba(0,0,0,.35); }
+  @media (max-width: 900px) { .heatmap-grid { grid-template-columns: 1fr; } }
+  @media (max-width: 640px) { .heatmap-map { height: 280px; } }
+</style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+
+<div class="dash-tabs">
+  <button class="dash-tab active" data-tab="overview" onclick="switchDashTab('overview')">Resumen</button>
+  <button class="dash-tab" data-tab="map" onclick="switchDashTab('map')">Mapa</button>
+</div>
+
+<section id="dash-overview" class="dash-panel active">
 <section class="grid stats space">
   <div class="card">
     <h2>Ofensas totales (&gt;=)</h2>
@@ -129,10 +154,52 @@
     </div>
   </div>
 </section>
+</section>
 
+<section id="dash-map" class="dash-panel">
+  <div class="heatmap-card">
+    <div class="flex space" style="align-items:flex-start; justify-content:space-between;">
+      <div>
+        <h2 style="margin:0">Mapa de calor</h2>
+        <div class="muted">Concentración de ofensas por geolocalización registrada.</div>
+      </div>
+      <button class="secondary" onclick="loadHeatmap()">Actualizar</button>
+    </div>
+    <div class="heatmap-grid">
+      <div>
+        <div id="heatmap-map" class="heatmap-map"></div>
+        <div id="heatmap-message" class="muted" style="margin-top:10px;"></div>
+      </div>
+      <div class="heatmap-rank">
+        <div class="flex space" style="align-items:center;">
+          <h3 style="margin:0">Bloqueos por país</h3>
+          <span id="heatmap-rank-message" class="muted"></span>
+        </div>
+        <div style="max-height:340px; overflow:auto; margin-top:8px;">
+          <table>
+            <thead>
+              <tr>
+                <th>País</th>
+                <th>Bloqueos</th>
+              </tr>
+            </thead>
+            <tbody id="blocks-country-table">
+              <tr><td colspan="2" class="muted">Cargando...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
 let offenseChart, blockChart;
 let statsCache = null;
+let heatmapMap = null;
+let heatmapLayer = null;
+let heatmapLabels = null;
 
 function buildChart(ctx, label, data, borderColor) {
   return new Chart(ctx, {
@@ -160,6 +227,14 @@ function updateStatsCards(offenses = {}, blocks = {}) {
 function cleanCharts() {
   if (offenseChart) offenseChart.destroy();
   if (blockChart) blockChart.destroy();
+}
+
+function switchDashTab(tab) {
+  document.querySelectorAll('.dash-tab').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
+  document.querySelectorAll('.dash-panel').forEach(panel => panel.classList.toggle('active', panel.id === `dash-${tab}`));
+  if (tab === 'map') {
+    loadHeatmap();
+  }
 }
 
 function renderCharts(offenseRange, blockRange) {
@@ -290,6 +365,136 @@ function loadPluginStats() {
   loadPortDetectorStats();
 }
 
+function initHeatmap() {
+  const container = document.getElementById('heatmap-map');
+  if (!container || heatmapMap) return;
+  heatmapMap = L.map(container, { zoomControl: true, scrollWheelZoom: false }).setView([20, 0], 2);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: '&copy; OpenStreetMap contributors',
+  }).addTo(heatmapMap);
+  heatmapLayer = L.layerGroup().addTo(heatmapMap);
+  heatmapLabels = L.layerGroup().addTo(heatmapMap);
+}
+
+function drawHeatmap(points) {
+  initHeatmap();
+  if (!heatmapLayer || !heatmapLabels) return;
+  heatmapLayer.clearLayers();
+  heatmapLabels.clearLayers();
+  if (!points.length) {
+    return;
+  }
+
+  const maxCount = Math.max(...points.map(p => p.count || 1), 1);
+  const bounds = [];
+  points.forEach(point => {
+    const lat = Number(point.lat);
+    const lon = Number(point.lon);
+    if (Number.isNaN(lat) || Number.isNaN(lon)) return;
+    const intensity = Math.min((point.count || 1) / maxCount, 1);
+    const radius = 20000 + intensity * 80000;
+    const color = `rgba(248, 113, 113, ${0.2 + 0.5 * intensity})`;
+    const circle = L.circle([lat, lon], {
+      radius,
+      color: 'rgba(248, 113, 113, 0.6)',
+      fillColor: color,
+      fillOpacity: 0.6,
+      weight: 1,
+    });
+    circle.addTo(heatmapLayer);
+    const label = L.marker([lat, lon], {
+      icon: L.divIcon({
+        className: 'heatmap-label',
+        html: `${point.count || 0}`,
+        iconSize: [32, 20],
+      }),
+    });
+    label.addTo(heatmapLabels);
+    bounds.push([lat, lon]);
+  });
+
+  if (bounds.length) {
+    heatmapMap.fitBounds(bounds, { padding: [20, 20] });
+  }
+}
+
+function countryCodeToFlag(code) {
+  if (!code || code.length !== 2) return '—';
+  const base = 0x1F1E6;
+  const first = code.charCodeAt(0) - 65 + base;
+  const second = code.charCodeAt(1) - 65 + base;
+  return String.fromCodePoint(first, second);
+}
+
+function renderBlocksByCountry(items) {
+  const tbody = document.getElementById('blocks-country-table');
+  tbody.innerHTML = '';
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="2" class="muted">Sin datos.</td></tr>';
+    return;
+  }
+  items.forEach(item => {
+    const flag = item.country_code ? countryCodeToFlag(item.country_code.toUpperCase()) : '—';
+    const country = item.country || 'Sin datos';
+    const row = document.createElement('tr');
+    row.innerHTML = `<td><span class="heatmap-flag" title="${country}">${flag}</span> ${country}</td><td>${item.blocks}</td>`;
+    tbody.appendChild(row);
+  });
+}
+
+async function loadBlocksByCountry() {
+  const message = document.getElementById('heatmap-rank-message');
+  if (message) message.textContent = '';
+  try {
+    const res = await fetch('/api/offenses/blocks_by_country?limit=10&profile_limit=2000');
+    if (!res.ok) {
+      throw new Error('No se pudo cargar el ranking.');
+    }
+    const data = await res.json();
+    renderBlocksByCountry(data.countries || []);
+    if (message) {
+      message.textContent = (data.countries || []).length ? '' : 'Sin datos';
+    }
+  } catch (error) {
+    const tbody = document.getElementById('blocks-country-table');
+    tbody.innerHTML = '<tr><td colspan="2" class="muted">Error al cargar.</td></tr>';
+    if (message) message.textContent = 'Error';
+  }
+}
+
+async function loadHeatmap() {
+  const message = document.getElementById('heatmap-message');
+  if (message) {
+    message.textContent = 'Cargando datos...';
+    message.style.color = '';
+  }
+  try {
+    const res = await fetch('/api/offenses/heatmap?limit=300');
+    if (!res.ok) {
+      throw new Error('No se pudo cargar el mapa.');
+    }
+    const data = await res.json();
+    const points = data.points || [];
+    drawHeatmap(points);
+    if (message) {
+      if (!points.length) {
+        message.textContent = 'Sin datos de geolocalización. Completa geo en perfiles de IP para ver el mapa.';
+        message.style.color = '#fbbf24';
+      } else {
+        message.textContent = `Puntos: ${points.length} · Perfiles: ${data.total_profiles || 0}`;
+        message.style.color = '#67e8f9';
+      }
+    }
+    loadBlocksByCountry();
+  } catch (error) {
+    if (message) {
+      message.textContent = 'Error al cargar el mapa.';
+      message.style.color = '#fca5a5';
+    }
+  }
+}
+
 document.getElementById('offenses-range-selector').addEventListener('change', (e) => {
   renderCharts(e.target.value, document.getElementById('blocks-range-selector').value);
 });
@@ -300,5 +505,13 @@ document.getElementById('blocks-range-selector').addEventListener('change', (e) 
 
 loadStats();
 loadPluginStats();
+setInterval(loadStats, 60000);
+setInterval(loadPluginStats, 120000);
+setInterval(() => {
+  const active = document.querySelector('.dash-panel.active');
+  if (active && active.id === 'dash-map') {
+    loadHeatmap();
+  }
+}, 120000);
 </script>
 {% endblock %}

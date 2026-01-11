@@ -7,12 +7,14 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Optional
 
+import os
 import httpx
 from mimosa.core.api import FirewallGateway
 
 TEMPORAL_ALIAS_NAME = "mimosa_temporal_list"
 BLACKLIST_ALIAS_NAME = "mimosa_blacklist"
 WHITELIST_ALIAS_NAME = "mimosa_whitelist"
+MIMOSA_IP_ALIAS_NAME = "mimosa_host"
 PORT_ALIAS_NAMES = {"tcp": "mimosa_ports_tcp", "udp": "mimosa_ports_udp"}
 FIREWALL_RULE_DESCRIPTIONS = {
     "whitelist": "Mimosa - Whitelist (allow)",
@@ -24,16 +26,19 @@ FIREWALL_RULE_SPECS = {
         "alias_name": WHITELIST_ALIAS_NAME,
         "action": "pass",
         "sequence": 1,
+        "enabled": True,
     },
     "temporal": {
         "alias_name": TEMPORAL_ALIAS_NAME,
         "action": "block",
         "sequence": 2,
+        "enabled": False,
     },
     "blacklist": {
         "alias_name": BLACKLIST_ALIAS_NAME,
         "action": "block",
         "sequence": 3,
+        "enabled": False,
     },
 }
 
@@ -127,6 +132,21 @@ class _BaseSenseClient(FirewallGateway):
             return status
         status["available"] = True
 
+        mimosa_ip_value = os.getenv("MIMOSA_IP")
+        mimosa_ip_created = False
+        if mimosa_ip_value:
+            mimosa_ip_created = self._ensure_alias_exists(
+                MIMOSA_IP_ALIAS_NAME, "Mimosa host"
+            )
+            try:
+                self._block_ip_backend(
+                    mimosa_ip_value,
+                    "Mimosa host",
+                    alias_name=MIMOSA_IP_ALIAS_NAME,
+                )
+            except NotImplementedError:
+                pass
+
         whitelist_created = self._ensure_alias_exists(
             WHITELIST_ALIAS_NAME, "Mimosa whitelist"
         )
@@ -137,12 +157,20 @@ class _BaseSenseClient(FirewallGateway):
             self.blacklist_alias, "Mimosa blacklist"
         )
         status["alias_ready"] = True
-        status["alias_created"] = whitelist_created or temporal_created or blacklist_created
+        status["alias_created"] = (
+            mimosa_ip_created or whitelist_created or temporal_created or blacklist_created
+        )
         status["alias_details"] = {
             "whitelist": {"name": WHITELIST_ALIAS_NAME, "created": whitelist_created},
             "temporal": {"name": self.temporal_alias, "created": temporal_created},
             "blacklist": {"name": self.blacklist_alias, "created": blacklist_created},
         }
+        if mimosa_ip_value:
+            status["alias_details"]["mimosa_host"] = {
+                "name": MIMOSA_IP_ALIAS_NAME,
+                "created": mimosa_ip_created,
+                "value": mimosa_ip_value,
+            }
 
         ports_status: Dict[str, Dict[str, bool]] = {}
         try:
@@ -259,12 +287,23 @@ class _BaseSenseClient(FirewallGateway):
     def list_blacklist(self) -> List[str]:
         return self._list_alias_values(self.blacklist_alias)
 
+    def list_whitelist(self) -> List[str]:
+        return self._list_alias_values(self.whitelist_alias)
+
     def add_to_blacklist(self, ip: str, reason: str = "") -> None:
         self._block_ip_backend(ip, reason, alias_name=self.blacklist_alias)
         self._apply_changes_if_enabled()
 
+    def add_to_whitelist(self, ip: str, reason: str = "") -> None:
+        self._block_ip_backend(ip, reason, alias_name=self.whitelist_alias)
+        self._apply_changes_if_enabled()
+
     def remove_from_blacklist(self, ip: str) -> None:
         self._unblock_ip_backend(ip, alias_name=self.blacklist_alias)
+        self._apply_changes_if_enabled()
+
+    def remove_from_whitelist(self, ip: str) -> None:
+        self._unblock_ip_backend(ip, alias_name=self.whitelist_alias)
         self._apply_changes_if_enabled()
 
     def _block_ip_backend(self, ip: str, reason: str, *, alias_name: str) -> None:
@@ -609,7 +648,8 @@ class OPNsenseClient(_BaseSenseClient):
         action: str = "block",
         interface: str = "wan",
         log: bool = True,
-        sequence: Optional[int] = None
+        sequence: Optional[int] = None,
+        enabled: bool = True,
     ) -> str:
         """Crea una regla de firewall para un alias.
 
@@ -625,7 +665,7 @@ class OPNsenseClient(_BaseSenseClient):
             UUID de la regla creada
         """
         rule_data = {
-            "enabled": "1",
+            "enabled": "1" if enabled else "0",
             "action": action,
             "quick": "1",
             "interface": interface,
@@ -728,6 +768,7 @@ class OPNsenseClient(_BaseSenseClient):
                         action=spec["action"],
                         interface=interface,
                         sequence=spec["sequence"],
+                        enabled=bool(spec.get("enabled", True)),
                     )
                     created[rule_type] = True
                 except Exception as exc:

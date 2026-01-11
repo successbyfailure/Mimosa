@@ -49,35 +49,44 @@ class OffenseRule:
         total_blocks: int,
     ) -> bool:
         """Comprueba si la regla aplica al evento y cumple umbrales."""
-
-        def _is_wildcard(field: str) -> bool:
-            return field == "*" or field == ""
-
-        def _match(field: str, value: str) -> bool:
-            if _is_wildcard(field):
-                return True
-            if "*" in field or "?" in field:
-                return fnmatchcase(value, field)
-            return field == value
-
-        def _passes_threshold(observed: int, threshold: int) -> bool:
-            if threshold <= 0:
-                return True
-            return observed > threshold
-
-        if not _match(self.plugin, event.plugin):
-            return False
-        if not _match(self.event_id, event.event_id):
-            return False
-        if not _match(self.severity, event.severity):
-            return False
-        if not _match(self.description, event.description):
-            return False
-        return (
-            _passes_threshold(last_hour, self.min_last_hour)
-            and _passes_threshold(total, self.min_total)
-            and _passes_threshold(total_blocks, self.min_blocks_total)
+        return self.matches_fields(event) and self.passes_thresholds(
+            last_hour=last_hour,
+            total=total,
+            total_blocks=total_blocks,
         )
+
+    def matches_fields(self, event: OffenseEvent) -> bool:
+        if not self._match(self.plugin, event.plugin):
+            return False
+        if not self._match(self.event_id, event.event_id):
+            return False
+        if not self._match(self.severity, event.severity):
+            return False
+        if not self._match(self.description, event.description):
+            return False
+        return True
+
+    def passes_thresholds(self, *, last_hour: int, total: int, total_blocks: int) -> bool:
+        return (
+            self._passes_threshold(last_hour, self.min_last_hour)
+            and self._passes_threshold(total, self.min_total)
+            and self._passes_threshold(total_blocks, self.min_blocks_total)
+        )
+
+    def _is_wildcard(self, field: str) -> bool:
+        return field == "*" or field == ""
+
+    def _match(self, field: str, value: str) -> bool:
+        if self._is_wildcard(field):
+            return True
+        if "*" in field or "?" in field:
+            return fnmatchcase(value, field)
+        return field == value
+
+    def _passes_threshold(self, observed: int, threshold: int) -> bool:
+        if threshold <= 0:
+            return True
+        return observed > threshold
 
     def reason_for(
         self, event: OffenseEvent, *, last_hour: int, total: int, total_blocks: int
@@ -200,6 +209,7 @@ class RuleManager:
     def process_offense(self, event: OffenseEvent) -> Optional[BlockEntry]:
         """Evalúa las reglas y aplica el primer bloqueo coincidente."""
 
+        self.block_manager.purge_expired(firewall_gateway=self.firewall_gateway)
         if event.source_ip in self.block_manager._blocks:  # pragma: no cover - acceso intencional
             return self.block_manager._blocks[event.source_ip]
 

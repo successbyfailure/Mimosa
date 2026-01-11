@@ -96,6 +96,11 @@ Incluye:
 
 **Ideal para:** Integración con OPNsense, desarrollo de features
 
+### pfSense (pfrest)
+**Documentación externa:** https://pfrest.org/
+
+**Ideal para:** Integración con pfSense usando pfrest
+
 ---
 
 ## 🔌 Documentación de Plugins

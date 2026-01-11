@@ -16,7 +16,7 @@ La *Mimosa pudica* repliega sus hojas al mínimo contacto. Mimosa replica esta r
 
 ## ✨ Características
 
-- 🔥 **Integración OPNsense** - Control directo de alias y reglas de firewall
+- 🔥 **Integración OPNsense/pfSense** - Control directo de alias y reglas de firewall
 - 🎛️ **Gestión de Reglas** - Activar/desactivar reglas de bloqueo desde la UI sin acceder a OPNsense
 - 🔍 **Detección de Puertos** - Identifica escaneos y conexiones sospechosas
 - 🌐 **Proxy Trap** - Detecta acceso a dominios no autorizados
@@ -61,19 +61,42 @@ El archivo `.env` contiene las variables de configuración. Las más importantes
 
 ```env
 # Firewall inicial (opcional - también configurable desde UI)
-INITIAL_FIREWALL_NAME=mi-opnsense
-INITIAL_FIREWALL_TYPE=opnsense
+INITIAL_FIREWALL_NAME=mi-firewall
+INITIAL_FIREWALL_TYPE=opnsense # o pfsense (pfrest)
 INITIAL_FIREWALL_BASE_URL=https://firewall.local
 INITIAL_FIREWALL_API_KEY=tu_api_key
 INITIAL_FIREWALL_API_SECRET=tu_api_secret
 
 # Base de datos
 MIMOSA_DB_PATH=data/mimosa.db
+
+# GeoIP (opcional)
+MIMOSA_GEOIP_ENABLED=false
+MIMOSA_GEOIP_PROVIDER=ip-api
+MIMOSA_GEOIP_ENDPOINT=http://ip-api.com/json
+
+# IP del servidor Mimosa (opcional)
+MIMOSA_IP=
 ```
+
+Notas pfSense (pfrest):
+- Usa una API key de pfrest (se envía como `X-API-Key`).
+- `API_SECRET` puede dejarse vacío si solo usas API key.
+
+Alias mimosa_host:
+- Si defines `MIMOSA_IP`, Mimosa creará el alias `mimosa_host` en el firewall con esa IP.
+- Úsalo como destino en tus reglas NAT/port forward de TCP/UDP.
 
 ### Actualización Automática
 
 Watchtower actualiza la imagen automáticamente cada 60 segundos. Para deshabilitarlo, comenta el servicio `watchtower` en `docker-compose.yml`.
+
+### GeoIP (ip-api)
+
+Mimosa consulta `ip-api.com` directamente cuando `MIMOSA_GEOIP_ENABLED=true`. Para usarlo:
+1. Activa `MIMOSA_GEOIP_ENABLED=true` en `.env`
+2. Usa `MIMOSA_GEOIP_ENDPOINT=http://ip-api.com/json`
+3. Reinicia la stack y refresca IPs desde el panel
 
 ## 🔌 Plugins
 

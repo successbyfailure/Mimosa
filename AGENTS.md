@@ -3,7 +3,7 @@
 Este archivo aplica a todo el repositorio Mimosa. Úsalo como referencia rápida para ejecutar, contribuir y mantener coherencia en los cambios.
 
 ## Propósito y alcance
-Mimosa es un núcleo de defensa para homelabs que coordina bloqueos temporales contra OPNsense. Aquí se documentan normas y atajos para cualquiera que toque el código o la infraestructura de este repo.
+Mimosa es un núcleo de defensa para homelabs que coordina bloqueos temporales contra OPNsense o pfSense (pfrest). Aquí se documentan normas y atajos para cualquiera que toque el código o la infraestructura de este repo.
 
 ## Ejecución rápida
 - Requisitos: Python 3.11+ recomendado.
@@ -19,7 +19,8 @@ Mimosa es un núcleo de defensa para homelabs que coordina bloqueos temporales c
 
 ## Configuración inicial y variables de entorno
 - Variables `INITIAL_FIREWALL_*` permiten crear un firewall inicial automáticamente (usadas por la UI).
-- Las credenciales de OPNsense se leen del entorno (ver `env.example`).
+- Las credenciales de OPNsense o pfSense se leen del entorno (ver `env.example`).
+- `MIMOSA_IP` crea el alias `mimosa_host` en el firewall para usarlo en reglas NAT/port forwards.
 
 ## Documentación de APIs
 - OPNsense: https://docs.opnsense.org/development/api.html

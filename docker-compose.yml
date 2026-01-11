@@ -1,7 +1,7 @@
 services:
   mimosa:
     image: ghcr.io/successbyfailure/mimosa:latest
-    build: . 
+    build: .
     container_name: mimosa
     network_mode: host
     labels:

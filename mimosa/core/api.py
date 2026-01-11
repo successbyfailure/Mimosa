@@ -136,13 +136,28 @@ class FirewallGateway:
 
         raise NotImplementedError
 
+    def list_whitelist(self) -> List[str]:
+        """Devuelve las IPs permitidas de forma permanente."""
+
+        raise NotImplementedError
+
     def add_to_blacklist(self, ip: str, reason: str = "") -> None:
         """Añade una IP a la lista negra permanente."""
 
         raise NotImplementedError
 
+    def add_to_whitelist(self, ip: str, reason: str = "") -> None:
+        """Añade una IP a la whitelist permanente."""
+
+        raise NotImplementedError
+
     def remove_from_blacklist(self, ip: str) -> None:
         """Elimina una IP de la lista negra permanente."""
+
+        raise NotImplementedError
+
+    def remove_from_whitelist(self, ip: str) -> None:
+        """Elimina una IP de la whitelist permanente."""
 
         raise NotImplementedError
 
