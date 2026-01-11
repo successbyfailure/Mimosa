@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.28
+- **OPNsense**: fija la carga de alias de whitelist para evitar error en `/api/firewalls/{id}/aliases`.
+
 ## 1.3.27
 - **UI**: banderas de país en inspector de IPs y ranking de bloqueos en mapa.
 

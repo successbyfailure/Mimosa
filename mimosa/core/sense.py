@@ -67,6 +67,7 @@ class _BaseSenseClient(FirewallGateway):
         self.alias_name = TEMPORAL_ALIAS_NAME
         self.temporal_alias = TEMPORAL_ALIAS_NAME
         self.blacklist_alias = BLACKLIST_ALIAS_NAME
+        self.whitelist_alias = WHITELIST_ALIAS_NAME
         self.ports_alias_names = dict(PORT_ALIAS_NAMES)
         self._client = client or self._build_client(
             sanitized_url, api_key, api_secret, verify_ssl, timeout
