@@ -161,9 +161,18 @@
     <div class="flex space" style="align-items:flex-start; justify-content:space-between;">
       <div>
         <h2 style="margin:0">Mapa de calor</h2>
-        <div class="muted">Concentración de ofensas por geolocalización registrada.</div>
+        <div class="muted">Concentración de bloqueos por geolocalización registrada.</div>
       </div>
-      <button class="secondary" onclick="loadHeatmap()">Actualizar</button>
+      <div class="flex">
+        <select id="heatmap-window" style="max-width: 190px;">
+          <option value="current">Bloqueos actuales</option>
+          <option value="24h">Últimas 24 horas</option>
+          <option value="week">Última semana</option>
+          <option value="month">Último mes</option>
+          <option value="total" selected>Total histórico</option>
+        </select>
+        <button class="secondary" onclick="loadHeatmap()">Actualizar</button>
+      </div>
     </div>
     <div class="heatmap-grid">
       <div>
@@ -443,11 +452,11 @@ function renderBlocksByCountry(items) {
   });
 }
 
-async function loadBlocksByCountry() {
+async function loadBlocksByCountry(windowValue) {
   const message = document.getElementById('heatmap-rank-message');
   if (message) message.textContent = '';
   try {
-    const res = await fetch('/api/offenses/blocks_by_country?limit=10&profile_limit=2000');
+    const res = await fetch(`/api/offenses/blocks_by_country?limit=10&window=${windowValue}`);
     if (!res.ok) {
       throw new Error('No se pudo cargar el ranking.');
     }
@@ -463,14 +472,20 @@ async function loadBlocksByCountry() {
   }
 }
 
+function resolveHeatmapWindow() {
+  const selector = document.getElementById('heatmap-window');
+  return selector ? selector.value : 'total';
+}
+
 async function loadHeatmap() {
+  const windowValue = resolveHeatmapWindow();
   const message = document.getElementById('heatmap-message');
   if (message) {
     message.textContent = 'Cargando datos...';
     message.style.color = '';
   }
   try {
-    const res = await fetch('/api/offenses/heatmap?limit=300');
+    const res = await fetch(`/api/offenses/heatmap?limit=300&window=${windowValue}`);
     if (!res.ok) {
       throw new Error('No se pudo cargar el mapa.');
     }
@@ -486,7 +501,7 @@ async function loadHeatmap() {
         message.style.color = '#67e8f9';
       }
     }
-    loadBlocksByCountry();
+    loadBlocksByCountry(windowValue);
   } catch (error) {
     if (message) {
       message.textContent = 'Error al cargar el mapa.';
@@ -513,5 +528,9 @@ setInterval(() => {
     loadHeatmap();
   }
 }, 120000);
+
+document.getElementById('heatmap-window').addEventListener('change', () => {
+  loadHeatmap();
+});
 </script>
 {% endblock %}

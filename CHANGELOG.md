@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.32
+- **Dashboard**: mapa y ranking de bloqueos por rango temporal (actual, 24h, semana, mes, total).
+
 ## 1.3.31
 - **UI**: evita contenido mixto en cargas de Chart.js detrás de proxy HTTPS.
 

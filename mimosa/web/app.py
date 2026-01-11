@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from mimosa.core.api import FirewallGateway
 from mimosa.core.blocking import BlockEntry, BlockManager
-from mimosa.core.offenses import OffenseRecord, OffenseStore
+from mimosa.core.offenses import IpProfile, OffenseRecord, OffenseStore
 from mimosa.core.plugins import (
     MimosaNpmConfig,
     PluginConfigStore,
@@ -850,16 +850,52 @@ def create_app(
 
         return serialized
 
-    @app.get("/api/offenses/heatmap")
-    def offenses_heatmap(limit: int = 300) -> Dict[str, object]:
-        profiles = offense_store.list_ip_profiles(limit)
-        aggregated: Dict[str, Dict[str, float]] = {}
-        total_points = 0
+    def _resolve_blocks_window(window: str) -> tuple[List[BlockEntry], str]:
+        normalized = (window or "").lower()
+        label = "total"
+        if normalized in {"current", "actual", "activos"}:
+            label = "current"
+            return block_manager.list(), label
+        if normalized in {"24h", "24horas"}:
+            label = "24h"
+            cutoff = datetime.utcnow() - timedelta(hours=24)
+        elif normalized in {"week", "7d", "semana"}:
+            label = "week"
+            cutoff = datetime.utcnow() - timedelta(days=7)
+        elif normalized in {"month", "30d", "mes"}:
+            label = "month"
+            cutoff = datetime.utcnow() - timedelta(days=30)
+        else:
+            return block_manager.history(), label
+        return [entry for entry in block_manager.history() if entry.created_at >= cutoff], label
 
-        for profile in profiles:
+    @app.get("/api/offenses/heatmap")
+    def offenses_heatmap(limit: int = 300, window: str = "total") -> Dict[str, object]:
+        entries, window_label = _resolve_blocks_window(window)
+        aggregated: Dict[str, Dict[str, float]] = {}
+        ip_counts: Dict[str, int] = {}
+        profiles_seen = 0
+        total_points = 0
+        profile_cache: Dict[str, Optional[IpProfile]] = {}
+
+        if window_label == "current":
+            for entry in entries:
+                ip_counts[entry.ip] = ip_counts.get(entry.ip, 0) + 1
+        else:
+            for entry in entries:
+                ip_counts[entry.ip] = ip_counts.get(entry.ip, 0) + 1
+
+        for ip, count in ip_counts.items():
+            profile = profile_cache.get(ip)
+            if profile is None:
+                profile = offense_store.get_ip_profile(ip)
+                profile_cache[ip] = profile
+            if not profile:
+                continue
             point = _parse_geo_point(profile.geo)
             if not point:
                 continue
+            profiles_seen += 1
             key = f"{point['lat']:.4f},{point['lon']:.4f}"
             if key not in aggregated:
                 aggregated[key] = {
@@ -867,22 +903,37 @@ def create_app(
                     "lon": point["lon"],
                     "count": 0,
                 }
-            aggregated[key]["count"] += max(int(profile.offenses), 1)
+            aggregated[key]["count"] += max(int(count), 1)
             total_points += 1
 
+        points = list(aggregated.values())
+        points.sort(key=lambda item: item["count"], reverse=True)
+        if limit > 0:
+            points = points[:limit]
+
         return {
-            "points": list(aggregated.values()),
-            "total_profiles": len(profiles),
+            "points": points,
+            "total_profiles": profiles_seen,
             "points_count": total_points,
+            "window": window_label,
         }
 
     @app.get("/api/offenses/blocks_by_country")
-    def blocks_by_country(limit: int = 10, profile_limit: int = 2000) -> Dict[str, object]:
-        profiles = offense_store.list_ip_profiles(profile_limit)
+    def blocks_by_country(limit: int = 10, window: str = "total") -> Dict[str, object]:
+        entries, window_label = _resolve_blocks_window(window)
         aggregated: Dict[str, Dict[str, object]] = {}
+        ip_counts: Dict[str, int] = {}
+        profile_cache: Dict[str, Optional[IpProfile]] = {}
 
-        for profile in profiles:
-            if not profile.blocks:
+        for entry in entries:
+            ip_counts[entry.ip] = ip_counts.get(entry.ip, 0) + 1
+
+        for ip, count in ip_counts.items():
+            profile = profile_cache.get(ip)
+            if profile is None:
+                profile = offense_store.get_ip_profile(ip)
+                profile_cache[ip] = profile
+            if not profile:
                 continue
             meta = _parse_geo_country(profile.geo)
             if not meta:
@@ -898,10 +949,14 @@ def create_app(
                     "blocks": 0,
                 }
                 aggregated[key] = entry
-            entry["blocks"] = int(entry["blocks"]) + int(profile.blocks)
+            entry["blocks"] = int(entry["blocks"]) + int(count)
 
         ordered = sorted(aggregated.values(), key=lambda item: item["blocks"], reverse=True)
-        return {"countries": ordered[:limit], "total_profiles": len(profiles)}
+        return {
+            "countries": ordered[:limit],
+            "total_profiles": len(ip_counts),
+            "window": window_label,
+        }
     @app.post("/api/offenses", status_code=201)
     def create_offense(payload: OffenseInput) -> Dict[str, object]:
         context = payload.context.copy() if payload.context else {}
