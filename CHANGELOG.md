@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.29
+- **OPNsense**: normaliza entradas /32 en whitelist para evitar errores al añadir.
+
 ## 1.3.28
 - **OPNsense**: fija la carga de alias de whitelist para evitar error en `/api/firewalls/{id}/aliases`.
 

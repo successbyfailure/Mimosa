@@ -5,9 +5,9 @@ Proporciona métodos para añadir o eliminar direcciones en una tabla
 """
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Optional
-
+import ipaddress
 import os
+from typing import Dict, Iterable, List, Optional
 import httpx
 from mimosa.core.api import FirewallGateway
 
@@ -427,6 +427,41 @@ class OPNsenseClient(_BaseSenseClient):
                 f"/api/firewall/alias_util/add/{alias_name}",
                 json={"address": address},
             )
+
+    def _normalize_whitelist_address(self, address: str) -> str:
+        try:
+            network = ipaddress.ip_network(address, strict=False)
+        except ValueError:
+            return address
+        if network.prefixlen == network.max_prefixlen:
+            return str(network.network_address)
+        return str(network)
+
+    def add_to_whitelist(self, ip: str, reason: str = "") -> None:  # type: ignore[override]
+        normalized = self._normalize_whitelist_address(ip)
+        self._block_ip_backend(normalized, reason, alias_name=self.whitelist_alias)
+        self._apply_changes_if_enabled()
+
+    def remove_from_whitelist(self, ip: str) -> None:  # type: ignore[override]
+        normalized = self._normalize_whitelist_address(ip)
+        self._unblock_ip_backend(normalized, alias_name=self.whitelist_alias)
+        self._apply_changes_if_enabled()
+
+    def list_whitelist(self) -> List[str]:  # type: ignore[override]
+        entries = self._list_alias_values(self.whitelist_alias)
+        normalized = []
+        for entry in entries:
+            if "/" in entry:
+                normalized.append(entry)
+                continue
+            try:
+                ip = ipaddress.ip_address(entry)
+            except ValueError:
+                normalized.append(entry)
+                continue
+            suffix = "/128" if ip.version == 6 else "/32"
+            normalized.append(f"{entry}{suffix}")
+        return normalized
 
     def _list_ports_alias(self, protocol: str) -> List[str | int]:
         alias_name = self._ports_alias_name_for(protocol)
