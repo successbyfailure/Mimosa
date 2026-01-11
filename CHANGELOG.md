@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.33
+- **Dashboard**: deduplica países en ranking de bloqueos.
+
 ## 1.3.32
 - **Dashboard**: mapa y ranking de bloqueos por rango temporal (actual, 24h, semana, mes, total).
 

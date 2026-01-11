@@ -922,6 +922,7 @@ def create_app(
     def blocks_by_country(limit: int = 10, window: str = "total") -> Dict[str, object]:
         entries, window_label = _resolve_blocks_window(window)
         aggregated: Dict[str, Dict[str, object]] = {}
+        name_index: Dict[str, str] = {}
         ip_counts: Dict[str, int] = {}
         profile_cache: Dict[str, Optional[IpProfile]] = {}
 
@@ -938,17 +939,35 @@ def create_app(
             meta = _parse_geo_country(profile.geo)
             if not meta:
                 continue
-            key = meta.get("country_code") or meta.get("country")
+            country_name = (meta.get("country") or "").strip()
+            country_code = meta.get("country_code")
+            normalized_name = country_name.lower()
+            key = None
+            if country_code:
+                key = country_code.upper()
+            elif normalized_name:
+                key = name_index.get(normalized_name)
+                if not key:
+                    key = f"name:{normalized_name}"
             if not key:
                 continue
+            existing_key = name_index.get(normalized_name) if normalized_name else None
+            if country_code and existing_key and existing_key != key:
+                existing_entry = aggregated.pop(existing_key, None)
+                if existing_entry:
+                    aggregated[key] = existing_entry
             entry = aggregated.get(key)
             if not entry:
                 entry = {
-                    "country": meta.get("country") or key,
-                    "country_code": meta.get("country_code"),
+                    "country": country_name or country_code or key,
+                    "country_code": country_code,
                     "blocks": 0,
                 }
                 aggregated[key] = entry
+                if normalized_name:
+                    name_index[normalized_name] = key
+            if country_code and not entry.get("country_code"):
+                entry["country_code"] = country_code
             entry["blocks"] = int(entry["blocks"]) + int(count)
 
         ordered = sorted(aggregated.values(), key=lambda item: item["blocks"], reverse=True)
