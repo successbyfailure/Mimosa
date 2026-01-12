@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.3.41
+- **MimosaNPM**: corrección de comodines en el coloreado de eventos.
+
+## 1.3.40
+- **MimosaNPM**: colores en eventos según ignore list y severidad.
+
+## 1.3.39
+- **MimosaNPM**: lista de eventos recibidos con atajo para crear reglas.
+
+## 1.3.38
+- **MimosaNPM**: guardado automático de reglas e ignore list.
+
+## 1.3.37
+- **OPNsense**: migración segura de whitelist a alias network.
+
+## 1.3.36
+- **OPNsense**: whitelist usa alias de tipo network para soportar CIDR.
+
+## 1.3.35
+- **MimosaNPM**: editor de reglas/ignore list sin recargar la página y sin severidades por tipo.
+- **ProxyTrap**: ajustes de layout para aprovechar el ancho.
+- **Firewall**: carga automática de estados al seleccionar firewall.
+
+## 1.3.34
+- **MimosaNPM**: reglas de severidad/ignore list por host/path/status y defaults por tipo de alerta.
+
 ## 1.3.33
 - **Dashboard**: deduplica países en ranking de bloqueos.
 

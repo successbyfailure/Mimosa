@@ -20,6 +20,8 @@ from mimosa.core.blocking import BlockEntry, BlockManager
 from mimosa.core.offenses import IpProfile, OffenseRecord, OffenseStore
 from mimosa.core.plugins import (
     MimosaNpmConfig,
+    MimosaNpmIgnoreRule,
+    MimosaNpmRule,
     PluginConfigStore,
     PortDetectorConfig,
     PortDetectorRule,
@@ -133,11 +135,26 @@ class PortDetectorInput(BaseModel):
     rules: List[PortDetectorRuleInput] = Field(default_factory=list)
 
 
+class MimosaNpmRuleInput(BaseModel):
+    host: str = "*"
+    path: str = "*"
+    status: str = "*"
+    severity: str = "medio"
+
+
+class MimosaNpmIgnoreRuleInput(BaseModel):
+    host: str = "*"
+    path: str = "*"
+    status: str = "*"
+
+
 class MimosaNpmConfigInput(BaseModel):
     """Config pública del agente MimosaNPM."""
 
     enabled: bool = False
     default_severity: str = "alto"
+    rules: List[MimosaNpmRuleInput] = Field(default_factory=list)
+    ignore_list: List[MimosaNpmIgnoreRuleInput] = Field(default_factory=list)
     shared_secret: str | None = None
     rotate_secret: bool = False
     alert_fallback: bool = True
@@ -717,6 +734,10 @@ def create_app(
         config = MimosaNpmConfig(
             enabled=payload.enabled,
             default_severity=payload.default_severity,
+            rules=[MimosaNpmRule(**rule.model_dump()) for rule in payload.rules],
+            ignore_list=[
+                MimosaNpmIgnoreRule(**rule.model_dump()) for rule in payload.ignore_list
+            ],
             shared_secret=shared_secret,
             alert_fallback=payload.alert_fallback,
             alert_unregistered_domain=payload.alert_unregistered_domain,

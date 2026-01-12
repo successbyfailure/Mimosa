@@ -6,11 +6,12 @@ para que se registren ofensas y se apliquen reglas de bloqueo.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from typing import Callable, Iterable
 
 from mimosa.core.blocking import BlockManager
 from mimosa.core.offenses import OffenseStore
-from mimosa.core.plugins import MimosaNpmConfig
+from mimosa.core.plugins import MimosaNpmConfig, MimosaNpmIgnoreRule, MimosaNpmRule
 from mimosa.core.rules import OffenseEvent, OffenseRule, OffenseRuleStore, RuleManager
 
 
@@ -62,11 +63,17 @@ class MimosaNpmService:
     def _handle_alert(self, alert: MimosaNpmAlert) -> None:
         if not self._is_alert_enabled(alert):
             return
-        severity = alert.severity or self.config.default_severity
-        host = alert.requested_host or "desconocido"
-        path = alert.path or "/"
-        alert_type = alert.alert_type or "unknown"
+        host = (alert.requested_host or "desconocido").strip()
+        path = (alert.path or "/").strip() or "/"
         status_code = alert.status_code if alert.status_code is not None else "n/a"
+        if self._is_ignored(host, path, status_code):
+            return
+        severity = (
+            self._severity_from_rules(host, path, status_code)
+            or alert.severity
+            or self.config.default_severity
+        )
+        alert_type = alert.alert_type or "unknown"
         description = (
             f"mimosanpm:{alert_type} host={host} path={path} status={status_code}"
         )
@@ -118,3 +125,37 @@ class MimosaNpmService:
         if alert_type == "suspicious_path":
             return self.config.alert_suspicious_path
         return True
+
+    def _is_ignored(self, host: str, path: str, status_code: int | str) -> bool:
+        status_value = str(status_code)
+        for rule in self.config.ignore_list or []:
+            if self._matches_rule(rule, host, path, status_value):
+                return True
+        return False
+
+    def _severity_from_rules(
+        self, host: str, path: str, status_code: int | str
+    ) -> str | None:
+        status_value = str(status_code)
+        for rule in self.config.rules or []:
+            if self._matches_rule(rule, host, path, status_value):
+                return rule.severity
+        return None
+
+    def _matches_rule(
+        self,
+        rule: MimosaNpmRule | MimosaNpmIgnoreRule,
+        host: str,
+        path: str,
+        status_code: str,
+    ) -> bool:
+        host_value = host.lower()
+        host_pattern = (rule.host or "*").lower()
+        path_value = path or "/"
+        path_pattern = rule.path or "*"
+        status_pattern = rule.status or "*"
+        return (
+            fnmatchcase(host_value, host_pattern)
+            and fnmatchcase(path_value, path_pattern)
+            and fnmatchcase(status_code, status_pattern)
+        )

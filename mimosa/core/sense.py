@@ -390,6 +390,54 @@ class OPNsenseClient(_BaseSenseClient):
 
         self._request("POST", "/api/firewall/alias/addItem", json=payload)
 
+    def _get_alias_item(self, alias_name: str) -> Optional[Dict[str, object]]:
+        uuid = self._get_alias_uuid(alias_name)
+        if not uuid:
+            return None
+        try:
+            response = self._request("GET", f"/api/firewall/alias/getItem/{uuid}")
+        except httpx.HTTPError:
+            return None
+        data = response.json()
+        alias = data.get("alias") if isinstance(data, dict) else None
+        return alias if isinstance(alias, dict) else None
+
+    def _ensure_alias_type(self, alias_name: str, alias_type: str) -> bool:
+        alias_item = self._get_alias_item(alias_name)
+        if not alias_item:
+            return False
+        current_type = alias_item.get("type")
+        if isinstance(current_type, dict):
+            current_type = self._extract_selected_key(current_type)
+        if current_type == alias_type:
+            return False
+        uuid = self._get_alias_uuid(alias_name)
+        if not uuid:
+            return False
+        content = alias_item.get("content", "")
+        if isinstance(content, dict):
+            selected = []
+            for key, value in content.items():
+                if isinstance(value, dict) and value.get("selected") == 1:
+                    selected.append(str(value.get("value", key)))
+            content = "\n".join(selected)
+        payload = {
+            "alias": {
+                "enabled": alias_item.get("enabled", "1"),
+                "name": alias_name,
+                "type": alias_type,
+                "content": content,
+                "description": alias_item.get("description", ""),
+            }
+        }
+        response = self._request("POST", f"/api/firewall/alias/setItem/{uuid}", json=payload)
+        result = response.json()
+        if result.get("result") != "saved":
+            raise RuntimeError(
+                f"No se pudo actualizar el alias {alias_name}: {result.get('validations', result)}"
+            )
+        return True
+
     def _block_ip_backend(self, ip: str, reason: str, *, alias_name: str) -> None:
         response = self._request(
             "POST",
@@ -558,12 +606,17 @@ class OPNsenseClient(_BaseSenseClient):
         return []
 
     def _ensure_alias_exists(self, alias_name: str, description: str) -> bool:  # type: ignore[override]
+        desired_type = "network" if alias_name == WHITELIST_ALIAS_NAME else "host"
         if self._alias_exists(alias_name):
+            if alias_name == WHITELIST_ALIAS_NAME:
+                changed = self._ensure_alias_type(alias_name, desired_type)
+                if changed:
+                    self._apply_changes_if_enabled()
             return False
 
         self.create_alias(
             name=alias_name,
-            alias_type="host",
+            alias_type=desired_type,
             description=description,
         )
         return True

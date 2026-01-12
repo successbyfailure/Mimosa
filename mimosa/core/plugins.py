@@ -75,10 +75,31 @@ class MimosaNpmConfig:
     name: str = "mimosanpm"
     enabled: bool = False
     default_severity: str = "alto"
+    rules: List["MimosaNpmRule"] = field(default_factory=list)
+    ignore_list: List["MimosaNpmIgnoreRule"] = field(default_factory=list)
     shared_secret: str = field(default_factory=_generate_secret)
     alert_fallback: bool = True
     alert_unregistered_domain: bool = True
     alert_suspicious_path: bool = True
+
+
+@dataclass
+class MimosaNpmRule:
+    """Regla de severidad para alertas de MimosaNPM."""
+
+    host: str = "*"
+    path: str = "*"
+    status: str = "*"
+    severity: str = "medio"
+
+
+@dataclass
+class MimosaNpmIgnoreRule:
+    """Regla para ignorar alertas de MimosaNPM."""
+
+    host: str = "*"
+    path: str = "*"
+    status: str = "*"
 
 
 class PluginConfigStore:
@@ -185,9 +206,17 @@ class PluginConfigStore:
             return instance
 
         shared_secret = config.get("shared_secret") or _generate_secret()
+        rules = []
+        for entry in config.get("rules", []) or []:
+            rules.append(MimosaNpmRule(**entry))
+        ignore_list = []
+        for entry in config.get("ignore_list", []) or []:
+            ignore_list.append(MimosaNpmIgnoreRule(**entry))
         loaded = MimosaNpmConfig(
             enabled=bool(config.get("enabled", False)),
             default_severity=config.get("default_severity", "alto"),
+            rules=rules,
+            ignore_list=ignore_list,
             shared_secret=str(shared_secret),
             alert_fallback=bool(config.get("alert_fallback", True)),
             alert_unregistered_domain=bool(
