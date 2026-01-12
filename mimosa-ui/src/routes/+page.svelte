@@ -208,6 +208,10 @@
   let portValues: number[] = [];
   let npmDomainLabels: string[] = [];
   let npmDomainValues: number[] = [];
+  let npmPathLabels: string[] = [];
+  let npmPathValues: number[] = [];
+  let npmStatusLabels: string[] = [];
+  let npmStatusValues: number[] = [];
 
   let liveFeedRaw: LiveItem[] = [];
   let liveFeed: LiveItem[] = [];
@@ -496,15 +500,27 @@
           mimosanpmStats = (await npmResponse.json()) as MimosaNpmStats;
           npmDomainLabels = mimosanpmStats.top_domains.map((entry) => entry.domain);
           npmDomainValues = mimosanpmStats.top_domains.map((entry) => entry.count);
+          npmPathLabels = mimosanpmStats.top_paths.map((entry) => entry.path);
+          npmPathValues = mimosanpmStats.top_paths.map((entry) => entry.count);
+          npmStatusLabels = mimosanpmStats.top_status_codes.map((entry) => entry.status);
+          npmStatusValues = mimosanpmStats.top_status_codes.map((entry) => entry.count);
         } else {
           mimosanpmStats = null;
           npmDomainLabels = [];
           npmDomainValues = [];
+          npmPathLabels = [];
+          npmPathValues = [];
+          npmStatusLabels = [];
+          npmStatusValues = [];
         }
       } else {
         mimosanpmStats = null;
         npmDomainLabels = [];
         npmDomainValues = [];
+        npmPathLabels = [];
+        npmPathValues = [];
+        npmStatusLabels = [];
+        npmStatusValues = [];
       }
     } catch (err) {
       // opcional
@@ -1335,44 +1351,44 @@
     <div class="surface" style="padding: 18px;">
       <div class="badge">Plugins</div>
       <h3 style="margin-top: 12px;">MimosaNPM</h3>
-      <ChartCanvas
-        labels={npmDomainLabels}
-        data={npmDomainValues}
-        label="Dominios"
-        color="#a78bfa"
-        type="bar"
-      />
-      <div style="margin-top: 10px; color: var(--muted); font-size: 12px;">
-        {#if mimosanpmStats}
+      {#if mimosanpmStats}
+        <div style="margin-top: 10px; color: var(--muted); font-size: 12px;">
           {mimosanpmStats.total} eventos (muestra {mimosanpmStats.sample})
-        {:else}
+        </div>
+        <div class="section" style="margin-top: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+          <div>
+            <div style="font-size: 12px; color: var(--muted); margin-bottom: 6px;">Hosts</div>
+            <ChartCanvas
+              labels={npmDomainLabels}
+              data={npmDomainValues}
+              label="Hosts"
+              type="doughnut"
+            />
+          </div>
+          <div>
+            <div style="font-size: 12px; color: var(--muted); margin-bottom: 6px;">Paths</div>
+            <ChartCanvas
+              labels={npmPathLabels}
+              data={npmPathValues}
+              label="Paths"
+              type="doughnut"
+            />
+          </div>
+          <div>
+            <div style="font-size: 12px; color: var(--muted); margin-bottom: 6px;">Status</div>
+            <ChartCanvas
+              labels={npmStatusLabels}
+              data={npmStatusValues}
+              label="Status"
+              type="doughnut"
+            />
+          </div>
+        </div>
+      {:else}
+        <div style="margin-top: 10px; color: var(--muted); font-size: 12px;">
           Sin datos recientes.
-        {/if}
-      </div>
-      <div class="list" style="margin-top: 12px;">
-        {#if mimosanpmStats?.top_paths?.length}
-          {#each mimosanpmStats.top_paths as entry}
-            <div class="list-item">
-              <span>{entry.path}</span>
-              <strong>{entry.count}</strong>
-            </div>
-          {/each}
-        {:else}
-          <div class="list-item">Sin rutas destacadas.</div>
-        {/if}
-      </div>
-      <div class="list" style="margin-top: 12px;">
-        {#if mimosanpmStats?.top_status_codes?.length}
-          {#each mimosanpmStats.top_status_codes as entry}
-            <div class="list-item">
-              <span>Status {entry.status}</span>
-              <strong>{entry.count}</strong>
-            </div>
-          {/each}
-        {:else}
-          <div class="list-item">Sin codigos de estado.</div>
-        {/if}
-      </div>
+        </div>
+      {/if}
     </div>
   </section>
 {/if}
