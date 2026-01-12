@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .hero { display: grid; gap: 14px; margin: 16px 0 24px; }
+  .hero h2 { margin: 0; font-size: 28px; }
+  .hero p { margin: 0; max-width: 720px; }
+  .cta-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+  .cta-row a { text-decoration: none; }
+  .heatmap-card { background: rgba(17,24,39,.75); border-radius: 16px; padding: 16px; border: 1px solid rgba(255,255,255,.05); }
+  .heatmap-grid { display: grid; grid-template-columns: 1.4fr 0.6fr; gap: 14px; align-items: start; margin-top: 12px; }
+  .heatmap-map { width: 100%; height: 380px; border-radius: 12px; border: 1px solid rgba(255,255,255,.06); overflow: hidden; }
+  .heatmap-rank { border: 1px solid rgba(255,255,255,.06); border-radius: 12px; padding: 12px; background: rgba(15,23,42,.6); }
+  .heatmap-rank table { width: 100%; border-collapse: collapse; }
+  .heatmap-rank th, .heatmap-rank td { padding: 6px 8px; font-size: 12px; text-align: left; }
+  .heatmap-flag { font-size: 16px; }
+  .heatmap-label { background: rgba(15,23,42,.85); color: #fef08a; border: 1px solid rgba(251,191,36,.6); border-radius: 10px; padding: 2px 6px; font-size: 11px; font-weight: 700; box-shadow: 0 6px 18px rgba(0,0,0,.35); }
+  @media (max-width: 900px) { .heatmap-grid { grid-template-columns: 1fr; } }
+  @media (max-width: 640px) { .heatmap-map { height: 280px; } }
+</style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+
+<section class="hero card">
+  <h2>Mapa en vivo de ofensas</h2>
+  <p class="muted">Vista pública con el mapa de actividad y el ranking de ofensas por país. Inicia sesión para acceder al panel completo.</p>
+  <div class="cta-row">
+    {% if current_user %}
+    <a class="auth-btn primary" href="/dashboard">Ir al dashboard</a>
+    {% else %}
+    <a class="auth-btn primary" href="/login">Login</a>
+    {% endif %}
+  </div>
+</section>
+
+<section class="heatmap-card">
+  <div class="flex space">
+    <div>
+      <h2 style="margin:0">Mapa global</h2>
+      <div class="muted">Eventos registrados en Mimosa</div>
+    </div>
+    <select id="heatmap-window" style="max-width: 160px;">
+      <option value="total">Total</option>
+      <option value="24h">24 horas</option>
+      <option value="7d">7 días</option>
+      <option value="30d">30 días</option>
+    </select>
+  </div>
+  <div class="heatmap-grid">
+    <div>
+      <div id="heatmap-map" class="heatmap-map"></div>
+      <div id="heatmap-message" class="muted" style="margin-top:8px;">Cargando...</div>
+    </div>
+    <div class="heatmap-rank">
+      <div class="flex space">
+        <div>
+          <h3 style="margin:0">Ranking por país</h3>
+          <div class="muted" style="font-size:12px;">Top ofensas registradas</div>
+        </div>
+      </div>
+      <div id="heatmap-rank-message" class="muted" style="font-size:12px; margin-bottom:6px;"></div>
+      <table>
+        <thead>
+          <tr>
+            <th>País</th>
+            <th>Ofensas</th>
+          </tr>
+        </thead>
+        <tbody id="offenses-country-table">
+          <tr><td colspan="2" class="muted">Cargando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+let heatmapMap = null;
+let heatmapLayer = null;
+let heatmapLabels = null;
+
+function initHeatmap() {
+  if (heatmapMap) return;
+  heatmapMap = L.map('heatmap-map', { zoomControl: false }).setView([20, 0], 2);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap',
+  }).addTo(heatmapMap);
+  heatmapLayer = L.layerGroup().addTo(heatmapMap);
+  heatmapLabels = L.layerGroup().addTo(heatmapMap);
+}
+
+function drawHeatmap(points) {
+  initHeatmap();
+  heatmapLayer.clearLayers();
+  heatmapLabels.clearLayers();
+  if (!points.length) return;
+  const maxCount = Math.max(...points.map(p => p.count || 1), 1);
+  const bounds = [];
+  points.forEach(point => {
+    const lat = Number(point.lat);
+    const lon = Number(point.lon);
+    if (Number.isNaN(lat) || Number.isNaN(lon)) return;
+    const intensity = Math.min((point.count || 1) / maxCount, 1);
+    const radius = 20000 + intensity * 80000;
+    const color = `rgba(248, 113, 113, ${0.2 + 0.5 * intensity})`;
+    const circle = L.circle([lat, lon], {
+      radius,
+      color: 'rgba(248, 113, 113, 0.6)',
+      fillColor: color,
+      fillOpacity: 0.6,
+      weight: 1,
+    });
+    circle.addTo(heatmapLayer);
+    const label = L.marker([lat, lon], {
+      icon: L.divIcon({
+        className: 'heatmap-label',
+        html: `${point.count || 0}`,
+        iconSize: [32, 20],
+      }),
+    });
+    label.addTo(heatmapLabels);
+    bounds.push([lat, lon]);
+  });
+  if (bounds.length) {
+    heatmapMap.fitBounds(bounds, { padding: [20, 20] });
+  }
+}
+
+function countryCodeToFlag(code) {
+  if (!code || code.length !== 2) return '—';
+  const base = 0x1F1E6;
+  const first = code.charCodeAt(0) - 65 + base;
+  const second = code.charCodeAt(1) - 65 + base;
+  return String.fromCodePoint(first, second);
+}
+
+function renderOffensesByCountry(items) {
+  const tbody = document.getElementById('offenses-country-table');
+  tbody.innerHTML = '';
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="2" class="muted">Sin datos.</td></tr>';
+    return;
+  }
+  items.forEach(item => {
+    const flag = item.country_code ? countryCodeToFlag(item.country_code.toUpperCase()) : '—';
+    const country = item.country || 'Sin datos';
+    const row = document.createElement('tr');
+    row.innerHTML = `<td><span class="heatmap-flag" title="${country}">${flag}</span> ${country}</td><td>${item.offenses}</td>`;
+    tbody.appendChild(row);
+  });
+}
+
+async function loadOffensesByCountry(windowValue) {
+  const message = document.getElementById('heatmap-rank-message');
+  if (message) message.textContent = '';
+  try {
+    const res = await fetch(`/api/public/offenses_by_country?limit=10&window=${windowValue}`);
+    if (!res.ok) throw new Error('No se pudo cargar el ranking.');
+    const data = await res.json();
+    renderOffensesByCountry(data.countries || []);
+    if (message) {
+      message.textContent = (data.countries || []).length ? '' : 'Sin datos';
+    }
+  } catch (error) {
+    const tbody = document.getElementById('offenses-country-table');
+    tbody.innerHTML = '<tr><td colspan="2" class="muted">Error al cargar.</td></tr>';
+    if (message) message.textContent = 'Error';
+  }
+}
+
+function resolveHeatmapWindow() {
+  const selector = document.getElementById('heatmap-window');
+  return selector ? selector.value : 'total';
+}
+
+async function loadHeatmap() {
+  const windowValue = resolveHeatmapWindow();
+  const message = document.getElementById('heatmap-message');
+  if (message) {
+    message.textContent = 'Cargando datos...';
+    message.style.color = '';
+  }
+  try {
+    const res = await fetch(`/api/public/heatmap?limit=300&window=${windowValue}`);
+    if (!res.ok) throw new Error('No se pudo cargar el mapa.');
+    const data = await res.json();
+    const points = data.points || [];
+    drawHeatmap(points);
+    if (message) {
+      if (!points.length) {
+        message.textContent = 'Sin datos de geolocalización. Completa geo en perfiles de IP para ver el mapa.';
+        message.style.color = '#fbbf24';
+      } else {
+        message.textContent = `Puntos: ${points.length} · Perfiles: ${data.total_profiles || 0}`;
+        message.style.color = '#67e8f9';
+      }
+    }
+    loadOffensesByCountry(windowValue);
+  } catch (error) {
+    if (message) {
+      message.textContent = 'Error al cargar el mapa.';
+      message.style.color = '#fca5a5';
+    }
+  }
+}
+
+document.getElementById('heatmap-window').addEventListener('change', () => {
+  loadHeatmap();
+});
+
+loadHeatmap();
+setInterval(loadHeatmap, 120000);
+</script>
+{% endblock %}

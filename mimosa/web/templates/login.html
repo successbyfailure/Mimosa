@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .login-wrapper { display:flex; justify-content:center; padding: 40px 0; }
+  .login-card { width: min(420px, 100%); background: var(--card); border-radius: 16px; border: 1px solid rgba(255,255,255,.08); padding: 24px; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+  .login-card h2 { margin: 0 0 10px; }
+  .login-card button { width: 100%; margin-top: 14px; }
+  .error { color: #fca5a5; font-size: 13px; margin-top: 8px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+</style>
+
+<div class="login-wrapper">
+  <form class="login-card" method="post" action="/login{% if request.query_params.get('next') %}?next={{ request.query_params.get('next') }}{% endif %}">
+    <h2>Acceso a Mimosa</h2>
+    <div class="muted">Inicia sesión para acceder al dashboard y la administración.</div>
+    <label>Usuario</label>
+    <input name="username" autocomplete="username" required />
+    <label>Contraseña</label>
+    <input name="password" type="password" autocomplete="current-password" required />
+    {% if error %}
+      <div class="error">{{ error }}</div>
+    {% endif %}
+    <button type="submit">Entrar</button>
+    <div class="hint">Usuario por defecto: <strong>mimosa</strong> / <strong>mimosa</strong></div>
+  </form>
+</div>
+{% endblock %}

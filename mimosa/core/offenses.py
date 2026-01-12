@@ -310,6 +310,19 @@ class OffenseStore:
 
         return int(row[0]) if row else 0
 
+    def offense_counts_by_ip(self, since: Optional[datetime] = None) -> Dict[str, int]:
+        """Devuelve recuentos de ofensas agregados por IP."""
+
+        query = "SELECT source_ip, COUNT(*) FROM offenses"
+        params: tuple = ()
+        if since is not None:
+            query += " WHERE datetime(created_at) >= datetime(?)"
+            params = (since.isoformat(),)
+        query += " GROUP BY source_ip;"
+        with self._connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return {row[0]: int(row[1]) for row in rows if row and row[0]}
+
     def timeline(self, window: timedelta, *, bucket: str = "hour") -> List[Dict[str, str | int]]:
         """Devuelve recuentos agregados por intervalo para un periodo."""
 

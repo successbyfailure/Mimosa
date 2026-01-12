@@ -145,6 +145,52 @@
       </tbody>
     </table>
   </section>
+
+  <section class="card space">
+    <div class="flex space" style="align-items:flex-start;">
+      <div>
+        <h2 style="margin:0">Usuarios</h2>
+        <div class="muted">Gestiona los accesos al panel (roles admin/viewer).</div>
+      </div>
+      <button class="secondary" onclick="loadUsers()">Actualizar</button>
+    </div>
+    <form id="user-form" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
+      <input type="hidden" name="editing_username" />
+      <div>
+        <label>Usuario</label>
+        <input name="username" placeholder="nuevo_usuario" />
+      </div>
+      <div>
+        <label>Contraseña</label>
+        <input name="password" type="password" placeholder="••••••" />
+      </div>
+      <div>
+        <label>Rol</label>
+        <select name="role">
+          <option value="viewer">Viewer</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+      <div style="display:flex; align-items:flex-end; gap:10px;">
+        <button type="submit" id="user-submit">Crear usuario</button>
+        <button type="button" class="secondary" onclick="resetUserForm()">Cancelar</button>
+      </div>
+    </form>
+    <div id="user-message" class="muted" style="margin-top:8px;"></div>
+    <table style="margin-top:12px;">
+      <thead>
+        <tr>
+          <th>Usuario</th>
+          <th>Rol</th>
+          <th>Creado</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody id="users-table">
+        <tr><td colspan="4" class="muted">Cargando...</td></tr>
+      </tbody>
+    </table>
+  </section>
 </section>
 
 <section id="tab-plugins" class="tab-panel">
@@ -1929,6 +1975,126 @@ async function submitBlockingSettings(event) {
   }
 }
 
+function resetUserForm() {
+  const form = document.getElementById('user-form');
+  form.reset();
+  form.editing_username.value = '';
+  form.username.disabled = false;
+  document.getElementById('user-submit').textContent = 'Crear usuario';
+  const msg = document.getElementById('user-message');
+  if (msg) msg.textContent = '';
+}
+
+function startEditUser(username, role) {
+  const form = document.getElementById('user-form');
+  form.editing_username.value = username;
+  form.username.value = username;
+  form.username.disabled = true;
+  form.password.value = '';
+  form.role.value = role || 'viewer';
+  document.getElementById('user-submit').textContent = 'Actualizar usuario';
+  const msg = document.getElementById('user-message');
+  if (msg) msg.textContent = `Editando ${username}`;
+}
+
+async function loadUsers() {
+  const res = await fetch('/api/users');
+  const data = await res.json().catch(() => []);
+  const tbody = document.getElementById('users-table');
+  tbody.innerHTML = '';
+  if (!res.ok) {
+    tbody.innerHTML = '<tr><td colspan="4" class="muted">No se pudo cargar usuarios.</td></tr>';
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="muted">Sin usuarios registrados.</td></tr>';
+    return;
+  }
+  data.forEach(user => {
+    const row = document.createElement('tr');
+    const createdAt = user.created_at ? new Date(user.created_at).toLocaleString() : '—';
+    row.innerHTML = `
+      <td>${user.username}</td>
+      <td>${user.role}</td>
+      <td>${createdAt}</td>
+      <td style="text-align:right; display:flex; gap:8px; justify-content:flex-end;">
+        <button class="secondary" onclick="startEditUser('${user.username}', '${user.role}')">Editar</button>
+        <button class="secondary" onclick="deleteUser('${user.username}')">Eliminar</button>
+      </td>
+    `;
+    tbody.appendChild(row);
+  });
+}
+
+async function submitUserForm(event) {
+  event.preventDefault();
+  const form = event.target;
+  const editing = form.editing_username.value;
+  const payload = {
+    username: form.username.value.trim(),
+    password: form.password.value,
+    role: form.role.value
+  };
+  const message = document.getElementById('user-message');
+  message.textContent = 'Guardando...';
+  message.style.color = '';
+  if (!payload.username) {
+    message.textContent = 'Usuario requerido.';
+    message.style.color = '#fca5a5';
+    return;
+  }
+  try {
+    let res;
+    if (editing) {
+      const updatePayload = { role: payload.role };
+      if (payload.password) updatePayload.password = payload.password;
+      res = await fetch(`/api/users/${encodeURIComponent(editing)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatePayload)
+      });
+    } else {
+      if (!payload.password) {
+        message.textContent = 'Contraseña requerida.';
+        message.style.color = '#fca5a5';
+        return;
+      }
+      res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    }
+    if (res.ok) {
+      message.textContent = editing ? 'Usuario actualizado.' : 'Usuario creado.';
+      message.style.color = '#67e8f9';
+      resetUserForm();
+      loadUsers();
+    } else {
+      const detail = await res.json().catch(() => null);
+      message.textContent = detail?.detail || 'No se pudo guardar.';
+      message.style.color = '#fca5a5';
+    }
+  } catch (error) {
+    message.textContent = 'Error al guardar.';
+    message.style.color = '#fca5a5';
+  }
+}
+
+async function deleteUser(username) {
+  const res = await fetch(`/api/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
+  const message = document.getElementById('user-message');
+  if (res.ok) {
+    message.textContent = 'Usuario eliminado.';
+    message.style.color = '#67e8f9';
+    loadUsers();
+  } else {
+    const detail = await res.json().catch(() => null);
+    message.textContent = detail?.detail || 'No se pudo eliminar.';
+    message.style.color = '#fca5a5';
+  }
+}
+
 async function loadFirewalls() {
   const res = await fetch('/api/firewalls');
   const data = await res.json();
@@ -3198,6 +3364,7 @@ document.getElementById('firewall-form').addEventListener('submit', submitForm);
 document.getElementById('rule-form').addEventListener('submit', submitRule);
 document.getElementById('whitelist-form').addEventListener('submit', submitWhitelist);
 document.getElementById('blacklist-form').addEventListener('submit', submitBlacklist);
+document.getElementById('user-form').addEventListener('submit', submitUserForm);
 document.getElementById('blocking-settings').addEventListener('submit', submitBlockingSettings);
 document.getElementById('proxytrap-form').addEventListener('submit', submitProxytrap);
 document.getElementById('proxytrap-policy-form').addEventListener('submit', submitProxytrapPolicy);
@@ -3220,6 +3387,7 @@ editModal.addEventListener('click', (event) => {
 loadGlobalSyncPreference();
 loadBlockingSettings();
 loadFirewalls();
+loadUsers();
 loadDatabaseBlocks();
 loadBlockHistory();
 loadOffenses();

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -10,10 +11,12 @@ from typing import Dict, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Request, Response
 import httpx
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 
 from mimosa.core.api import FirewallGateway
 from mimosa.core.blocking import BlockEntry, BlockManager
@@ -47,6 +50,7 @@ from mimosa.web.config import (
     build_firewall_gateway,
     check_firewall_status,
 )
+from mimosa.web.auth import UserStore
 
 
 def _load_app_version() -> str:
@@ -216,6 +220,21 @@ class WhitelistInput(BaseModel):
     note: str | None = None
 
 
+class UserInput(BaseModel):
+    """Entrada para crear un usuario."""
+
+    username: str
+    password: str
+    role: Literal["admin", "viewer"] = "viewer"
+
+
+class UserUpdateInput(BaseModel):
+    """Entrada para actualizar un usuario."""
+
+    password: Optional[str] = None
+    role: Optional[Literal["admin", "viewer"]] = None
+
+
 class GatewayCache:
     """Cache de gateways con TTL para evitar credenciales obsoletas."""
 
@@ -277,6 +296,7 @@ def create_app(
     config_store = config_store or FirewallConfigStore()
     rule_store = rule_store or OffenseRuleStore(db_path=offense_store.db_path)
     plugin_store = PluginConfigStore()
+    user_store = UserStore()
     gateway_cache = GatewayCache(ttl_seconds=300)  # TTL de 5 minutos
     proxytrap_stats_path = proxytrap_stats_path or Path("data/proxytrap_stats.json")
     portdetector_stats_path = portdetector_stats_path or Path(
@@ -301,6 +321,57 @@ def create_app(
         block_manager,
         rule_store,
         gateway_factory=lambda: _select_gateway(),
+    )
+
+    def _current_user(request: Request) -> Optional[Dict[str, str]]:
+        if "session" not in request.scope:
+            return None
+        return request.session.get("user")
+
+    def _template_context(request: Request, **extras: object) -> Dict[str, object]:
+        context = {"request": request, "current_user": _current_user(request)}
+        context.update(extras)
+        return context
+
+    def _is_public_path(path: str) -> bool:
+        if path.startswith("/static"):
+            return True
+        if path.startswith("/api/public"):
+            return True
+        if path in {"/", "/login", "/logout"}:
+            return True
+        return False
+
+    def _require_admin(request: Request) -> None:
+        user = _current_user(request)
+        if not user or user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Acceso restringido a administradores")
+
+    class AuthMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next):
+            path = request.url.path
+            if _is_public_path(path):
+                return await call_next(request)
+            if not _current_user(request):
+                if path.startswith("/api/"):
+                    return JSONResponse(
+                        status_code=401,
+                        content={"detail": "Autenticación requerida"},
+                    )
+                next_path = path
+                if request.url.query:
+                    next_path = f"{next_path}?{request.url.query}"
+                return RedirectResponse(url=f"/login?next={next_path}")
+            return await call_next(request)
+
+    app.add_middleware(AuthMiddleware)
+    session_secret = os.environ.get("MIMOSA_SESSION_SECRET", "mimosa-dev-secret")
+    session_max_age = int(os.environ.get("MIMOSA_SESSION_MAX_AGE", "28800"))
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=session_secret,
+        max_age=session_max_age,
+        same_site="lax",
     )
 
     def _select_gateway() -> FirewallGateway:
@@ -535,12 +606,114 @@ def create_app(
     mimosanpm_service.apply_config(plugin_store.get_mimosanpm())
 
     @app.get("/", response_class=HTMLResponse)
+    def landing(request: Request):
+        return templates.TemplateResponse("landing.html", _template_context(request))
+
+    @app.get("/dashboard", response_class=HTMLResponse)
     def dashboard(request: Request):
-        return templates.TemplateResponse("dashboard.html", {"request": request})
+        return templates.TemplateResponse("dashboard.html", _template_context(request))
+
+    @app.get("/login", response_class=HTMLResponse)
+    def login_page(request: Request):
+        if _current_user(request):
+            return RedirectResponse(url="/dashboard")
+        return templates.TemplateResponse(
+            "login.html",
+            _template_context(request, error=None),
+        )
+
+    @app.post("/login", response_class=HTMLResponse)
+    async def login(request: Request):
+        form = await request.form()
+        username = str(form.get("username", "")).strip()
+        password = str(form.get("password", ""))
+        account = user_store.authenticate(username, password)
+        if not account:
+            return templates.TemplateResponse(
+                "login.html",
+                _template_context(request, error="Credenciales inválidas"),
+                status_code=401,
+            )
+        request.session["user"] = {"username": account.username, "role": account.role}
+        next_url = request.query_params.get("next") or "/dashboard"
+        if not next_url.startswith("/"):
+            next_url = "/dashboard"
+        return RedirectResponse(url=next_url, status_code=303)
+
+    @app.get("/logout")
+    def logout(request: Request):
+        if hasattr(request, "session"):
+            request.session.clear()
+        return RedirectResponse(url="/")
 
     @app.get("/admin", response_class=HTMLResponse)
     def admin(request: Request):
-        return templates.TemplateResponse("admin.html", {"request": request})
+        user = _current_user(request)
+        if not user or user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Acceso restringido a administradores")
+        return templates.TemplateResponse("admin.html", _template_context(request))
+
+    @app.get("/api/users")
+    def list_users(request: Request) -> List[Dict[str, str]]:
+        _require_admin(request)
+        return [
+            {
+                "username": user.username,
+                "role": user.role,
+                "created_at": user.created_at,
+            }
+            for user in user_store.list()
+        ]
+
+    @app.post("/api/users", status_code=201)
+    def create_user(request: Request, payload: UserInput) -> Dict[str, str]:
+        _require_admin(request)
+        try:
+            account = user_store.add_user(payload.username, payload.password, role=payload.role)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "username": account.username,
+            "role": account.role,
+            "created_at": account.created_at,
+        }
+
+    @app.put("/api/users/{username}")
+    def update_user(request: Request, username: str, payload: UserUpdateInput) -> Dict[str, str]:
+        _require_admin(request)
+        account = user_store.get(username)
+        if not account:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        if payload.role and account.role == "admin" and payload.role != "admin":
+            admins = [user for user in user_store.list() if user.role == "admin"]
+            if len(admins) <= 1:
+                raise HTTPException(status_code=400, detail="Debe existir al menos un administrador")
+        try:
+            updated = user_store.update_user(
+                username,
+                password=payload.password,
+                role=payload.role,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "username": updated.username,
+            "role": updated.role,
+            "created_at": updated.created_at,
+        }
+
+    @app.delete("/api/users/{username}", status_code=204, response_class=Response)
+    def delete_user(request: Request, username: str) -> Response:
+        _require_admin(request)
+        account = user_store.get(username)
+        if not account:
+            return Response(status_code=204)
+        if account.role == "admin":
+            admins = [user for user in user_store.list() if user.role == "admin"]
+            if len(admins) <= 1:
+                raise HTTPException(status_code=400, detail="Debe existir al menos un administrador")
+        user_store.delete_user(username)
+        return Response(status_code=204)
 
     def _stats_payload() -> Dict[str, Dict[str, object]]:
         now = datetime.now(timezone.utc)
@@ -1074,6 +1247,117 @@ def create_app(
         else:
             return block_manager.history(), label
         return [entry for entry in block_manager.history() if entry.created_at >= cutoff], label
+
+    def _resolve_offenses_window(window: str) -> tuple[Dict[str, int], str]:
+        normalized = (window or "").lower()
+        label = "total"
+        since = None
+        if normalized in {"24h", "24horas"}:
+            label = "24h"
+            since = datetime.now(timezone.utc) - timedelta(hours=24)
+        elif normalized in {"week", "7d", "semana"}:
+            label = "week"
+            since = datetime.now(timezone.utc) - timedelta(days=7)
+        elif normalized in {"month", "30d", "mes"}:
+            label = "month"
+            since = datetime.now(timezone.utc) - timedelta(days=30)
+        return offense_store.offense_counts_by_ip(since), label
+
+    @app.get("/api/public/heatmap")
+    def public_heatmap(limit: int = 300, window: str = "total") -> Dict[str, object]:
+        counts, window_label = _resolve_offenses_window(window)
+        aggregated: Dict[str, Dict[str, float]] = {}
+        profiles_seen = 0
+        total_points = 0
+        profile_cache: Dict[str, Optional[IpProfile]] = {}
+
+        for ip, count in counts.items():
+            profile = profile_cache.get(ip)
+            if profile is None:
+                profile = offense_store.get_ip_profile(ip)
+                profile_cache[ip] = profile
+            if not profile:
+                continue
+            point = _parse_geo_point(profile.geo)
+            if not point:
+                continue
+            profiles_seen += 1
+            key = f"{point['lat']:.4f},{point['lon']:.4f}"
+            if key not in aggregated:
+                aggregated[key] = {
+                    "lat": point["lat"],
+                    "lon": point["lon"],
+                    "count": 0,
+                }
+            aggregated[key]["count"] += max(int(count), 1)
+            total_points += 1
+
+        points = list(aggregated.values())
+        points.sort(key=lambda item: item["count"], reverse=True)
+        if limit > 0:
+            points = points[:limit]
+
+        return {
+            "points": points,
+            "total_profiles": profiles_seen,
+            "points_count": total_points,
+            "window": window_label,
+        }
+
+    @app.get("/api/public/offenses_by_country")
+    def public_offenses_by_country(limit: int = 10, window: str = "total") -> Dict[str, object]:
+        counts, window_label = _resolve_offenses_window(window)
+        aggregated: Dict[str, Dict[str, object]] = {}
+        name_index: Dict[str, str] = {}
+        profile_cache: Dict[str, Optional[IpProfile]] = {}
+
+        for ip, count in counts.items():
+            profile = profile_cache.get(ip)
+            if profile is None:
+                profile = offense_store.get_ip_profile(ip)
+                profile_cache[ip] = profile
+            if not profile:
+                continue
+            meta = _parse_geo_country(profile.geo)
+            if not meta:
+                continue
+            country_name = (meta.get("country") or "").strip()
+            country_code = meta.get("country_code")
+            normalized_name = country_name.lower()
+            key = None
+            if country_code:
+                key = country_code.upper()
+            elif normalized_name:
+                key = name_index.get(normalized_name)
+                if not key:
+                    key = f"name:{normalized_name}"
+            if not key:
+                continue
+            existing_key = name_index.get(normalized_name) if normalized_name else None
+            if country_code and existing_key and existing_key != key:
+                existing_entry = aggregated.pop(existing_key, None)
+                if existing_entry:
+                    aggregated[key] = existing_entry
+            entry = aggregated.get(key)
+            if not entry:
+                entry = {
+                    "country": country_name or country_code or key,
+                    "country_code": country_code,
+                    "offenses": 0,
+                }
+                aggregated[key] = entry
+                if normalized_name:
+                    name_index[normalized_name] = key
+            if country_code and not entry.get("country_code"):
+                entry["country_code"] = country_code
+            entry["offenses"] = int(entry["offenses"]) + int(count)
+
+        ordered = sorted(aggregated.values(), key=lambda item: item["offenses"], reverse=True)
+        return {
+            "countries": ordered[:limit],
+            "total_profiles": len(counts),
+            "window": window_label,
+        }
 
     @app.get("/api/offenses/heatmap")
     def offenses_heatmap(limit: int = 300, window: str = "total") -> Dict[str, object]:
