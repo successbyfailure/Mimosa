@@ -1,6 +1,7 @@
 """Aplicación FastAPI que sirve el dashboard y el panel de control."""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
@@ -9,11 +10,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 import httpx
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -65,6 +65,9 @@ def _load_app_version() -> str:
     return str(data.get("version", "0.0.0"))
 
 
+MIMOSA_LOCATION_KEY = "mimosa_location"
+
+
 class FirewallInput(BaseModel):
     """Payload para crear y probar conexiones con firewalls."""
 
@@ -99,6 +102,13 @@ class BlockingSettingsInput(BaseModel):
 
     default_duration_minutes: int = 60
     sync_interval_seconds: int = 300
+
+
+class MimosaLocationInput(BaseModel):
+    """Ubicacion configurable para la UI publica."""
+
+    lat: float
+    lon: float
 
 
 class ProxyTrapDomainInput(BaseModel):
@@ -235,6 +245,13 @@ class UserUpdateInput(BaseModel):
     role: Optional[Literal["admin", "viewer"]] = None
 
 
+class LoginInput(BaseModel):
+    """Credenciales de acceso para la UI."""
+
+    username: str
+    password: str
+
+
 class GatewayCache:
     """Cache de gateways con TTL para evitar credenciales obsoletas."""
 
@@ -276,8 +293,6 @@ def create_app(
     proxytrap_stats_path: Path | str | None = None,
     portdetector_stats_path: Path | str | None = None,
 ) -> FastAPI:
-    templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
-
     app_version = _load_app_version()
     app = FastAPI(title="Mimosa UI", version=app_version)
     app.mount(
@@ -285,8 +300,7 @@ def create_app(
         StaticFiles(directory=str(Path(__file__).parent / "static")),
         name="static",
     )
-
-    templates.env.globals["mimosa_version"] = app_version
+    ui_root = Path(__file__).parent / "static" / "ui"
 
     offense_store = offense_store or OffenseStore()
     block_manager = block_manager or BlockManager(
@@ -328,19 +342,8 @@ def create_app(
             return None
         return request.session.get("user")
 
-    def _template_context(request: Request, **extras: object) -> Dict[str, object]:
-        context = {"request": request, "current_user": _current_user(request)}
-        context.update(extras)
-        return context
-
-    def _is_public_path(path: str) -> bool:
-        if path.startswith("/static"):
-            return True
-        if path.startswith("/api/public"):
-            return True
-        if path in {"/", "/login", "/logout"}:
-            return True
-        return False
+    def _is_public_api(path: str) -> bool:
+        return path.startswith("/api/public") or path.startswith("/api/auth")
 
     def _require_admin(request: Request) -> None:
         user = _current_user(request)
@@ -350,18 +353,12 @@ def create_app(
     class AuthMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
             path = request.url.path
-            if _is_public_path(path):
-                return await call_next(request)
-            if not _current_user(request):
-                if path.startswith("/api/"):
+            if (path == "/api" or path.startswith("/api/")) and not _is_public_api(path):
+                if not _current_user(request):
                     return JSONResponse(
                         status_code=401,
                         content={"detail": "Autenticación requerida"},
                     )
-                next_path = path
-                if request.url.query:
-                    next_path = f"{next_path}?{request.url.query}"
-                return RedirectResponse(url=f"/login?next={next_path}")
             return await call_next(request)
 
     app.add_middleware(AuthMiddleware)
@@ -443,7 +440,7 @@ def create_app(
                 gateway.add_to_whitelist(cidr)
             except NotImplementedError:
                 continue
-            except httpx.HTTPStatusError:
+            except httpx.HTTPError:
                 continue
 
     def _sync_whitelist_full(gateway: FirewallGateway, desired: List[str]) -> List[str]:
@@ -531,6 +528,50 @@ def create_app(
             "block_minutes": rule.block_minutes,
         }
 
+    def _load_setting(key: str) -> Optional[str]:
+        try:
+            with sqlite3.connect(offense_store.db_path) as conn:
+                row = conn.execute(
+                    "SELECT value FROM settings WHERE key = ? LIMIT 1;",
+                    (key,),
+                ).fetchone()
+        except sqlite3.DatabaseError:
+            return None
+        return row[0] if row else None
+
+    def _save_setting(key: str, value: str) -> None:
+        with sqlite3.connect(offense_store.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO settings(key, value)
+                VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+                """,
+                (key, value),
+            )
+
+    def _get_mimosa_location() -> Optional[Dict[str, float]]:
+        raw = _load_setting(MIMOSA_LOCATION_KEY)
+        if not raw:
+            return None
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        lat = payload.get("lat")
+        lon = payload.get("lon")
+        if lat is None or lon is None:
+            return None
+        try:
+            return {"lat": float(lat), "lon": float(lon)}
+        except (TypeError, ValueError):
+            return None
+
+    def _set_mimosa_location(lat: float, lon: float) -> Dict[str, float]:
+        location = {"lat": float(lat), "lon": float(lon)}
+        _save_setting(MIMOSA_LOCATION_KEY, json.dumps(location))
+        return location
+
     def _parse_geo_point(raw: object) -> Optional[Dict[str, float]]:
         if raw is None:
             return None
@@ -605,53 +646,27 @@ def create_app(
     portdetector_service.apply_config(plugin_store.get_port_detector())
     mimosanpm_service.apply_config(plugin_store.get_mimosanpm())
 
-    @app.get("/", response_class=HTMLResponse)
-    def landing(request: Request):
-        return templates.TemplateResponse("landing.html", _template_context(request))
-
-    @app.get("/dashboard", response_class=HTMLResponse)
-    def dashboard(request: Request):
-        return templates.TemplateResponse("dashboard.html", _template_context(request))
-
-    @app.get("/login", response_class=HTMLResponse)
-    def login_page(request: Request):
-        if _current_user(request):
-            return RedirectResponse(url="/dashboard")
-        return templates.TemplateResponse(
-            "login.html",
-            _template_context(request, error=None),
-        )
-
-    @app.post("/login", response_class=HTMLResponse)
-    async def login(request: Request):
-        form = await request.form()
-        username = str(form.get("username", "")).strip()
-        password = str(form.get("password", ""))
-        account = user_store.authenticate(username, password)
+    @app.post("/api/auth/login")
+    def login(payload: LoginInput, request: Request) -> Dict[str, Dict[str, str]]:
+        account = user_store.authenticate(payload.username, payload.password)
         if not account:
-            return templates.TemplateResponse(
-                "login.html",
-                _template_context(request, error="Credenciales inválidas"),
-                status_code=401,
-            )
+            raise HTTPException(status_code=401, detail="Credenciales inválidas")
         request.session["user"] = {"username": account.username, "role": account.role}
-        next_url = request.query_params.get("next") or "/dashboard"
-        if not next_url.startswith("/"):
-            next_url = "/dashboard"
-        return RedirectResponse(url=next_url, status_code=303)
+        return {"user": {"username": account.username, "role": account.role}}
 
-    @app.get("/logout")
-    def logout(request: Request):
+    @app.post("/api/auth/logout", status_code=204)
+    def logout(request: Request) -> Response:
         if hasattr(request, "session"):
             request.session.clear()
-        return RedirectResponse(url="/")
+        return Response(status_code=204)
 
-    @app.get("/admin", response_class=HTMLResponse)
-    def admin(request: Request):
-        user = _current_user(request)
-        if not user or user.get("role") != "admin":
-            raise HTTPException(status_code=403, detail="Acceso restringido a administradores")
-        return templates.TemplateResponse("admin.html", _template_context(request))
+    @app.get("/api/auth/session")
+    def session(request: Request) -> Dict[str, Optional[Dict[str, str]]]:
+        return {"user": _current_user(request)}
+
+    @app.get("/api/public/version")
+    def public_version() -> Dict[str, str]:
+        return {"version": app_version}
 
     @app.get("/api/users")
     def list_users(request: Request) -> List[Dict[str, str]]:
@@ -831,6 +846,36 @@ def create_app(
         proxytrap_service.reset_stats()
         return _stats_payload()
 
+    @app.websocket("/ws/live")
+    async def live_feed(websocket: WebSocket) -> None:
+        await websocket.accept()
+        session = websocket.scope.get("session") or {}
+        if not session.get("user"):
+            await websocket.close(code=4401)
+            return
+        try:
+            while True:
+                try:
+                    stats_payload = _stats_payload()
+                except sqlite3.DatabaseError:
+                    offense_store.reset()
+                    block_manager.reset()
+                    proxytrap_service.reset_stats()
+                    stats_payload = _stats_payload()
+                offenses = [_serialize_offense(item) for item in offense_store.list_recent(10)]
+                blocks = block_manager.recent_activity(limit=10)
+                await websocket.send_json(
+                    {
+                        "stats": stats_payload,
+                        "offenses": offenses,
+                        "blocks": blocks,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                await asyncio.sleep(5)
+        except WebSocketDisconnect:
+            return
+
     @app.get("/api/plugins")
     def plugins() -> List[Dict[str, object]]:
         return _serialize_plugins()
@@ -855,7 +900,7 @@ def create_app(
                 status_code=501,
                 detail="El firewall no expone alias de puertos",
             )
-        except httpx.HTTPStatusError as exc:
+        except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
         return {"ports_aliases": alias_names, "port_entries": port_entries}
@@ -876,7 +921,7 @@ def create_app(
                 status_code=501,
                 detail="El firewall no expone alias de puertos",
             )
-        except httpx.HTTPStatusError as exc:
+        except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
         return {
@@ -956,6 +1001,45 @@ def create_app(
     def list_mimosanpm_events(limit: int = 200) -> List[Dict[str, object]]:
         offenses = offense_store.list_recent_by_description_prefix("mimosanpm:", limit)
         return [_serialize_offense(offense) for offense in offenses]
+
+    @app.get("/api/plugins/mimosanpm/stats")
+    def mimosanpm_stats(limit: int = 10, sample: int = 500) -> Dict[str, object]:
+        offenses = offense_store.list_recent_by_description_prefix(
+            "mimosanpm:",
+            max(sample, limit),
+        )
+        domain_counts: Dict[str, int] = {}
+        path_counts: Dict[str, int] = {}
+        status_counts: Dict[str, int] = {}
+
+        for offense in offenses:
+            host = (offense.host or "desconocido").strip().lower()
+            if not host:
+                host = "desconocido"
+            path = (offense.path or "/").strip() or "/"
+            status_value = None
+            if offense.context and isinstance(offense.context, dict):
+                status_value = offense.context.get("status_code")
+            status = str(status_value) if status_value is not None else "n/a"
+
+            domain_counts[host] = domain_counts.get(host, 0) + 1
+            path_counts[path] = path_counts.get(path, 0) + 1
+            status_counts[status] = status_counts.get(status, 0) + 1
+
+        def top_entries(counts: Dict[str, int], key_name: str) -> List[Dict[str, object]]:
+            ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+            return [
+                {key_name: key, "count": count}
+                for key, count in ordered[:limit]
+            ]
+
+        return {
+            "total": len(offenses),
+            "sample": sample,
+            "top_domains": top_entries(domain_counts, "domain"),
+            "top_paths": top_entries(path_counts, "path"),
+            "top_status_codes": top_entries(status_counts, "status"),
+        }
 
     @app.get("/api/dashboard/top_ips")
     def dashboard_top_ips(limit: int = 10) -> List[Dict[str, object]]:
@@ -1115,6 +1199,11 @@ def create_app(
             )
 
         token = request.headers.get("X-Mimosa-Token")
+        if not token:
+            auth_header = request.headers.get("Authorization")
+            if auth_header and auth_header.lower().startswith("bearer "):
+                token = auth_header[7:]
+        token = token.strip() if token else None
         if not token or token != config.shared_secret:
             raise HTTPException(status_code=401, detail="Token inválido para MimosaNPM")
         if not payload.alerts:
@@ -1148,6 +1237,19 @@ def create_app(
             sync_interval_seconds=payload.sync_interval_seconds,
         )
         return block_manager.settings()
+
+    @app.get("/api/settings/location")
+    def settings_location() -> Dict[str, float | None]:
+        location = _get_mimosa_location()
+        if not location:
+            return {"lat": None, "lon": None}
+        return location
+
+    @app.put("/api/settings/location")
+    def update_settings_location(payload: MimosaLocationInput) -> Dict[str, float]:
+        if not (-90 <= payload.lat <= 90) or not (-180 <= payload.lon <= 180):
+            raise HTTPException(status_code=400, detail="Coordenadas fuera de rango")
+        return _set_mimosa_location(payload.lat, payload.lon)
 
     @app.get("/api/offenses")
     def list_offenses(limit: int = 100) -> List[Dict[str, object]]:
@@ -1263,6 +1365,21 @@ def create_app(
             since = datetime.now(timezone.utc) - timedelta(days=30)
         return offense_store.offense_counts_by_ip(since), label
 
+    def _resolve_public_window(window: str) -> tuple[Optional[datetime], str]:
+        normalized = (window or "").lower()
+        label = "total"
+        since = None
+        if normalized in {"24h", "24horas"}:
+            label = "24h"
+            since = datetime.now(timezone.utc) - timedelta(hours=24)
+        elif normalized in {"week", "7d", "semana"}:
+            label = "week"
+            since = datetime.now(timezone.utc) - timedelta(days=7)
+        elif normalized in {"month", "30d", "mes"}:
+            label = "month"
+            since = datetime.now(timezone.utc) - timedelta(days=30)
+        return since, label
+
     @app.get("/api/public/heatmap")
     def public_heatmap(limit: int = 300, window: str = "total") -> Dict[str, object]:
         counts, window_label = _resolve_offenses_window(window)
@@ -1358,6 +1475,85 @@ def create_app(
             "total_profiles": len(counts),
             "window": window_label,
         }
+
+    @app.get("/api/public/feed")
+    def public_feed(limit: int = 30) -> List[Dict[str, object]]:
+        offenses = offense_store.list_recent(limit)
+        profile_cache: Dict[str, Optional[IpProfile]] = {}
+        payloads: List[Dict[str, object]] = []
+        for offense in offenses:
+            serialized = _serialize_offense(offense)
+            ip = offense.source_ip
+            profile = profile_cache.get(ip)
+            if profile is None:
+                profile = offense_store.get_ip_profile(ip)
+                profile_cache[ip] = profile
+            country_meta = _parse_geo_country(profile.geo) if profile else None
+            point_meta = _parse_geo_point(profile.geo) if profile else None
+            serialized["country_code"] = (
+                country_meta.get("country_code") if country_meta else None
+            )
+            serialized["country"] = (
+                country_meta.get("country") if country_meta else None
+            )
+            serialized["lat"] = point_meta.get("lat") if point_meta else None
+            serialized["lon"] = point_meta.get("lon") if point_meta else None
+            payloads.append(serialized)
+        return payloads
+
+    @app.get("/api/public/offense_types")
+    def public_offense_types(
+        limit: int = 8,
+        sample: int = 500,
+        window: str = "24h",
+    ) -> Dict[str, object]:
+        since, window_label = _resolve_public_window(window)
+        offenses = offense_store.list_recent(max(sample, limit))
+        counts: Dict[str, int] = {}
+        total = 0
+
+        for offense in offenses:
+            if since and offense.created_at < since:
+                continue
+            serialized = _serialize_offense(offense)
+            plugin = (serialized.get("plugin") or "").strip()
+            description = (serialized.get("description_clean") or serialized.get("description") or "").strip()
+            context = offense.context if isinstance(offense.context, dict) else {}
+            port = context.get("port")
+            protocol = context.get("protocol")
+
+            if port:
+                type_name = f"port:{port}"
+                if protocol:
+                    type_name = f"{type_name}/{protocol}"
+            elif offense.path:
+                type_name = f"path:{offense.path}"
+            elif offense.host:
+                type_name = f"host:{offense.host}"
+            else:
+                type_name = description or plugin or "desconocido"
+            if plugin and type_name.lower().startswith(plugin.lower()):
+                type_name = type_name[len(plugin) :].lstrip(" :-")
+                if not type_name:
+                    type_name = plugin
+            counts[type_name] = counts.get(type_name, 0) + 1
+            total += 1
+
+        ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        types = [{"type": key, "count": count} for key, count in ordered[:limit]]
+        return {
+            "types": types,
+            "total": total,
+            "window": window_label,
+            "sample": sample,
+        }
+
+    @app.get("/api/public/mimosa_location")
+    def public_mimosa_location() -> Dict[str, float | None]:
+        location = _get_mimosa_location()
+        if not location:
+            return {"lat": None, "lon": None}
+        return location
 
     @app.get("/api/offenses/heatmap")
     def offenses_heatmap(limit: int = 300, window: str = "total") -> Dict[str, object]:
@@ -1616,8 +1812,8 @@ def create_app(
         return Response(status_code=204)
 
     @app.get("/api/firewalls/status")
-    def firewall_status() -> List[Dict[str, str | bool]]:
-        statuses: List[Dict[str, str | bool]] = []
+    def firewall_status() -> List[Dict[str, object]]:
+        statuses: List[Dict[str, object]] = []
         for config in config_store.list():
             statuses.append(check_firewall_status(config))
         return statuses
@@ -1634,7 +1830,7 @@ def create_app(
             return gateway.block_rule_stats()
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Stats no soportadas para este firewall")
-        except httpx.HTTPStatusError as exc:
+        except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
     @app.post("/api/firewalls/{config_id}/flush_states")
@@ -1644,7 +1840,7 @@ def create_app(
             gateway.flush_states()
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Flush no soportado para este firewall")
-        except httpx.HTTPStatusError as exc:
+        except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         return {"status": "ok"}
 
@@ -1660,7 +1856,7 @@ def create_app(
                 status_code=501,
                 detail="Listado de reglas no soportado para este firewall"
             )
-        except httpx.HTTPStatusError as exc:
+        except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
     @app.get("/api/firewalls/{config_id}/rules/{rule_uuid}")
@@ -1677,7 +1873,7 @@ def create_app(
                 status_code=501,
                 detail="Obtención de reglas no soportado para este firewall"
             )
-        except httpx.HTTPStatusError as exc:
+        except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
     @app.post("/api/firewalls/{config_id}/rules/{rule_uuid}/toggle")
@@ -1699,7 +1895,7 @@ def create_app(
                 status_code=501,
                 detail="Toggle de reglas no soportado para este firewall"
             )
-        except httpx.HTTPStatusError as exc:
+        except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
     @app.delete("/api/firewalls/{config_id}/rules/{rule_uuid}")
@@ -1720,7 +1916,7 @@ def create_app(
                 status_code=501,
                 detail="Eliminación de reglas no soportado para este firewall"
             )
-        except httpx.HTTPStatusError as exc:
+        except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
     @app.get("/api/firewalls/{config_id}/aliases")
@@ -1741,7 +1937,7 @@ def create_app(
                 status_code=501,
                 detail="El firewall no expone alias a través de la API",
             )
-        except httpx.HTTPStatusError as exc:
+        except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 
         return {
@@ -1769,7 +1965,7 @@ def create_app(
             block_manager.purge_expired(firewall_gateway=gateway)
             sync_info = block_manager.sync_with_firewall(gateway)
             items = gateway.list_blocks()
-        except httpx.HTTPStatusError as exc:
+        except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         return {
             "alias": TEMPORAL_ALIAS_NAME,
@@ -1786,7 +1982,7 @@ def create_app(
             items = gateway.list_blacklist()
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Blacklist no soportada para este firewall")
-        except httpx.HTTPStatusError as exc:
+        except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         return {"alias": BLACKLIST_ALIAS_NAME, "items": items}
 
@@ -1798,7 +1994,7 @@ def create_app(
             gateway.add_to_blacklist(payload.ip, payload.reason or "")
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Blacklist no soportada para este firewall")
-        except httpx.HTTPStatusError as exc:
+        except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         return {"alias": BLACKLIST_ALIAS_NAME, "ip": payload.ip}
 
@@ -1814,7 +2010,7 @@ def create_app(
             gateway.remove_from_blacklist(ip)
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Blacklist no soportada para este firewall")
-        except httpx.HTTPStatusError as exc:
+        except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         return Response(status_code=204)
 
@@ -1840,7 +2036,7 @@ def create_app(
                     payload.reason or "",
                     duration_minutes=duration_minutes,
                 )
-            except httpx.HTTPStatusError as exc:
+            except httpx.HTTPError as exc:
                 block_manager.remove(payload.ip)
                 raise HTTPException(status_code=502, detail=str(exc))
         return {
@@ -1862,7 +2058,7 @@ def create_app(
         try:
             gateway.ensure_ready()
             gateway.unblock_ip(ip)
-        except httpx.HTTPStatusError as exc:
+        except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         block_manager.remove(ip)
         return Response(status_code=204)
@@ -1872,7 +2068,7 @@ def create_app(
         config, gateway = _get_firewall(config_id)
         try:
             gateway.ensure_ready()
-        except httpx.HTTPStatusError as exc:
+        except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         except Exception as exc:  # pragma: no cover - errores específicos del cliente
             raise HTTPException(status_code=400, detail=str(exc))
@@ -1881,6 +2077,21 @@ def create_app(
             "status": "ok",
             "message": f"Alias {TEMPORAL_ALIAS_NAME} y {BLACKLIST_ALIAS_NAME} preparados",
         }
+
+    @app.get("/{full_path:path}")
+    def spa_entry(full_path: str):
+        if full_path == "api" or full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Ruta no encontrada")
+        if full_path == "ws" or full_path.startswith("ws/"):
+            raise HTTPException(status_code=404, detail="Ruta no encontrada")
+        if full_path:
+            candidate = ui_root / full_path
+            if candidate.is_file():
+                return FileResponse(candidate)
+        index_path = ui_root / "index.html"
+        if index_path.exists():
+            return FileResponse(index_path)
+        raise HTTPException(status_code=404, detail="UI build no encontrado")
 
     return app
 

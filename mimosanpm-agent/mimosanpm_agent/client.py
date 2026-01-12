@@ -22,7 +22,10 @@ class MimosaClient:
 
         response = httpx.post(
             self.api_url,
-            headers={"X-Mimosa-Token": self.shared_secret},
+            headers={
+                "X-Mimosa-Token": self.shared_secret,
+                "Authorization": f"Bearer {self.shared_secret}",
+            },
             json=payload,
             timeout=10,
         )
