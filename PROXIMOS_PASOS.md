@@ -370,7 +370,7 @@ jobs:
 
 ---
 
-### Opción 1: Svelte + SvelteKit ⭐ RECOMENDADA
+### Svelte + SvelteKit
 
 **Por qué Svelte:**
 - ✅ Bundle mínimo (~3KB vs 40KB React) - crítico para acceso móvil
@@ -526,101 +526,6 @@ mimosa-ui/                    # Nueva SPA separada
 - Curva de aprendizaje (pequeña, ~2-3 días)
 - Despliegue ligeramente más complejo
 
----
-
-### Opción 2: HTMX + Alpine.js (Conservadora)
-
-**Por qué HTMX:**
-- ✅ Mantiene arquitectura Jinja2 actual
-- ✅ Interactividad sin frameworks pesados
-- ✅ SSR-first (buen SEO)
-- ✅ Migración incremental posible
-
-**Cambios mínimos:**
-```html
-<!-- Antes: JavaScript manual -->
-<form onsubmit="blockIp(event)">...</form>
-
-<!-- Después: HTMX -->
-<form hx-post="/api/blocks"
-      hx-target="#blocks-table"
-      hx-swap="afterbegin"
-      hx-indicator="#spinner">
-  <input name="ip" required />
-  <button type="submit">Bloquear</button>
-</form>
-
-<!-- Alpine.js para tabs -->
-<div x-data="{ tab: 'config' }">
-  <button @click="tab = 'config'" :class="{ active: tab === 'config' }">
-    Configuración
-  </button>
-  <div x-show="tab === 'config'">...</div>
-</div>
-```
-
-**Estructura:**
-```
-mimosa/web/
-├── static/
-│   ├── css/
-│   │   ├── base.css         # Extraer del <style> inline
-│   │   ├── components.css   # Cards, tables, forms
-│   │   └── dashboard.css
-│   └── js/
-│       ├── alpine-setup.js
-│       └── charts.js        # Mantener Chart.js
-└── templates/
-    ├── components/          # Partials reutilizables
-    │   ├── stats_card.html
-    │   ├── table.html
-    │   └── modal.html
-    └── pages/
-```
-
-**Ventajas:**
-- ✅ Migración incremental (1-2 semanas)
-- ✅ Mantiene arquitectura actual
-- ✅ Menos complejidad de despliegue
-
-**Contras:**
-- ⚠️ No resuelve problema de 3,238 líneas en admin
-- ⚠️ Limitado para apps complejas
-- ⚠️ Sin componentes para Home Assistant
-
----
-
-### Opción 3: Vue 3 + Vite (Híbrida)
-
-**Migración progresiva:**
-1. **Fase 1**: Admin panel → Vue SPA
-2. **Fase 2**: Dashboard → Mantener o migrar
-3. **Fase 3**: Componentes compartidos
-
-**Por qué Vue:**
-- ✅ Puede empezar con un solo tab
-- ✅ Composition API (similar a React hooks)
-- ✅ Gran ecosistema (Pinia, VueRouter)
-
-**Ventajas:**
-- ✅ Migración por partes (menos riesgo)
-- ✅ Gran documentación
-
-**Contras:**
-- ⚠️ Más pesado que Svelte (~35KB gzipped)
-- ⚠️ Sintaxis más verbose
-
----
-
-### 🎯 Recomendación Final: Svelte + SvelteKit
-
-**Razones específicas para Mimosa:**
-1. Tamaño: 3,238 líneas en admin.html es insostenible a largo plazo
-2. Home Assistant: Podrás compartir componentes Svelte directamente
-3. Performance: Dashboards en tiempo real se benefician de reactivity nativa
-4. Bundle size: Crítico para acceso desde móvil o redes lentas
-5. DX: Hot reload + TypeScript = desarrollo 3x más rápido
-
 **Dependencias a añadir:**
 ```json
 {
@@ -739,16 +644,6 @@ export const borderRadius = {
   full: '999px',
 } as const;
 ```
-
----
-
-### 📊 Estimación Comparativa
-
-| Opción | Tiempo | Complejidad | Mantenibilidad | Performance | Reutilización |
-|--------|--------|-------------|----------------|-------------|---------------|
-| **Svelte** | 6-7 sem | Media | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
-| **HTMX** | 1-2 sem | Baja | ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐ |
-| **Vue** | 5-6 sem | Media | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
 
 ---
 
