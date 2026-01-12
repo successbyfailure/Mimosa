@@ -84,3 +84,13 @@ node_modules/
 package-lock.json
 package.json
 .claude/
+
+# Frontend (SvelteKit)
+mimosa-ui/.svelte-kit/
+mimosa-ui/build/
+!mimosa-ui/package.json
+!mimosa-ui/package-lock.json
+
+# UI build output for FastAPI
+mimosa/web/static/ui/*
+!mimosa/web/static/ui/.gitkeep

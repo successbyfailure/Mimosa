@@ -55,6 +55,24 @@ docker compose up -d
    - Dashboard: http://localhost:8000
    - Admin: http://localhost:8000/admin
 
+### Desarrollo de UI (SvelteKit)
+
+1. **Instalar dependencias del frontend:**
+```bash
+cd mimosa-ui
+npm install
+```
+
+2. **Levantar el frontend en modo desarrollo:**
+```bash
+npm run dev
+```
+
+3. **Build del frontend para FastAPI:**
+```bash
+npm run build:backend
+```
+
 ### Configuración
 
 El archivo `.env` contiene las variables de configuración. Las más importantes:

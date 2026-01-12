@@ -1,0 +1,1294 @@
+<script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
+  import { authStore } from '$lib/stores/auth';
+  import StatCard from '$lib/components/dashboard/StatCard.svelte';
+  import ChartCanvas from '$lib/components/charts/ChartCanvas.svelte';
+  import HeatMap from '$lib/components/charts/HeatMap.svelte';
+
+  type TimelineEntry = {
+    bucket: string;
+    count: number;
+  };
+
+  type StatsPayload = {
+    offenses: {
+      total: number;
+      last_7d: number;
+      last_24h: number;
+      last_1h: number;
+      timeline: {
+        '7d': TimelineEntry[];
+        '24h': TimelineEntry[];
+        '1h': TimelineEntry[];
+      };
+    };
+    blocks: {
+      current: number;
+      total: number;
+      last_7d: number;
+      last_24h: number;
+      last_1h: number;
+      timeline: {
+        '7d': TimelineEntry[];
+        '24h': TimelineEntry[];
+        '1h': TimelineEntry[];
+      };
+    };
+  };
+
+  type CountryEntry = {
+    country: string;
+    country_code?: string | null;
+    blocks: number;
+  };
+
+  type PublicCountryEntry = {
+    country: string;
+    country_code?: string | null;
+    offenses: number;
+  };
+
+  type HeatPoint = {
+    lat: number;
+    lon: number;
+    count: number;
+  };
+
+  type Plugin = {
+    name: string;
+    enabled: boolean;
+    config: Record<string, unknown>;
+  };
+
+  type ProxyStats = {
+    top_domains: { domain: string; hits: number }[];
+  };
+
+  type PortStats = {
+    top_ports: { protocol: string; port: number; hits: number }[];
+  };
+
+  type LiveItem = {
+    kind: 'offense' | 'block';
+    ip: string;
+    detail: string;
+    at: string;
+    plugin?: string | null;
+  };
+
+  type PublicOffense = {
+    source_ip: string;
+    description: string;
+    description_clean?: string | null;
+    created_at: string;
+    plugin?: string | null;
+    host?: string | null;
+    path?: string | null;
+    severity?: string | null;
+    country_code?: string | null;
+    country?: string | null;
+    lat?: number | null;
+    lon?: number | null;
+  };
+
+  type OffenseTypeEntry = {
+    type: string;
+    count: number;
+  };
+
+  type TopIp = {
+    ip: string;
+    offenses: number;
+    blocks: number;
+    score: number;
+    last_seen: string;
+  };
+
+  type ExpiringBlock = {
+    ip: string;
+    minutes_left: number;
+    reason?: string | null;
+  };
+
+  type BlockReason = {
+    reason: string;
+    count: number;
+    last_at: string;
+  };
+
+  type FirewallHealth = {
+    id: string;
+    name: string;
+    type: string;
+    available: boolean;
+    latency_ms?: number | null;
+    error?: string | null;
+  };
+
+  type PluginHealth = {
+    name: string;
+    enabled: boolean;
+    last_24h: number;
+    last_event_at?: string | null;
+  };
+
+  type DashboardTab = 'overview' | 'map' | 'insights' | 'health' | 'plugins';
+
+  const tabs: { value: DashboardTab; label: string }[] = [
+    { value: 'overview', label: 'Resumen' },
+    { value: 'map', label: 'Mapa' },
+    { value: 'insights', label: 'Insights' },
+    { value: 'health', label: 'Salud' },
+    { value: 'plugins', label: 'Plugins' }
+  ];
+
+  let activeTab: DashboardTab = 'overview';
+
+  let stats: StatsPayload | null = null;
+  let error: string | null = null;
+  let loading = false;
+
+  type WindowKey = '1h' | '24h' | '7d';
+  const windowOptions: { value: WindowKey; label: string }[] = [
+    { value: '7d', label: '7d' },
+    { value: '24h', label: '24h' },
+    { value: '1h', label: '1h' }
+  ];
+
+  let offenseWindow: WindowKey = '7d';
+  let blockWindow: WindowKey = '7d';
+
+  let offenseLabels: string[] = [];
+  let offenseValues: number[] = [];
+  let blockLabels: string[] = [];
+  let blockValues: number[] = [];
+  let ratioLabels: string[] = [];
+  let ratioValues: number[] = [];
+
+  let countryEntries: CountryEntry[] = [];
+  let countryLabels: string[] = [];
+  let countryValues: number[] = [];
+  let heatPoints: HeatPoint[] = [];
+  let heatmapMessage = 'Sin datos de geolocalizacion.';
+
+  type HeatmapWindow = 'current' | '24h' | 'week' | 'month' | 'total';
+  const heatmapOptions: { value: HeatmapWindow; label: string }[] = [
+    { value: 'current', label: 'Actual' },
+    { value: '24h', label: '24h' },
+    { value: 'week', label: 'Semana' },
+    { value: 'month', label: 'Mes' },
+    { value: 'total', label: 'Total' }
+  ];
+  let heatmapWindow: HeatmapWindow = 'total';
+
+  type PublicWindow = '24h' | 'week' | 'month' | 'total';
+  const publicWindowOptions: { value: PublicWindow; label: string }[] = [
+    { value: '24h', label: '24h' },
+    { value: 'week', label: 'Semana' },
+    { value: 'month', label: 'Mes' },
+    { value: 'total', label: 'Total' }
+  ];
+  let publicWindow: PublicWindow = '24h';
+
+  let plugins: Plugin[] = [];
+  let proxyStats: ProxyStats | null = null;
+  let portStats: PortStats | null = null;
+  let proxyLabels: string[] = [];
+  let proxyValues: number[] = [];
+  let portLabels: string[] = [];
+  let portValues: number[] = [];
+
+  let liveFeedRaw: LiveItem[] = [];
+  let liveFeed: LiveItem[] = [];
+  let liveFilter = '';
+  let wsStatus = 'disconnected';
+  let lastLiveAt: string | null = null;
+  let ws: WebSocket | null = null;
+  let reconnectTimer: number | null = null;
+
+  let topIps: TopIp[] = [];
+  let expiringBlocks: ExpiringBlock[] = [];
+  let blockReasons: BlockReason[] = [];
+  let firewallsHealth: FirewallHealth[] = [];
+  let pluginsHealth: PluginHealth[] = [];
+  let insightsError: string | null = null;
+
+  let statsInterval: number | undefined;
+  let insightInterval: number | undefined;
+  let pluginInterval: number | undefined;
+  let heatmapInterval: number | undefined;
+  let publicFeedInterval: number | undefined;
+  let publicGeoInterval: number | undefined;
+  let publicTypesInterval: number | undefined;
+
+  let isPublic = false;
+  let publicFeed: PublicOffense[] = [];
+  let publicHeatPoints: HeatPoint[] = [];
+  let publicHeatmapMessage = 'Sin datos de geolocalizacion.';
+  let publicCountries: PublicCountryEntry[] = [];
+  let publicCountryLabels: string[] = [];
+  let publicCountryValues: number[] = [];
+  let publicTypes: OffenseTypeEntry[] = [];
+  let publicTypeLabels: string[] = [];
+  let publicTypeValues: number[] = [];
+  let publicLastAt: string | null = null;
+  let publicError: string | null = null;
+  let publicLatestEventAt: string | null = null;
+  let publicLatestEventMs: number | null = null;
+  let publicPulseKey = 0;
+  let publicAttackKey = 0;
+  let publicAttackOrigins: { lat: number; lon: number }[] = [];
+  let mimosaLocation: { lat: number; lon: number } | null = null;
+
+  let authInitialized = false;
+  let publicInitialized = false;
+
+  const formatBucket = (bucket: string) => {
+    const parts = bucket.split(' ');
+    return parts.length > 1 ? parts[1] : bucket;
+  };
+
+  const getTimeline = (
+    timeline: StatsPayload['offenses']['timeline'],
+    key: WindowKey
+  ) => {
+    return timeline[key] || timeline['24h'];
+  };
+
+  const applyStats = (payload: StatsPayload) => {
+    stats = payload;
+    const offenseTimeline = getTimeline(payload.offenses.timeline, offenseWindow);
+    const blockTimeline = getTimeline(payload.blocks.timeline, blockWindow);
+    offenseLabels = offenseTimeline.map((entry) => formatBucket(entry.bucket));
+    offenseValues = offenseTimeline.map((entry) => entry.count);
+    blockLabels = blockTimeline.map((entry) => formatBucket(entry.bucket));
+    blockValues = blockTimeline.map((entry) => entry.count);
+
+    const ratioOffense = payload.offenses.timeline['24h'] || [];
+    const ratioBlocks = payload.blocks.timeline['24h'] || [];
+    ratioLabels = ratioOffense.map((entry) => formatBucket(entry.bucket));
+    ratioValues = ratioOffense.map((entry, index) => {
+      const offenseCount = entry.count;
+      const blockCount = ratioBlocks[index]?.count ?? 0;
+      if (!offenseCount) {
+        return 0;
+      }
+      return Number((blockCount / offenseCount).toFixed(2));
+    });
+  };
+
+  const loadStats = async () => {
+    loading = true;
+    error = null;
+    try {
+      const response = await fetch('/api/stats', { credentials: 'include' });
+      if (!response.ok) {
+        throw new Error('No se pudo cargar el estado');
+      }
+      const payload = (await response.json()) as StatsPayload;
+      applyStats(payload);
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Error desconocido';
+    } finally {
+      loading = false;
+    }
+  };
+
+  const loadHeatmap = async () => {
+    heatmapMessage = 'Cargando datos...';
+    try {
+      const [heatResponse, countryResponse] = await Promise.all([
+        fetch(`/api/offenses/heatmap?window=${heatmapWindow}&limit=200`, {
+          credentials: 'include'
+        }),
+        fetch(`/api/offenses/blocks_by_country?window=${heatmapWindow}&limit=8`, {
+          credentials: 'include'
+        })
+      ]);
+      if (heatResponse.ok) {
+        const payload = (await heatResponse.json()) as {
+          points: HeatPoint[];
+          total_profiles?: number;
+          points_count?: number;
+        };
+        heatPoints = payload.points || [];
+        if (!heatPoints.length) {
+          heatmapMessage = 'Sin datos de geolocalizacion.';
+        } else if (payload.points_count) {
+          heatmapMessage = `Puntos: ${payload.points_count}`;
+        } else {
+          heatmapMessage = '';
+        }
+      } else {
+        heatPoints = [];
+        heatmapMessage = 'No se pudo cargar el mapa.';
+      }
+      if (countryResponse.ok) {
+        const payload = (await countryResponse.json()) as { countries: CountryEntry[] };
+        countryEntries = payload.countries || [];
+        countryLabels = countryEntries.map((entry) => entry.country);
+        countryValues = countryEntries.map((entry) => entry.blocks);
+      }
+    } catch (err) {
+      heatPoints = [];
+      heatmapMessage = 'No se pudo cargar el mapa.';
+    }
+  };
+
+  const loadPublicFeed = async () => {
+    try {
+      const response = await fetch('/api/public/feed?limit=10');
+      if (!response.ok) {
+        throw new Error('No se pudo cargar el feed');
+      }
+      const payload = (await response.json()) as PublicOffense[];
+      const nextFeed = payload.slice(0, 10);
+      publicFeed = nextFeed;
+      const latest = nextFeed[0]?.created_at;
+      const latestMs = latest ? new Date(latest).getTime() : null;
+      const attackOrigins: { lat: number; lon: number }[] = [];
+      if (latestMs && latestMs !== publicLatestEventMs) {
+        publicPulseKey += 1;
+        for (const item of nextFeed) {
+          const itemMs = new Date(item.created_at).getTime();
+          if (publicLatestEventMs && itemMs <= publicLatestEventMs) {
+            continue;
+          }
+          if (item.lat == null || item.lon == null) {
+            continue;
+          }
+          attackOrigins.push({ lat: item.lat, lon: item.lon });
+        }
+        if (attackOrigins.length) {
+          publicAttackOrigins = attackOrigins;
+          publicAttackKey += 1;
+        }
+        publicLatestEventAt = latest;
+        publicLatestEventMs = latestMs;
+      }
+      publicLastAt = new Date().toISOString();
+      publicError = null;
+    } catch (err) {
+      publicError = err instanceof Error ? err.message : 'No se pudo cargar el feed';
+    }
+  };
+
+  const loadMimosaLocation = async () => {
+    try {
+      const response = await fetch('/api/public/mimosa_location');
+      if (!response.ok) {
+        return;
+      }
+      const payload = (await response.json()) as { lat: number | null; lon: number | null };
+      if (payload.lat == null || payload.lon == null) {
+        mimosaLocation = null;
+        return;
+      }
+      mimosaLocation = { lat: payload.lat, lon: payload.lon };
+    } catch (err) {
+      mimosaLocation = null;
+    }
+  };
+
+  const loadPublicGeo = async () => {
+    publicHeatmapMessage = 'Cargando datos...';
+    try {
+      const [heatResponse, countryResponse] = await Promise.all([
+        fetch(`/api/public/heatmap?window=${publicWindow}&limit=200`),
+        fetch(`/api/public/offenses_by_country?window=${publicWindow}&limit=8`)
+      ]);
+      if (heatResponse.ok) {
+        const payload = (await heatResponse.json()) as {
+          points: HeatPoint[];
+          points_count?: number;
+        };
+        publicHeatPoints = payload.points || [];
+        if (!publicHeatPoints.length) {
+          publicHeatmapMessage = 'Sin datos de geolocalizacion.';
+        } else if (payload.points_count) {
+          publicHeatmapMessage = `Puntos: ${payload.points_count}`;
+        } else {
+          publicHeatmapMessage = '';
+        }
+      } else {
+        publicHeatPoints = [];
+        publicHeatmapMessage = 'No se pudo cargar el mapa.';
+      }
+      if (countryResponse.ok) {
+        const payload = (await countryResponse.json()) as { countries: PublicCountryEntry[] };
+        publicCountries = payload.countries || [];
+        publicCountryLabels = publicCountries.map((entry) => entry.country);
+        publicCountryValues = publicCountries.map((entry) => entry.offenses);
+      }
+    } catch (err) {
+      publicHeatPoints = [];
+      publicHeatmapMessage = 'No se pudo cargar el mapa.';
+    }
+  };
+
+  const loadPublicTypes = async () => {
+    try {
+      const response = await fetch(
+        `/api/public/offense_types?window=${publicWindow}&limit=8&sample=500`
+      );
+      if (!response.ok) {
+        throw new Error('No se pudo cargar tipos');
+      }
+      const payload = (await response.json()) as { types: OffenseTypeEntry[] };
+      publicTypes = payload.types || [];
+      publicTypeLabels = publicTypes.map((entry) => entry.type);
+      publicTypeValues = publicTypes.map((entry) => entry.count);
+    } catch (err) {
+      publicTypes = [];
+    }
+  };
+
+  const loadPlugins = async () => {
+    try {
+      const response = await fetch('/api/plugins', { credentials: 'include' });
+      if (!response.ok) {
+        return;
+      }
+      plugins = (await response.json()) as Plugin[];
+
+      const proxy = plugins.find((item) => item.name === 'proxytrap' && item.enabled);
+      const port = plugins.find((item) => item.name === 'portdetector' && item.enabled);
+
+      if (proxy) {
+        const proxyResponse = await fetch('/api/plugins/proxytrap/stats', {
+          credentials: 'include'
+        });
+        if (proxyResponse.ok) {
+          proxyStats = (await proxyResponse.json()) as ProxyStats;
+          proxyLabels = proxyStats.top_domains.map((entry) => entry.domain);
+          proxyValues = proxyStats.top_domains.map((entry) => entry.hits);
+        }
+      }
+      if (port) {
+        const portResponse = await fetch('/api/plugins/portdetector/stats?limit=5', {
+          credentials: 'include'
+        });
+        if (portResponse.ok) {
+          portStats = (await portResponse.json()) as PortStats;
+          portLabels = portStats.top_ports.map((entry) =>
+            `${entry.protocol.toUpperCase()} ${entry.port}`
+          );
+          portValues = portStats.top_ports.map((entry) => entry.hits);
+        }
+      }
+    } catch (err) {
+      // opcional
+    }
+  };
+
+  const fetchJson = async <T>(path: string): Promise<T> => {
+    const response = await fetch(path, { credentials: 'include' });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload?.detail || 'Error en la solicitud');
+    }
+    return response.json() as Promise<T>;
+  };
+
+  const loadInsights = async () => {
+    insightsError = null;
+    const [topResult, expiringResult, reasonsResult, healthResult] = await Promise.allSettled([
+      fetchJson<TopIp[]>('/api/dashboard/top_ips?limit=10'),
+      fetchJson<ExpiringBlock[]>('/api/dashboard/blocks/expiring?within_minutes=60&limit=10'),
+      fetchJson<BlockReason[]>('/api/dashboard/blocks/reasons?limit=10'),
+      fetchJson<{ firewalls: FirewallHealth[]; plugins: PluginHealth[] }>(
+        '/api/dashboard/health'
+      )
+    ]);
+
+    if (topResult.status === 'fulfilled') {
+      topIps = topResult.value;
+    } else {
+      insightsError = topResult.reason?.message || 'No se pudo cargar Top IPs.';
+    }
+
+    if (expiringResult.status === 'fulfilled') {
+      expiringBlocks = expiringResult.value;
+    }
+
+    if (reasonsResult.status === 'fulfilled') {
+      blockReasons = reasonsResult.value;
+    }
+
+    if (healthResult.status === 'fulfilled') {
+      firewallsHealth = healthResult.value.firewalls || [];
+      pluginsHealth = healthResult.value.plugins || [];
+    }
+  };
+
+  const buildLiveFeed = (payload: { offenses?: any[]; blocks?: any[] }) => {
+    const items: LiveItem[] = [];
+    for (const offense of payload.offenses || []) {
+      items.push({
+        kind: 'offense',
+        ip: offense.source_ip,
+        detail: offense.description_clean || offense.description,
+        at: offense.created_at,
+        plugin: offense.plugin || offense.context?.plugin || null
+      });
+    }
+    for (const block of payload.blocks || []) {
+      items.push({
+        kind: 'block',
+        ip: block.ip,
+        detail: `${block.action}: ${block.reason}`,
+        at: block.at,
+        plugin: 'blocks'
+      });
+    }
+    items.sort((a, b) => (a.at < b.at ? 1 : -1));
+    liveFeedRaw = items.slice(0, 30);
+  };
+
+  const connectLiveFeed = () => {
+    if (ws) {
+      ws.close();
+    }
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${protocol}://${window.location.host}/ws/live`);
+    wsStatus = 'connecting';
+
+    ws.onopen = () => {
+      wsStatus = 'connected';
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.stats) {
+          applyStats(payload.stats as StatsPayload);
+        }
+        buildLiveFeed(payload);
+        lastLiveAt = payload.timestamp || new Date().toISOString();
+      } catch (err) {
+        // ignore
+      }
+    };
+
+    ws.onclose = (event) => {
+      if (event.code === 4401) {
+        wsStatus = 'auth_required';
+        return;
+      }
+      wsStatus = 'disconnected';
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+      }
+      reconnectTimer = window.setTimeout(connectLiveFeed, 5000);
+    };
+  };
+
+  const formatTime = (value: string) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    return date.toLocaleTimeString();
+  };
+
+  const formatDate = (value?: string | null) => {
+    if (!value) {
+      return '-';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    return date.toLocaleString();
+  };
+
+  const countryFlag = (code?: string | null) => {
+    if (!code || code.length !== 2) {
+      return '—';
+    }
+    const base = 0x1f1e6;
+    const first = code.toUpperCase().charCodeAt(0) - 65 + base;
+    const second = code.toUpperCase().charCodeAt(1) - 65 + base;
+    return String.fromCodePoint(first, second);
+  };
+
+  const handleOffenseWindowChange = (event: Event) => {
+    offenseWindow = (event.target as HTMLSelectElement).value as WindowKey;
+    if (stats) {
+      applyStats(stats);
+    }
+  };
+
+  const handleBlockWindowChange = (event: Event) => {
+    blockWindow = (event.target as HTMLSelectElement).value as WindowKey;
+    if (stats) {
+      applyStats(stats);
+    }
+  };
+
+  const handleHeatmapChange = (event: Event) => {
+    heatmapWindow = (event.target as HTMLSelectElement).value as HeatmapWindow;
+    loadHeatmap();
+  };
+
+  const handlePublicWindowChange = (event: Event) => {
+    publicWindow = (event.target as HTMLSelectElement).value as PublicWindow;
+    loadPublicGeo();
+    loadPublicTypes();
+  };
+
+  const wsLabel = () => {
+    if (wsStatus === 'connected') {
+      return 'en vivo';
+    }
+    if (wsStatus === 'connecting') {
+      return 'conectando';
+    }
+    if (wsStatus === 'auth_required') {
+      return 'login requerido';
+    }
+    return 'offline';
+  };
+
+  const setTab = (tab: DashboardTab) => {
+    activeTab = tab;
+    if (tab === 'map') {
+      loadHeatmap();
+    }
+    if (tab === 'insights' || tab === 'health') {
+      loadInsights();
+    }
+    if (tab === 'plugins') {
+      loadPlugins();
+    }
+  };
+
+  const stopAuth = () => {
+    if (statsInterval) {
+      window.clearInterval(statsInterval);
+    }
+    if (insightInterval) {
+      window.clearInterval(insightInterval);
+    }
+    if (pluginInterval) {
+      window.clearInterval(pluginInterval);
+    }
+    if (heatmapInterval) {
+      window.clearInterval(heatmapInterval);
+    }
+    if (ws) {
+      ws.close();
+      ws = null;
+    }
+    if (reconnectTimer) {
+      window.clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  };
+
+  const stopPublic = () => {
+    if (publicFeedInterval) {
+      window.clearInterval(publicFeedInterval);
+    }
+    if (publicGeoInterval) {
+      window.clearInterval(publicGeoInterval);
+    }
+    if (publicTypesInterval) {
+      window.clearInterval(publicTypesInterval);
+    }
+  };
+
+  const initAuth = () => {
+    stopPublic();
+    authInitialized = true;
+    publicInitialized = false;
+    isPublic = false;
+    loadStats();
+    loadHeatmap();
+    loadPlugins();
+    loadInsights();
+    connectLiveFeed();
+    statsInterval = window.setInterval(loadStats, 60000);
+    insightInterval = window.setInterval(loadInsights, 120000);
+    pluginInterval = window.setInterval(loadPlugins, 120000);
+    heatmapInterval = window.setInterval(loadHeatmap, 180000);
+  };
+
+  const initPublic = () => {
+    stopAuth();
+    publicInitialized = true;
+    authInitialized = false;
+    isPublic = true;
+    loadPublicFeed();
+    loadPublicGeo();
+    loadPublicTypes();
+    loadMimosaLocation();
+    publicFeedInterval = window.setInterval(loadPublicFeed, 5000);
+    publicGeoInterval = window.setInterval(loadPublicGeo, 60000);
+    publicTypesInterval = window.setInterval(loadPublicTypes, 45000);
+  };
+
+  $: if ($authStore.user && wsStatus === 'auth_required') {
+    connectLiveFeed();
+  }
+
+  $: liveFeed = liveFilter
+    ? liveFeedRaw.filter((item) => {
+        const needle = liveFilter.toLowerCase();
+        if (needle === 'blocks') {
+          return item.kind === 'block';
+        }
+        return (item.plugin || '').toLowerCase() === needle;
+      })
+    : liveFeedRaw;
+
+  $: if (!$authStore.loading) {
+    if ($authStore.user) {
+      if (!authInitialized) {
+        initAuth();
+      }
+    } else if (!publicInitialized) {
+      initPublic();
+    }
+  }
+
+  onMount(() => {
+    if (!$authStore.loading) {
+      if ($authStore.user) {
+        initAuth();
+      } else {
+        initPublic();
+      }
+    }
+  });
+
+  onDestroy(() => {
+    stopAuth();
+    stopPublic();
+  });
+</script>
+
+{#if isPublic}
+  <section class="page-header">
+    <div class="badge">Publico</div>
+  </section>
+
+  {#if publicError}
+    <div class="surface" style="padding: 16px; border-color: rgba(248, 113, 113, 0.5);">
+      <strong>Error</strong>
+      <div style="color: var(--muted); margin-top: 4px;">{publicError}</div>
+    </div>
+  {/if}
+
+  <section class="section split public-geo">
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Heatmap</div>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="margin-top: 12px;">Actividad global</h3>
+        <select value={publicWindow} on:change={handlePublicWindowChange} style="max-width: 140px;">
+          {#each publicWindowOptions as option}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </div>
+      <HeatMap
+        points={publicHeatPoints}
+        height={520}
+        emptyMessage={publicHeatmapMessage}
+        pulseKey={publicPulseKey}
+        mimosaLocation={mimosaLocation}
+        attackOrigins={publicAttackOrigins}
+        attackKey={publicAttackKey}
+      />
+      <div style="margin-top: 8px; color: var(--muted); font-size: 12px;">
+        {publicHeatmapMessage}
+      </div>
+    </div>
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Geo</div>
+      <h3 style="margin-top: 12px;">Ranking por pais</h3>
+      <div class="list" style="margin-top: 12px;">
+        {#if publicCountries.length === 0}
+          <div class="list-item">Sin datos geo.</div>
+        {:else}
+          {#each publicCountries as entry}
+            <div class="list-item">
+              <span>{countryFlag(entry.country_code)} {entry.country}</span>
+              <strong>{entry.offenses}</strong>
+            </div>
+          {/each}
+        {/if}
+      </div>
+    </div>
+  </section>
+
+  <section class="section split">
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Actividad</div>
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+        <h3 style="margin-top: 12px;">Actividad en vivo</h3>
+        <div style="color: var(--muted); font-size: 12px;">
+          {#if publicLastAt}
+            Actualizado: {formatTime(publicLastAt)}
+          {/if}
+        </div>
+      </div>
+      <div class="list" style="margin-top: 12px;">
+        {#if publicFeed.length === 0}
+          <div class="list-item">Sin actividad reciente.</div>
+        {:else}
+          {#each publicFeed as item}
+            <div class="list-item live-row">
+              <span class="live-left">
+                {countryFlag(item.country_code)} {item.source_ip}
+                <span class="live-plugin">· {item.plugin || 'ofensa'}</span>
+              </span>
+              <span
+                class="live-reason"
+                title={item.description_clean || item.description}
+              >
+                {item.description_clean || item.description}
+              </span>
+              <strong class="live-time">{formatTime(item.created_at)}</strong>
+            </div>
+          {/each}
+        {/if}
+      </div>
+    </div>
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Tipos</div>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="margin-top: 12px;">Tipo de ofensa</h3>
+        <select value={publicWindow} on:change={handlePublicWindowChange} style="max-width: 140px;">
+          {#each publicWindowOptions as option}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </div>
+      <ChartCanvas
+        labels={publicTypeLabels}
+        data={publicTypeValues}
+        label="Tipos"
+        type="doughnut"
+        showLegend={true}
+      />
+      <div class="list" style="margin-top: 12px;">
+        {#if publicTypes.length === 0}
+          <div class="list-item">Sin datos de tipos.</div>
+        {:else}
+          {#each publicTypes as entry}
+            <div class="list-item">
+              <span>{entry.type}</span>
+              <strong>{entry.count}</strong>
+            </div>
+          {/each}
+        {/if}
+      </div>
+    </div>
+  </section>
+{:else}
+<section class="page-header">
+  <div class="badge">Resumen</div>
+  <h1>Estado de Mimosa</h1>
+  <p>Actividad en tiempo real, tendencias y salud operativa.</p>
+</section>
+
+<div class="dashboard-tabs">
+  {#each tabs as tab}
+    <button
+      class="dashboard-tab {activeTab === tab.value ? 'active' : ''}"
+      on:click={() => setTab(tab.value)}
+    >
+      {tab.label}
+    </button>
+  {/each}
+</div>
+
+{#if error}
+  <div class="surface" style="padding: 16px; border-color: rgba(248, 113, 113, 0.5);">
+    <strong>Error</strong>
+    <div style="color: var(--muted); margin-top: 4px;">{error}</div>
+  </div>
+{/if}
+
+{#if activeTab === 'overview'}
+  {#if !error}
+    <div class="card-grid">
+      <StatCard
+        title="Bloqueos activos"
+        value={stats?.blocks.current ?? '-'}
+        subtitle="Activos ahora"
+        trend="neutral"
+      />
+      <StatCard
+        title="Bloqueos 24h"
+        value={stats?.blocks.last_24h ?? '-'}
+        subtitle="Ultimas 24 horas"
+        trend="up"
+      />
+      <StatCard
+        title="Ofensas 24h"
+        value={stats?.offenses.last_24h ?? '-'}
+        subtitle="Ultimas 24 horas"
+        trend="up"
+      />
+      <StatCard
+        title="Ofensas 7d"
+        value={stats?.offenses.last_7d ?? '-'}
+        subtitle="Ultimos 7 dias"
+        trend="neutral"
+      />
+    </div>
+  {/if}
+
+  <section class="section split">
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Tendencias</div>
+      <div style="display: flex; align-items: center; justify-content: space-between;">
+        <h3 style="margin-top: 12px;">Ofensas</h3>
+        <select value={offenseWindow} on:change={handleOffenseWindowChange} style="max-width: 120px;">
+          {#each windowOptions as option}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </div>
+      <ChartCanvas labels={offenseLabels} data={offenseValues} label="Ofensas" color="#38bdf8" />
+    </div>
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Tendencias</div>
+      <div style="display: flex; align-items: center; justify-content: space-between;">
+        <h3 style="margin-top: 12px;">Bloqueos</h3>
+        <select value={blockWindow} on:change={handleBlockWindowChange} style="max-width: 120px;">
+          {#each windowOptions as option}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </div>
+      <ChartCanvas labels={blockLabels} data={blockValues} label="Bloqueos" color="#2dd4bf" />
+    </div>
+  </section>
+
+  <section class="section split">
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Ratio</div>
+      <h3 style="margin-top: 12px;">Bloqueo / Ofensa (24h)</h3>
+      <ChartCanvas labels={ratioLabels} data={ratioValues} label="Ratio" color="#fbbf24" />
+    </div>
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Live</div>
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+        <h3 style="margin-top: 12px;">Feed en vivo</h3>
+        <span class="tag">{wsLabel()}</span>
+      </div>
+      <div style="display: flex; gap: 10px; align-items: center; margin-top: 8px;">
+        <select bind:value={liveFilter} style="max-width: 200px;">
+          <option value="">Todas</option>
+          <option value="mimosanpm">MimosaNPM</option>
+          <option value="proxytrap">ProxyTrap</option>
+          <option value="portdetector">Port Detector</option>
+          <option value="blocks">Bloqueos</option>
+        </select>
+        <div style="color: var(--muted); font-size: 12px;">
+          {#if wsStatus === 'auth_required'}
+            Inicia sesion para ver eventos.
+          {:else if lastLiveAt}
+            Ultima actualizacion: {formatTime(lastLiveAt)}
+          {/if}
+        </div>
+      </div>
+      <div class="list" style="margin-top: 12px;">
+        {#if liveFeed.length === 0}
+          <div class="list-item">Esperando eventos...</div>
+        {:else}
+          {#each liveFeed as item}
+            <div class="list-item">
+              <div>
+                <div style="font-weight: 600;">
+                  {item.kind === 'offense' ? 'Ofensa' : 'Bloqueo'} - {item.ip}
+                </div>
+                <div style="color: var(--muted); font-size: 12px;">{item.detail}</div>
+              </div>
+              <strong>{formatTime(item.at)}</strong>
+            </div>
+          {/each}
+        {/if}
+      </div>
+    </div>
+  </section>
+{/if}
+
+{#if activeTab === 'map'}
+  <section class="section split">
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Geo</div>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="margin-top: 12px;">Bloqueos por pais</h3>
+        <select value={heatmapWindow} on:change={handleHeatmapChange} style="max-width: 140px;">
+          {#each heatmapOptions as option}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </div>
+      <ChartCanvas
+        labels={countryLabels}
+        data={countryValues}
+        label="Bloqueos"
+        color="#fbbf24"
+        type="bar"
+      />
+      <div class="list" style="margin-top: 12px;">
+        {#if countryEntries.length === 0}
+          <div class="list-item">Sin datos geo.</div>
+        {:else}
+          {#each countryEntries as entry}
+            <div class="list-item">
+              <span>{countryFlag(entry.country_code)} {entry.country}</span>
+              <strong>{entry.blocks}</strong>
+            </div>
+          {/each}
+        {/if}
+      </div>
+    </div>
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Heatmap</div>
+      <h3 style="margin-top: 12px;">Actividad global</h3>
+      <HeatMap points={heatPoints} height={280} emptyMessage={heatmapMessage} />
+      <div style="margin-top: 8px; color: var(--muted); font-size: 12px;">
+        {heatmapMessage}
+      </div>
+    </div>
+  </section>
+{/if}
+
+{#if activeTab === 'insights'}
+  {#if insightsError}
+    <div class="surface" style="padding: 16px; border-color: rgba(248, 113, 113, 0.5);">
+      <strong>Error</strong>
+      <div style="color: var(--muted); margin-top: 4px;">{insightsError}</div>
+    </div>
+  {/if}
+  <section class="section" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));">
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Riesgo</div>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="margin-top: 12px;">Top IPs</h3>
+        <button class="ghost" on:click={loadInsights}>Refrescar</button>
+      </div>
+      <div style="margin-top: 12px; overflow-x: auto;">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>IP</th>
+              <th>Score</th>
+              <th>Ofensas</th>
+              <th>Bloqueos</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#if topIps.length === 0}
+              <tr><td colspan="4">Sin datos.</td></tr>
+            {:else}
+              {#each topIps as item}
+                <tr>
+                  <td>{item.ip}</td>
+                  <td>{item.score}</td>
+                  <td>{item.offenses}</td>
+                  <td>{item.blocks}</td>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Expiran</div>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="margin-top: 12px;">Bloqueos por expirar</h3>
+        <button class="ghost" on:click={loadInsights}>Refrescar</button>
+      </div>
+      <div style="margin-top: 12px; overflow-x: auto;">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>IP</th>
+              <th>Min</th>
+              <th>Motivo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#if expiringBlocks.length === 0}
+              <tr><td colspan="3">Sin datos.</td></tr>
+            {:else}
+              {#each expiringBlocks as item}
+                <tr>
+                  <td>{item.ip}</td>
+                  <td>{item.minutes_left}</td>
+                  <td>{item.reason || '-'}</td>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Eficacia</div>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="margin-top: 12px;">Motivos frecuentes</h3>
+        <button class="ghost" on:click={loadInsights}>Refrescar</button>
+      </div>
+      <div style="margin-top: 12px; overflow-x: auto;">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Motivo</th>
+              <th>Bloqueos</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#if blockReasons.length === 0}
+              <tr><td colspan="2">Sin datos.</td></tr>
+            {:else}
+              {#each blockReasons as item}
+                <tr>
+                  <td>{item.reason}</td>
+                  <td>{item.count}</td>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+{/if}
+
+{#if activeTab === 'health'}
+  <section class="section split">
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Health</div>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="margin-top: 12px;">Firewalls</h3>
+        <button class="ghost" on:click={loadInsights}>Refrescar</button>
+      </div>
+      <div style="margin-top: 12px; overflow-x: auto;">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Estado</th>
+              <th>Latencia</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#if firewallsHealth.length === 0}
+              <tr><td colspan="3">Sin firewalls.</td></tr>
+            {:else}
+              {#each firewallsHealth as fw}
+                <tr>
+                  <td>{fw.name} ({fw.type})</td>
+                  <td>
+                    <span class="tag" style="color: {fw.available ? 'var(--success)' : 'var(--danger)'};">
+                      {fw.available ? 'Online' : 'Offline'}
+                    </span>
+                  </td>
+                  <td>{fw.latency_ms ?? '-'}{fw.latency_ms ? ' ms' : ''}</td>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Health</div>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="margin-top: 12px;">Plugins</h3>
+        <button class="ghost" on:click={loadInsights}>Refrescar</button>
+      </div>
+      <div style="margin-top: 12px; overflow-x: auto;">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Plugin</th>
+              <th>Estado</th>
+              <th>Eventos 24h</th>
+              <th>Ultimo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#if pluginsHealth.length === 0}
+              <tr><td colspan="4">Sin plugins.</td></tr>
+            {:else}
+              {#each pluginsHealth as plugin}
+                <tr>
+                  <td>{plugin.name}</td>
+                  <td>
+                    <span class="tag" style="color: {plugin.enabled ? 'var(--success)' : 'var(--warning)'};">
+                      {plugin.enabled ? 'Activo' : 'Inactivo'}
+                    </span>
+                  </td>
+                  <td>{plugin.last_24h}</td>
+                  <td>{formatDate(plugin.last_event_at)}</td>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+{/if}
+
+{#if activeTab === 'plugins'}
+  <section class="section split">
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Plugins</div>
+      <h3 style="margin-top: 12px;">ProxyTrap</h3>
+      <ChartCanvas
+        labels={proxyLabels}
+        data={proxyValues}
+        label="Hits"
+        color="#f87171"
+        type="bar"
+      />
+      <div class="list" style="margin-top: 12px;">
+        {#if proxyStats?.top_domains?.length}
+          {#each proxyStats.top_domains.slice(0, 5) as entry}
+            <div class="list-item">
+              <span>{entry.domain}</span>
+              <strong>{entry.hits}</strong>
+            </div>
+          {/each}
+        {:else}
+          <div class="list-item">Sin datos de ProxyTrap.</div>
+        {/if}
+      </div>
+    </div>
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Plugins</div>
+      <h3 style="margin-top: 12px;">PortDetector</h3>
+      <ChartCanvas
+        labels={portLabels}
+        data={portValues}
+        label="Hits"
+        color="#38bdf8"
+        type="bar"
+      />
+      <div class="list" style="margin-top: 12px;">
+        {#if portStats?.top_ports?.length}
+          {#each portStats.top_ports as entry}
+            <div class="list-item">
+              <span>{entry.protocol.toUpperCase()} {entry.port}</span>
+              <strong>{entry.hits}</strong>
+            </div>
+          {/each}
+        {:else}
+          <div class="list-item">Sin datos de PortDetector.</div>
+        {/if}
+      </div>
+    </div>
+  </section>
+{/if}
+{/if}
