@@ -24,6 +24,7 @@ class FirewallConfig:
     base_url: str | None
     api_key: str | None
     api_secret: str | None
+    enabled: bool = True
     verify_ssl: bool = True
     timeout: float = 5.0
     apply_changes: bool = True
@@ -37,6 +38,7 @@ class FirewallConfig:
         base_url: str | None,
         api_key: str | None,
         api_secret: str | None,
+        enabled: bool = True,
         verify_ssl: bool = True,
         timeout: float = 5.0,
         apply_changes: bool = True,
@@ -48,6 +50,7 @@ class FirewallConfig:
             base_url=base_url,
             api_key=api_key,
             api_secret=api_secret,
+            enabled=enabled,
             verify_ssl=verify_ssl,
             timeout=timeout,
             apply_changes=apply_changes,
@@ -86,6 +89,7 @@ class FirewallConfigStore:
                     "base_url",
                     "api_key",
                     "api_secret",
+                    "enabled",
                     "verify_ssl",
                     "timeout",
                     "apply_changes",
@@ -189,12 +193,16 @@ def check_firewall_status(config: FirewallConfig) -> Dict[str, str | bool]:
         "id": config.id,
         "name": config.name,
         "type": config.type,
+        "enabled": config.enabled,
         "online": False,
         "message": "",
         "alias_ready": False,
         "alias_created": False,
         "applied_changes": False,
     }
+    if not config.enabled:
+        status["message"] = "Desactivado"
+        return status
     try:
         info = gateway.get_status()
         status["online"] = bool(info.get("available"))

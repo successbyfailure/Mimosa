@@ -76,6 +76,7 @@ class FirewallInput(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
     api_secret: str | None = None
+    enabled: bool = True
     verify_ssl: bool = True
     timeout: float = 5.0
     apply_changes: bool = True
@@ -376,9 +377,9 @@ def create_app(
     )
 
     def _select_gateway() -> FirewallGateway:
-        configs = config_store.list()
+        configs = [config for config in config_store.list() if config.enabled]
         if not configs:
-            raise RuntimeError("Configura un firewall OPNsense antes de continuar")
+            raise RuntimeError("No hay firewalls activos configurados")
 
         primary = configs[0]
         cached = gateway_cache.get(primary.id)
@@ -426,6 +427,8 @@ def create_app(
 
     def _sync_whitelist_entry(cidr: str, *, remove: bool = False) -> None:
         for config in config_store.list():
+            if not config.enabled:
+                continue
             gateway = gateway_cache.get(config.id)
             if not gateway:
                 gateway = build_firewall_gateway(config)
@@ -1124,6 +1127,18 @@ def create_app(
     def dashboard_health() -> Dict[str, object]:
         firewalls = []
         for config in config_store.list():
+            if not config.enabled:
+                firewalls.append(
+                    {
+                        "id": config.id,
+                        "name": config.name,
+                        "type": config.type,
+                        "available": False,
+                        "latency_ms": None,
+                        "error": "Desactivado",
+                    }
+                )
+                continue
             try:
                 gateway = build_firewall_gateway(config)
                 start = datetime.now(timezone.utc)

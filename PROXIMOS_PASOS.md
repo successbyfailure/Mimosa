@@ -2,15 +2,26 @@
 
 ## 🎯 Roadmap de Mejoras Pendientes
 
+## ✅ Progreso reciente (completado)
+
+- **Dashboard**
+  - Vista por defecto en mapa para no logueados.
+  - Resumen con tarjetas combinadas 24h/7d (ofensas/bloqueos).
+  - Métrica “Ofensas por bloqueo”.
+  - Feed en vivo reconecta al volver a la pestaña Resumen.
+  - Estadísticas de MimosaNPM en pestaña Plugins.
+- **Admin**
+  - Activar/desactivar firewalls desde la UI.
+
 ### Fase 1: Seguridad y Autenticación (Alta Prioridad)
 
 **Objetivo:** Proteger acceso a la aplicación
 
 **Tareas:**
 1. **Autenticación en Dashboard**
-   - Implementar OAuth2 o JWT
-   - Login page con credenciales configurables
-   - Roles (admin, viewer)
+   - Login page con credenciales configurables ✅
+   - Roles (admin, viewer) ✅
+   - Estado: completado
 
 2. **HTTPS Obligatorio**
    - Documentar setup de reverse proxy
@@ -22,7 +33,7 @@
    - Protección contra brute-force
    - IP-based throttling
 
-**Estimación:** 2 semanas
+**Estimación:** 1 semana (restan HTTPS y rate limiting)
 
 ---
 

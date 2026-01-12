@@ -68,6 +68,14 @@
     top_ports: { protocol: string; port: number; hits: number }[];
   };
 
+  type MimosaNpmStats = {
+    total: number;
+    sample: number;
+    top_domains: { domain: string; count: number }[];
+    top_paths: { path: string; count: number }[];
+    top_status_codes: { status: string; count: number }[];
+  };
+
   type LiveItem = {
     kind: 'offense' | 'block';
     ip: string;
@@ -142,7 +150,7 @@
     { value: 'plugins', label: 'Plugins' }
   ];
 
-  let activeTab: DashboardTab = 'overview';
+  let activeTab: DashboardTab = 'map';
 
   let stats: StatsPayload | null = null;
   let error: string | null = null;
@@ -193,10 +201,13 @@
   let plugins: Plugin[] = [];
   let proxyStats: ProxyStats | null = null;
   let portStats: PortStats | null = null;
+  let mimosanpmStats: MimosaNpmStats | null = null;
   let proxyLabels: string[] = [];
   let proxyValues: number[] = [];
   let portLabels: string[] = [];
   let portValues: number[] = [];
+  let npmDomainLabels: string[] = [];
+  let npmDomainValues: number[] = [];
 
   let liveFeedRaw: LiveItem[] = [];
   let liveFeed: LiveItem[] = [];
@@ -270,10 +281,10 @@
     ratioValues = ratioOffense.map((entry, index) => {
       const offenseCount = entry.count;
       const blockCount = ratioBlocks[index]?.count ?? 0;
-      if (!offenseCount) {
+      if (!blockCount) {
         return 0;
       }
-      return Number((blockCount / offenseCount).toFixed(2));
+      return Number((offenseCount / blockCount).toFixed(2));
     });
   };
 
@@ -453,6 +464,7 @@
 
       const proxy = plugins.find((item) => item.name === 'proxytrap' && item.enabled);
       const port = plugins.find((item) => item.name === 'portdetector' && item.enabled);
+      const npm = plugins.find((item) => item.name === 'mimosanpm' && item.enabled);
 
       if (proxy) {
         const proxyResponse = await fetch('/api/plugins/proxytrap/stats', {
@@ -475,6 +487,24 @@
           );
           portValues = portStats.top_ports.map((entry) => entry.hits);
         }
+      }
+      if (npm) {
+        const npmResponse = await fetch('/api/plugins/mimosanpm/stats?limit=5&sample=500', {
+          credentials: 'include'
+        });
+        if (npmResponse.ok) {
+          mimosanpmStats = (await npmResponse.json()) as MimosaNpmStats;
+          npmDomainLabels = mimosanpmStats.top_domains.map((entry) => entry.domain);
+          npmDomainValues = mimosanpmStats.top_domains.map((entry) => entry.count);
+        } else {
+          mimosanpmStats = null;
+          npmDomainLabels = [];
+          npmDomainValues = [];
+        }
+      } else {
+        mimosanpmStats = null;
+        npmDomainLabels = [];
+        npmDomainValues = [];
       }
     } catch (err) {
       // opcional
@@ -652,6 +682,9 @@
 
   const setTab = (tab: DashboardTab) => {
     activeTab = tab;
+    if (tab === 'overview' && !stats) {
+      loadStats();
+    }
     if (tab === 'map') {
       loadHeatmap();
     }
@@ -660,6 +693,9 @@
     }
     if (tab === 'plugins') {
       loadPlugins();
+    }
+    if (tab === 'overview' && wsStatus !== 'connected') {
+      connectLiveFeed();
     }
   };
 
@@ -921,21 +957,23 @@
         trend="neutral"
       />
       <StatCard
-        title="Bloqueos 24h"
-        value={stats?.blocks.last_24h ?? '-'}
-        subtitle="Ultimas 24 horas"
+        title="Actividad 24h"
+        value={
+          stats
+            ? `${stats.offenses.last_24h} / ${stats.blocks.last_24h}`
+            : '-'
+        }
+        subtitle="Ofensas / Bloqueos"
         trend="up"
       />
       <StatCard
-        title="Ofensas 24h"
-        value={stats?.offenses.last_24h ?? '-'}
-        subtitle="Ultimas 24 horas"
-        trend="up"
-      />
-      <StatCard
-        title="Ofensas 7d"
-        value={stats?.offenses.last_7d ?? '-'}
-        subtitle="Ultimos 7 dias"
+        title="Actividad 7d"
+        value={
+          stats
+            ? `${stats.offenses.last_7d} / ${stats.blocks.last_7d}`
+            : '-'
+        }
+        subtitle="Ofensas / Bloqueos"
         trend="neutral"
       />
     </div>
@@ -971,8 +1009,13 @@
   <section class="section split">
     <div class="surface" style="padding: 18px;">
       <div class="badge">Ratio</div>
-      <h3 style="margin-top: 12px;">Bloqueo / Ofensa (24h)</h3>
-      <ChartCanvas labels={ratioLabels} data={ratioValues} label="Ratio" color="#fbbf24" />
+      <h3 style="margin-top: 12px;">Ofensas por bloqueo (24h)</h3>
+      <ChartCanvas
+        labels={ratioLabels}
+        data={ratioValues}
+        label="Ofensas por bloqueo"
+        color="#fbbf24"
+      />
     </div>
     <div class="surface" style="padding: 18px;">
       <div class="badge">Live</div>
@@ -1242,7 +1285,7 @@
 {/if}
 
 {#if activeTab === 'plugins'}
-  <section class="section split">
+  <section class="section" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));">
     <div class="surface" style="padding: 18px;">
       <div class="badge">Plugins</div>
       <h3 style="margin-top: 12px;">ProxyTrap</h3>
@@ -1286,6 +1329,48 @@
           {/each}
         {:else}
           <div class="list-item">Sin datos de PortDetector.</div>
+        {/if}
+      </div>
+    </div>
+    <div class="surface" style="padding: 18px;">
+      <div class="badge">Plugins</div>
+      <h3 style="margin-top: 12px;">MimosaNPM</h3>
+      <ChartCanvas
+        labels={npmDomainLabels}
+        data={npmDomainValues}
+        label="Dominios"
+        color="#a78bfa"
+        type="bar"
+      />
+      <div style="margin-top: 10px; color: var(--muted); font-size: 12px;">
+        {#if mimosanpmStats}
+          {mimosanpmStats.total} eventos (muestra {mimosanpmStats.sample})
+        {:else}
+          Sin datos recientes.
+        {/if}
+      </div>
+      <div class="list" style="margin-top: 12px;">
+        {#if mimosanpmStats?.top_paths?.length}
+          {#each mimosanpmStats.top_paths as entry}
+            <div class="list-item">
+              <span>{entry.path}</span>
+              <strong>{entry.count}</strong>
+            </div>
+          {/each}
+        {:else}
+          <div class="list-item">Sin rutas destacadas.</div>
+        {/if}
+      </div>
+      <div class="list" style="margin-top: 12px;">
+        {#if mimosanpmStats?.top_status_codes?.length}
+          {#each mimosanpmStats.top_status_codes as entry}
+            <div class="list-item">
+              <span>Status {entry.status}</span>
+              <strong>{entry.count}</strong>
+            </div>
+          {/each}
+        {:else}
+          <div class="list-item">Sin codigos de estado.</div>
         {/if}
       </div>
     </div>

@@ -13,6 +13,7 @@
     id: string;
     name: string;
     type: string;
+    enabled: boolean;
     online: boolean;
     message: string;
     alias_ready?: boolean;
@@ -27,6 +28,7 @@
     base_url?: string | null;
     api_key?: string | null;
     api_secret?: string | null;
+    enabled?: boolean;
     verify_ssl?: boolean;
     timeout?: number;
     apply_changes?: boolean;
@@ -38,6 +40,7 @@
     base_url: string;
     api_key: string;
     api_secret: string;
+    enabled: boolean;
     verify_ssl: boolean;
     timeout: number;
     apply_changes: boolean;
@@ -56,6 +59,7 @@
     base_url: '',
     api_key: '',
     api_secret: '',
+    enabled: true,
     verify_ssl: true,
     timeout: 5,
     apply_changes: true
@@ -152,6 +156,7 @@
       base_url: '',
       api_key: '',
       api_secret: '',
+      enabled: true,
       verify_ssl: true,
       timeout: 5,
       apply_changes: true
@@ -173,6 +178,7 @@
       base_url: firewall.base_url || '',
       api_key: firewall.api_key || '',
       api_secret: firewall.api_secret || '',
+      enabled: firewall.enabled ?? true,
       verify_ssl: firewall.verify_ssl ?? true,
       timeout: firewall.timeout ?? 5,
       apply_changes: firewall.apply_changes ?? true
@@ -192,6 +198,7 @@
         base_url: form.base_url.trim() || null,
         api_key: form.api_key.trim() || null,
         api_secret: form.api_secret.trim() || null,
+        enabled: form.enabled,
         verify_ssl: form.verify_ssl,
         timeout: Number(form.timeout) || 5,
         apply_changes: form.apply_changes
@@ -257,6 +264,7 @@
             base_url: firewall.base_url || null,
             api_key: firewall.api_key || null,
             api_secret: firewall.api_secret || null,
+            enabled: firewall.enabled ?? true,
             verify_ssl: firewall.verify_ssl ?? true,
             timeout: firewall.timeout ?? 5,
             apply_changes: firewall.apply_changes ?? true
@@ -267,6 +275,7 @@
             base_url: form.base_url.trim() || null,
             api_key: form.api_key.trim() || null,
             api_secret: form.api_secret.trim() || null,
+            enabled: form.enabled,
             verify_ssl: form.verify_ssl,
             timeout: Number(form.timeout) || 5,
             apply_changes: form.apply_changes
@@ -282,6 +291,35 @@
       actionMessage = result.online ? 'Conexion OK' : result.message || 'Sin respuesta';
     } catch (err) {
       actionError = err instanceof Error ? err.message : 'No se pudo probar';
+    } finally {
+      actionLoading = false;
+    }
+  };
+
+  const toggleFirewall = async (firewall: FirewallConfig, enabled: boolean) => {
+    actionLoading = true;
+    actionMessage = null;
+    actionError = null;
+    try {
+      const payload = {
+        name: firewall.name,
+        type: firewall.type,
+        base_url: firewall.base_url || null,
+        api_key: firewall.api_key || null,
+        api_secret: firewall.api_secret || null,
+        enabled,
+        verify_ssl: firewall.verify_ssl ?? true,
+        timeout: firewall.timeout ?? 5,
+        apply_changes: firewall.apply_changes ?? true
+      };
+      await requestJson(`/api/firewalls/${firewall.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      });
+      actionMessage = enabled ? 'Firewall activado' : 'Firewall desactivado';
+      await loadAdminData();
+    } catch (err) {
+      actionError = err instanceof Error ? err.message : 'No se pudo actualizar';
     } finally {
       actionLoading = false;
     }
@@ -450,11 +488,18 @@
                   </div>
                   <div style="display: grid; gap: 6px; justify-items: end;">
                     <strong
-                      style="color: {status?.online ? 'var(--success)' : 'var(--danger)'};"
+                      style="color: {firewall.enabled ? (status?.online ? 'var(--success)' : 'var(--danger)') : 'var(--warning)'};"
                     >
-                      {status?.online ? 'Online' : 'Offline'}
+                      {firewall.enabled ? (status?.online ? 'Online' : 'Offline') : 'Inactivo'}
                     </strong>
                     <div style="display: flex; gap: 6px;">
+                      <button
+                        class="ghost"
+                        disabled={actionLoading}
+                        on:click={() => toggleFirewall(firewall, !firewall.enabled)}
+                      >
+                        {firewall.enabled ? 'Desactivar' : 'Activar'}
+                      </button>
                       <button class="ghost" on:click={() => editFirewall(firewall)}>
                         Editar
                       </button>
@@ -508,6 +553,10 @@
             <label style="display: flex; align-items: center; gap: 8px;">
               <input type="checkbox" bind:checked={form.verify_ssl} />
               <span>Verificar SSL</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" bind:checked={form.enabled} />
+              <span>Activo</span>
             </label>
             <label style="display: flex; align-items: center; gap: 8px;">
               <input type="checkbox" bind:checked={form.apply_changes} />
