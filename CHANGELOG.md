@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.46
+- **pfSense**: flush selectivo de estados al bloquear IPs y soporte flush global.
+
+## 1.3.46
+- **pfSense**: flush selectivo de estados al bloquear IPs.
+- **OPNsense**: flush selectivo de estados al bloquear IPs.
+
+## 1.3.45
+- **OPNsense**: flush selectivo de estados al bloquear IPs.
+
 ## 1.3.44
 - **Dashboard**: nuevas vistas de riesgo, actividad en vivo, health y eficacia.
 

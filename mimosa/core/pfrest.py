@@ -536,6 +536,7 @@ class PFSenseRestClient(FirewallGateway):
 
     def block_ip(self, ip: str, reason: str = "", duration_minutes: Optional[int] = None) -> None:
         self._block_ip_backend(ip, self.temporal_alias)
+        self._flush_states_for_ip(ip)
 
     def unblock_ip(self, ip: str) -> None:
         self._unblock_ip_backend(ip, self.temporal_alias)
@@ -605,7 +606,19 @@ class PFSenseRestClient(FirewallGateway):
         raise NotImplementedError
 
     def flush_states(self) -> None:
-        raise NotImplementedError
+        try:
+            self._request("DELETE", "/firewall/states", params={"source": "0.0.0.0/0"})
+            self._request("DELETE", "/firewall/states", params={"destination": "0.0.0.0/0"})
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(f"No se pudo limpiar estados: {exc}") from exc
+
+    def _flush_states_for_ip(self, ip: str) -> None:
+        try:
+            self._request("DELETE", "/firewall/states", params={"source": ip})
+            self._request("DELETE", "/firewall/states", params={"destination": ip})
+        except httpx.HTTPStatusError:
+            # No interrumpir el bloqueo si falla el flush selectivo.
+            return
 
     def list_firewall_rules(self) -> List[Dict[str, object]]:
         response = self._request("GET", "/firewall/rules")

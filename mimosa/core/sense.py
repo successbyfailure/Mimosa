@@ -368,6 +368,38 @@ class OPNsenseClient(_BaseSenseClient):
             timeout=timeout,
         )
 
+    def _flush_states_for_ip(self, ip: str) -> bool:
+        payloads = [
+            {"ip": ip},
+            {"address": ip},
+            {"src": ip},
+            {"source": ip},
+            {"addr": ip},
+        ]
+        for payload in payloads:
+            try:
+                response = self._request(
+                    "POST", "/api/diagnostics/firewall/killstates", json=payload
+                )
+                data = response.json()
+                if isinstance(data, dict):
+                    status = data.get("status") or data.get("result")
+                    if status in {"ok", "done", "success", None}:
+                        return True
+                return True
+            except httpx.HTTPStatusError:
+                continue
+        return False
+
+    def block_ip(
+        self, ip: str, reason: str = "", duration_minutes: Optional[int] = None
+    ) -> None:
+        """Añade una IP al alias y corta estados activos."""
+
+        self._block_ip_backend(ip, reason, alias_name=self.temporal_alias)
+        self._apply_changes_if_enabled()
+        self._flush_states_for_ip(ip)
+
     def _alias_exists(self, alias_name: str) -> bool:
         try:
             response = self._request("GET", "/api/firewall/alias/searchItem")
