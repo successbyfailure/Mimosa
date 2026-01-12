@@ -216,6 +216,38 @@ class WhitelistInput(BaseModel):
     note: str | None = None
 
 
+class GatewayCache:
+    """Cache de gateways con TTL para evitar credenciales obsoletas."""
+
+    def __init__(self, ttl_seconds: int = 300):
+        self._cache: Dict[str, tuple[FirewallGateway, datetime]] = {}
+        self._ttl = timedelta(seconds=ttl_seconds)
+
+    def get(self, key: str) -> Optional[FirewallGateway]:
+        """Obtiene un gateway del cache si no ha expirado."""
+        if key not in self._cache:
+            return None
+        gateway, cached_at = self._cache[key]
+        if datetime.now(timezone.utc) - cached_at > self._ttl:
+            # Entrada expirada, eliminar
+            del self._cache[key]
+            return None
+        return gateway
+
+    def set(self, key: str, gateway: FirewallGateway) -> None:
+        """Almacena un gateway en el cache con timestamp actual."""
+        self._cache[key] = (gateway, datetime.now(timezone.utc))
+
+    def pop(self, key: str, default=None):
+        """Elimina y retorna un gateway del cache."""
+        entry = self._cache.pop(key, None)
+        return entry[0] if entry else default
+
+    def invalidate_all(self) -> None:
+        """Limpia todo el cache."""
+        self._cache.clear()
+
+
 def create_app(
     *,
     offense_store: OffenseStore | None = None,
@@ -245,7 +277,7 @@ def create_app(
     config_store = config_store or FirewallConfigStore()
     rule_store = rule_store or OffenseRuleStore(db_path=offense_store.db_path)
     plugin_store = PluginConfigStore()
-    gateway_cache: Dict[str, FirewallGateway] = {}
+    gateway_cache = GatewayCache(ttl_seconds=300)  # TTL de 5 minutos
     proxytrap_stats_path = proxytrap_stats_path or Path("data/proxytrap_stats.json")
     portdetector_stats_path = portdetector_stats_path or Path(
         "data/portdetector_stats.json"
@@ -282,7 +314,7 @@ def create_app(
             return cached
 
         gateway = build_firewall_gateway(primary)
-        gateway_cache[primary.id] = gateway
+        gateway_cache.set(primary.id, gateway)
         return gateway
 
     def _primary_gateway_or_error() -> FirewallGateway:
@@ -317,7 +349,7 @@ def create_app(
         gateway = gateway_cache.get(config.id)
         if not gateway:
             gateway = build_firewall_gateway(config)
-            gateway_cache[config.id] = gateway
+            gateway_cache.set(config.id, gateway)
         return config, gateway
 
     def _sync_whitelist_entry(cidr: str, *, remove: bool = False) -> None:
@@ -325,7 +357,7 @@ def create_app(
             gateway = gateway_cache.get(config.id)
             if not gateway:
                 gateway = build_firewall_gateway(config)
-                gateway_cache[config.id] = gateway
+                gateway_cache.set(config.id, gateway)
             try:
                 gateway.ensure_ready()
                 if remove:

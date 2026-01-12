@@ -5,6 +5,13 @@ generadas por los distintos módulos de Mimosa en una base de datos
 SQLite local. Amplía la funcionalidad previa incorporando un catálogo de
 IPs enriquecidas, listas blancas y utilidades para correlacionar
 bloqueos.
+
+ARQUITECTURA: Este módulo está en migración a Clean Architecture.
+- Modelos de dominio → mimosa.core.domain.offense
+- Repository (en desarrollo) → mimosa.core.repositories.offense_repository
+- Service (futuro) → mimosa.core.services.offense_service
+
+Ver MIGRATION_PLAN.md para detalles completos.
 """
 from __future__ import annotations
 
@@ -13,7 +20,6 @@ import json
 import os
 import socket
 import sqlite3
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
@@ -22,45 +28,15 @@ import httpx
 from urllib.parse import urlparse, urlunparse
 from mimosa.core.storage import DEFAULT_DB_PATH, ensure_database
 
+# Importar modelos de dominio desde nueva ubicación
+from mimosa.core.domain.offense import (  # noqa: F401
+    OffenseRecord,
+    IpProfile,
+    WhitelistEntry,
+)
 
-@dataclass
-class OffenseRecord:
-    """Representa una ofensa registrada en el sistema."""
-
-    id: int
-    source_ip: str
-    description: str
-    severity: str
-    created_at: datetime
-    host: Optional[str] = None
-    path: Optional[str] = None
-    user_agent: Optional[str] = None
-    context: Optional[Dict[str, str]] = None
-
-
-@dataclass
-class IpProfile:
-    """Información enriquecida de una IP conocida."""
-
-    ip: str
-    geo: Optional[str]
-    whois: Optional[str]
-    reverse_dns: Optional[str]
-    first_seen: datetime
-    last_seen: datetime
-    enriched_at: Optional[datetime] = None
-    offenses: int = 0
-    blocks: int = 0
-
-
-@dataclass
-class WhitelistEntry:
-    """Entrada en la lista blanca local."""
-
-    id: int
-    cidr: str
-    note: Optional[str]
-    created_at: datetime
+# Re-export para backward compatibility (TODO: Remover en 2.0.0)
+__all__ = ["OffenseRecord", "IpProfile", "WhitelistEntry", "OffenseStore"]
 
 
 class OffenseStore:
@@ -540,7 +516,7 @@ class OffenseStore:
         reverse_dns: Optional[str] = None
         try:
             reverse_dns = socket.gethostbyaddr(ip)[0]
-        except Exception:  # pragma: no cover - dependiente de red/resolución
+        except (socket.gaierror, socket.herror, OSError):  # Errores de resolución DNS
             reverse_dns = None
 
         geo = self._lookup_geo(ip)

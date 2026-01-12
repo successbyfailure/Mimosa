@@ -1,46 +1,32 @@
-"""Gestión de bloqueos de IPs sospechosas con persistencia en SQLite."""
+"""Gestión de bloqueos de IPs sospechosas con persistencia en SQLite.
+
+ARQUITECTURA: Este módulo está en migración a Clean Architecture.
+- Modelos de dominio → mimosa.core.domain.block
+- Repository (en desarrollo) → mimosa.core.repositories.block_repository
+- Service (futuro) → mimosa.core.services.blocking_service
+
+Ver MIGRATION_PLAN.md para detalles completos.
+"""
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
 import sqlite3
+import ipaddress
+import logging
+import threading
 from pathlib import Path
 
 from mimosa.core.storage import DEFAULT_DB_PATH, ensure_database
 
+# Importar modelo de dominio desde nueva ubicación
+from mimosa.core.domain.block import BlockEntry  # noqa: F401
 
-@dataclass
-class BlockEntry:
-    """Entrada de bloqueo registrada localmente."""
+logger = logging.getLogger(__name__)
 
-    id: int
-    ip: str
-    reason: str
-    created_at: datetime
-    expires_at: Optional[datetime] = None
-    source: str = "manual"
-    active: bool = True
-    synced_at: Optional[datetime] = None
-    removed_at: Optional[datetime] = None
-    sync_with_firewall: bool = True
-
-    def to_dict(self) -> Dict[str, object]:
-        payload = asdict(self)
-        def _iso(dt: Optional[datetime]) -> Optional[str]:
-            if not dt:
-                return None
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            else:
-                dt = dt.astimezone(timezone.utc)
-            return dt.isoformat()
-
-        payload["created_at"] = _iso(self.created_at)
-        payload["expires_at"] = _iso(self.expires_at)
-        payload["synced_at"] = _iso(self.synced_at)
-        payload["removed_at"] = _iso(self.removed_at)
-        return payload
+# Re-export para backward compatibility
+# TODO: Remover en versión 2.0.0
+__all__ = ["BlockEntry", "BlockManager"]
 
 
 class BlockManager:
@@ -67,6 +53,7 @@ class BlockManager:
         self._history: List[BlockEntry] = []
         self._last_sync: Optional[datetime] = None
         self._should_sync = lambda ip: True
+        self._lock = threading.Lock()  # Protección para acceso concurrente
         if whitelist_checker:
             self.set_whitelist_checker(whitelist_checker)
         self._load_state()
@@ -103,7 +90,7 @@ class BlockManager:
                 sync_with_firewall=bool(row[9]) if len(row) > 9 else True,
             )
             self._history.append(entry)
-            if entry.active and (not entry.expires_at or entry.expires_at > datetime.utcnow()):
+            if entry.active and (not entry.expires_at or entry.expires_at > datetime.now(timezone.utc)):
                 self._blocks[entry.ip] = entry
 
     def _load_settings(self) -> None:
@@ -147,9 +134,17 @@ class BlockManager:
     ) -> BlockEntry:
         """Añade un bloqueo en memoria y devuelve la entrada creada."""
 
-        now = datetime.utcnow()
+        # Validar que sea una IP válida
+        try:
+            ipaddress.ip_address(ip)
+        except ValueError as exc:
+            logger.error(f"IP inválida rechazada: {ip} - {exc}")
+            raise ValueError(f"IP inválida: {ip}") from exc
+
+        now = datetime.now(timezone.utc)
         duration = duration_minutes if duration_minutes is not None else self.default_duration_minutes
         expires_at = (now + timedelta(minutes=duration)) if duration and duration > 0 else None
+
         with self._connection() as conn:
             cursor = conn.execute(
                 """
@@ -166,6 +161,7 @@ class BlockManager:
                 ),
             )
             entry_id = cursor.lastrowid
+
         entry = BlockEntry(
             id=entry_id,
             ip=ip,
@@ -175,43 +171,69 @@ class BlockManager:
             source=source,
             sync_with_firewall=sync_with_firewall,
         )
-        self._blocks[ip] = entry
-        self._history.append(entry)
+
+        with self._lock:
+            self._blocks[ip] = entry
+            self._history.append(entry)
+
+        logger.info(f"IP bloqueada: {ip} (razón: {reason}, fuente: {source}, duración: {duration}min)")
         return entry
 
     def remove(self, ip: str) -> None:
         """Marca un bloqueo como inactivo y lo elimina de la caché."""
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         with self._connection() as conn:
             conn.execute(
                 "UPDATE blocks SET active = 0, removed_at = ? WHERE ip = ?;",
                 (now.isoformat(), ip),
             )
-        self._blocks.pop(ip, None)
-        for entry in self._history:
-            if entry.ip == ip and entry.removed_at is None:
-                entry.removed_at = now
-                break
+
+        with self._lock:
+            removed = self._blocks.pop(ip, None)
+            for entry in self._history:
+                if entry.ip == ip and entry.removed_at is None:
+                    entry.removed_at = now
+                    break
+
+        if removed:
+            logger.info(f"IP desbloqueada: {ip}")
+        else:
+            logger.warning(f"Intento de desbloquear IP no encontrada: {ip}")
 
     def purge_expired(self, *, firewall_gateway: "FirewallGateway" | None = None) -> List[BlockEntry]:
         """Elimina de la lista activa cualquier bloqueo caducado."""
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expired: List[BlockEntry] = []
-        for ip, entry in list(self._blocks.items()):
-            if entry.expires_at and entry.expires_at <= now:
-                expired.append(entry)
-                self.remove(ip)
-                if firewall_gateway:
-                    firewall_gateway.unblock_ip(ip)
+
+        with self._lock:
+            for ip, entry in list(self._blocks.items()):
+                if entry.expires_at and entry.expires_at <= now:
+                    expired.append(entry)
+
+        # Remover fuera del lock para evitar deadlock
+        for entry in expired:
+            self.remove(entry.ip)
+            if firewall_gateway:
+                firewall_gateway.unblock_ip(entry.ip)
+
+        if expired:
+            logger.info(f"Purgados {len(expired)} bloqueos expirados")
+
         return expired
+
+    def get_active_block(self, ip: str) -> Optional[BlockEntry]:
+        """Obtiene el bloqueo activo para una IP (thread-safe)."""
+        with self._lock:
+            return self._blocks.get(ip)
 
     def list(self, *, include_expired: bool = False) -> List[BlockEntry]:
         """Devuelve la lista de IPs bloqueadas ordenada por fecha."""
 
         self.purge_expired()
-        entries = list(self._blocks.values()) if not include_expired else list(self._history)
+        with self._lock:
+            entries = list(self._blocks.values()) if not include_expired else list(self._history)
         return sorted(entries, key=lambda entry: entry.created_at, reverse=True)
 
     def history(self) -> List[BlockEntry]:
@@ -271,7 +293,7 @@ class BlockManager:
     def timeline(self, window: timedelta, *, bucket: str = "hour") -> List[Dict[str, str | int]]:
         """Devuelve recuentos de bloqueos agrupados por intervalo temporal."""
 
-        cutoff = datetime.utcnow() - window
+        cutoff = datetime.now(timezone.utc) - window
         format_map = {
             "day": "%Y-%m-%d",
             "hour": "%Y-%m-%d %H:00",
@@ -308,7 +330,7 @@ class BlockManager:
     def sync_with_firewall(self, gateway: "FirewallGateway", *, force: bool = False) -> Dict[str, List[str]]:
         """Sincroniza la base de datos con las entradas reales del firewall."""
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if not force and self._last_sync and (now - self._last_sync).total_seconds() < self.sync_interval_seconds:
             return {"added": [], "removed": []}
 
@@ -358,13 +380,17 @@ class BlockManager:
         self._should_sync = lambda ip: not checker(ip)
 
     def should_sync(self, ip: str) -> bool:
-        entry = self._blocks.get(ip)
-        if entry and not entry.sync_with_firewall:
-            return False
+        with self._lock:
+            entry = self._blocks.get(ip)
+            if entry and not entry.sync_with_firewall:
+                return False
+
         try:
             return bool(self._should_sync(ip))
-        except Exception:
-            return True
+        except Exception as exc:
+            # Fail-safe: si la whitelist falla, NO sincronizar por seguridad
+            logger.error(f"Error verificando whitelist para {ip}: {exc}")
+            return False
 
     def update_settings(self, *, default_duration_minutes: Optional[int] = None, sync_interval_seconds: Optional[int] = None) -> None:
         if default_duration_minutes is not None:

@@ -200,24 +200,27 @@ class ProxyTrapService:
             json.dump(self._domain_hits, fh, indent=2)
 
     def _increment_stat(self, domain: str) -> None:
-        self._domain_hits[domain] = self._domain_hits.get(domain, 0) + 1
-        self._save_stats()
+        with self._lock:
+            self._domain_hits[domain] = self._domain_hits.get(domain, 0) + 1
+            self._save_stats()
 
     def stats(self, limit: int = 50) -> Dict[str, object]:
-        ordered = sorted(
-            self._domain_hits.items(), key=lambda item: item[1], reverse=True
-        )[:limit]
-        return {
-            "config": asdict(self.config),
-            "top_domains": [
-                {"domain": domain, "hits": hits} for domain, hits in ordered
-            ],
-        }
+        with self._lock:
+            ordered = sorted(
+                self._domain_hits.items(), key=lambda item: item[1], reverse=True
+            )[:limit]
+            return {
+                "config": asdict(self.config),
+                "top_domains": [
+                    {"domain": domain, "hits": hits} for domain, hits in ordered
+                ],
+            }
 
     def reset_stats(self) -> None:
         """Limpia el fichero de hits acumulados."""
 
-        self._domain_hits = {}
-        if self._stats_path.exists():
-            self._stats_path.unlink()
+        with self._lock:
+            self._domain_hits = {}
+            if self._stats_path.exists():
+                self._stats_path.unlink()
 

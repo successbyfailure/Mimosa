@@ -1,9 +1,15 @@
-"""Motor sencillo de reglas que promueven ofensas a bloqueos."""
+"""Motor sencillo de reglas que promueven ofensas a bloqueos.
+
+ARQUITECTURA: Este módulo está en migración a Clean Architecture.
+- Modelos de dominio → mimosa.core.domain.rule
+- Repository (en desarrollo) → mimosa.core.repositories.rule_repository
+- Service (futuro) → mimosa.core.services.rule_service
+
+Ver MIGRATION_PLAN.md para detalles completos.
+"""
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta
-from fnmatch import fnmatchcase
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, List, Optional
 
@@ -14,89 +20,16 @@ from mimosa.core.storage import DEFAULT_DB_PATH, ensure_database
 from mimosa.core.blocking import BlockEntry, BlockManager
 from mimosa.core.offenses import OffenseStore
 
+# Importar modelos de dominio desde nueva ubicación
+from mimosa.core.domain.rule import OffenseEvent, OffenseRule  # noqa: F401
 
-@dataclass
-class OffenseEvent:
-    """Evento de ofensa enriquecido para evaluación de reglas."""
-
-    source_ip: str
-    plugin: str
-    event_id: str
-    severity: str
-    description: str
+# Re-export para backward compatibility (TODO: Remover en 2.0.0)
+__all__ = ["OffenseEvent", "OffenseRule", "OffenseRuleStore", "RuleManager"]
 
 
-@dataclass
-class OffenseRule:
-    """Regla que define cuándo una ofensa debe escalar a bloqueo."""
-
-    plugin: str = "*"
-    event_id: str = "*"
-    severity: str = "*"
-    description: str = "*"
-    min_last_hour: int = 0
-    min_total: int = 0
-    min_blocks_total: int = 0
-    block_minutes: Optional[int] = None
-    id: Optional[int] = None
-
-    def matches(
-        self,
-        event: OffenseEvent,
-        *,
-        last_hour: int,
-        total: int,
-        total_blocks: int,
-    ) -> bool:
-        """Comprueba si la regla aplica al evento y cumple umbrales."""
-        return self.matches_fields(event) and self.passes_thresholds(
-            last_hour=last_hour,
-            total=total,
-            total_blocks=total_blocks,
-        )
-
-    def matches_fields(self, event: OffenseEvent) -> bool:
-        if not self._match(self.plugin, event.plugin):
-            return False
-        if not self._match(self.event_id, event.event_id):
-            return False
-        if not self._match(self.severity, event.severity):
-            return False
-        if not self._match(self.description, event.description):
-            return False
-        return True
-
-    def passes_thresholds(self, *, last_hour: int, total: int, total_blocks: int) -> bool:
-        return (
-            self._passes_threshold(last_hour, self.min_last_hour)
-            and self._passes_threshold(total, self.min_total)
-            and self._passes_threshold(total_blocks, self.min_blocks_total)
-        )
-
-    def _is_wildcard(self, field: str) -> bool:
-        return field == "*" or field == ""
-
-    def _match(self, field: str, value: str) -> bool:
-        if self._is_wildcard(field):
-            return True
-        if "*" in field or "?" in field:
-            return fnmatchcase(value, field)
-        return field == value
-
-    def _passes_threshold(self, observed: int, threshold: int) -> bool:
-        if threshold <= 0:
-            return True
-        return observed > threshold
-
-    def reason_for(
-        self, event: OffenseEvent, *, last_hour: int, total: int, total_blocks: int
-    ) -> str:
-        base = self.description if self.description != "*" else event.description
-        summary = (
-            f"{base} · {total} ofensas totales, {last_hour} en 1h, "
-            f"{total_blocks} bloqueos previos"
-        )
-        return summary
+# Nota: La clase OffenseRule original incluía métodos de lógica.
+# Ahora se importa desde domain/, donde mantiene la misma implementación.
+# En el futuro, esta lógica podría moverse a un RuleMatchingService.
 
 
 class OffenseRuleStore:
@@ -210,12 +143,15 @@ class RuleManager:
         """Evalúa las reglas y aplica el primer bloqueo coincidente."""
 
         self.block_manager.purge_expired(firewall_gateway=self.firewall_gateway)
-        if event.source_ip in self.block_manager._blocks:  # pragma: no cover - acceso intencional
-            return self.block_manager._blocks[event.source_ip]
+
+        # Usar método público en vez de acceso directo a _blocks
+        existing_block = self.block_manager.get_active_block(event.source_ip)
+        if existing_block:
+            return existing_block
 
         sync_with_firewall = self.block_manager.should_sync(event.source_ip)
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         last_hour = now - timedelta(hours=1)
         last_hour_count = self.offense_store.count_by_ip_since(event.source_ip, last_hour)
         total_count = self.offense_store.count_by_ip(event.source_ip)
@@ -250,7 +186,7 @@ class RuleManager:
             if sync_with_firewall:
                 duration_for_firewall: Optional[int] = None
                 if entry.expires_at:
-                    delta = entry.expires_at - datetime.utcnow()
+                    delta = entry.expires_at - datetime.now(timezone.utc)
                     duration_for_firewall = max(int(delta.total_seconds() // 60), 1)
                 self.firewall_gateway.block_ip(
                     event.source_ip,
