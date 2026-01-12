@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.44
+- **Dashboard**: nuevas vistas de riesgo, actividad en vivo, health y eficacia.
+
 ## 1.3.43
 - **IP inspector**: distribución de ofensas por tipo en lugar de plugin.
 

@@ -222,6 +222,38 @@ class OffenseStore:
 
         return offenses
 
+    def count_by_description_prefix_since(self, prefix: str, since: datetime) -> int:
+        """Cuenta ofensas con prefijo en la descripción desde una fecha."""
+
+        pattern = f"{prefix}%"
+        with self._connection() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM offenses
+                WHERE description LIKE ? AND datetime(created_at) >= datetime(?);
+                """,
+                (pattern, since.isoformat()),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def last_seen_by_description_prefix(self, prefix: str) -> Optional[datetime]:
+        """Devuelve la fecha más reciente para un prefijo de descripción."""
+
+        pattern = f"{prefix}%"
+        with self._connection() as conn:
+            row = conn.execute(
+                """
+                SELECT MAX(datetime(created_at))
+                FROM offenses
+                WHERE description LIKE ?;
+                """,
+                (pattern,),
+            ).fetchone()
+        if not row or not row[0]:
+            return None
+        return datetime.fromisoformat(row[0])
+
     def list_by_ip(self, ip: str, limit: int = 50) -> List[OffenseRecord]:
         """Devuelve ofensas asociadas a una IP concreta."""
 

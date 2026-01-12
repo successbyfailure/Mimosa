@@ -6,6 +6,17 @@
   .dash-tab.active { background: linear-gradient(120deg, #38bdf8, #6366f1); color:white; box-shadow: 0 10px 30px rgba(99,102,241,.35); }
   .dash-panel { display:none; }
   .dash-panel.active { display:block; }
+  .dash-grid { display: grid; gap: 16px; }
+  .dash-grid.cols-3 { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .dash-grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .dash-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .dash-table th, .dash-table td { padding: 6px 8px; text-align: left; }
+  .dash-table th { color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-size: 11px; }
+  .tag { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; }
+  .tag.ok { background: rgba(74,222,128,.18); color:#bbf7d0; }
+  .tag.warn { background: rgba(251,191,36,.16); color:#fde68a; }
+  .tag.bad { background: rgba(248,113,113,.18); color:#fecaca; }
+  .tag.info { background: rgba(56,189,248,.16); color:#bae6fd; }
   .heatmap-card { background: rgba(17,24,39,.75); border-radius: 16px; padding: 16px; border: 1px solid rgba(255,255,255,.05); }
   .heatmap-grid { display: grid; grid-template-columns: 1.4fr 0.6fr; gap: 14px; align-items: start; margin-top: 12px; }
   .heatmap-map { width: 100%; height: 380px; border-radius: 12px; border: 1px solid rgba(255,255,255,.06); overflow: hidden; }
@@ -107,6 +118,167 @@
   </div>
 </section>
 
+<section class="grid" style="grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px;">
+  <div class="chart">
+    <div class="flex space">
+      <div>
+        <h2 style="margin: 0">Ratio bloqueo/ofensa</h2>
+        <div class="muted">Últimas 24 horas</div>
+      </div>
+    </div>
+    <canvas id="ratio-chart" height="200"></canvas>
+  </div>
+  <div class="chart">
+    <div class="flex space" style="align-items:flex-start;">
+      <div>
+        <h2 style="margin: 0">Actividad en vivo</h2>
+        <div class="muted">Últimas ofensas recibidas</div>
+      </div>
+      <select id="live-feed-filter" style="max-width: 180px;">
+        <option value="">Todas</option>
+        <option value="mimosanpm">MimosaNPM</option>
+        <option value="proxytrap">ProxyTrap</option>
+        <option value="portdetector">Port Detector</option>
+      </select>
+    </div>
+    <div style="max-height:220px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px; margin-top:10px;">
+      <table class="dash-table">
+        <thead>
+          <tr>
+            <th>Tiempo</th>
+            <th>IP</th>
+            <th>Detalle</th>
+          </tr>
+        </thead>
+        <tbody id="live-feed-table">
+          <tr><td colspan="3" class="muted">Cargando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="dash-grid cols-3" style="margin-top: 16px;">
+  <div class="card">
+    <div class="flex space" style="align-items:flex-start;">
+      <div>
+        <h2 style="margin:0">Top IPs peligrosas</h2>
+        <div class="muted">Score basado en ofensas + bloqueos</div>
+      </div>
+      <button class="secondary" onclick="loadTopIps()">Refrescar</button>
+    </div>
+    <div style="max-height:220px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px; margin-top:10px;">
+      <table class="dash-table">
+        <thead>
+          <tr>
+            <th>IP</th>
+            <th>Score</th>
+            <th>Ofensas</th>
+            <th>Bloqueos</th>
+          </tr>
+        </thead>
+        <tbody id="top-ips-table">
+          <tr><td colspan="4" class="muted">Cargando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="flex space" style="align-items:flex-start;">
+      <div>
+        <h2 style="margin:0">Bloqueos por expirar</h2>
+        <div class="muted">Próximos 60 minutos</div>
+      </div>
+      <button class="secondary" onclick="loadExpiringBlocks()">Refrescar</button>
+    </div>
+    <div style="max-height:220px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px; margin-top:10px;">
+      <table class="dash-table">
+        <thead>
+          <tr>
+            <th>IP</th>
+            <th>Min</th>
+            <th>Motivo</th>
+          </tr>
+        </thead>
+        <tbody id="expiring-blocks-table">
+          <tr><td colspan="3" class="muted">Cargando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="flex space" style="align-items:flex-start;">
+      <div>
+        <h2 style="margin:0">Eficacia de reglas</h2>
+        <div class="muted">Motivos de bloqueo más frecuentes</div>
+      </div>
+      <button class="secondary" onclick="loadBlockReasons()">Refrescar</button>
+    </div>
+    <div style="max-height:220px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px; margin-top:10px;">
+      <table class="dash-table">
+        <thead>
+          <tr>
+            <th>Motivo</th>
+            <th>Bloqueos</th>
+          </tr>
+        </thead>
+        <tbody id="block-reasons-table">
+          <tr><td colspan="2" class="muted">Cargando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="dash-grid cols-2" style="margin-top: 16px;">
+  <div class="card">
+    <div class="flex space" style="align-items:flex-start;">
+      <div>
+        <h2 style="margin:0">Estado de firewalls</h2>
+        <div class="muted">Disponibilidad y latencia</div>
+      </div>
+      <button class="secondary" onclick="loadDashboardHealth()">Refrescar</button>
+    </div>
+    <div style="max-height:220px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px; margin-top:10px;">
+      <table class="dash-table">
+        <thead>
+          <tr>
+            <th>Firewall</th>
+            <th>Estado</th>
+            <th>Latencia</th>
+          </tr>
+        </thead>
+        <tbody id="firewall-health-table">
+          <tr><td colspan="3" class="muted">Cargando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="flex space" style="align-items:flex-start;">
+      <div>
+        <h2 style="margin:0">Estado de plugins</h2>
+        <div class="muted">Última actividad (24h)</div>
+      </div>
+      <button class="secondary" onclick="loadDashboardHealth()">Refrescar</button>
+    </div>
+    <div style="max-height:220px; overflow:auto; border:1px solid rgba(255,255,255,.05); border-radius:12px; margin-top:10px;">
+      <table class="dash-table">
+        <thead>
+          <tr>
+            <th>Plugin</th>
+            <th>Estado</th>
+            <th>Eventos 24h</th>
+          </tr>
+        </thead>
+        <tbody id="plugin-health-table">
+          <tr><td colspan="3" class="muted">Cargando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
 <section class="grid" style="grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 18px; align-items:start;">
   <div class="card">
     <div class="flex space" style="align-items:flex-start;">
@@ -204,7 +376,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
-let offenseChart, blockChart;
+let offenseChart, blockChart, ratioChart;
 let statsCache = null;
 let heatmapMap = null;
 let heatmapLayer = null;
@@ -236,6 +408,7 @@ function updateStatsCards(offenses = {}, blocks = {}) {
 function cleanCharts() {
   if (offenseChart) offenseChart.destroy();
   if (blockChart) blockChart.destroy();
+  if (ratioChart) ratioChart.destroy();
 }
 
 function switchDashTab(tab) {
@@ -271,9 +444,35 @@ function renderCharts(offenseRange, blockRange) {
       blockTimeline,
       '#22c55e',
     );
+    renderRatioChart();
   } catch (error) {
     console.error('No se pudieron renderizar las gráficas de estadísticas', error);
   }
+}
+
+function renderRatioChart() {
+  const canvas = document.getElementById('ratio-chart');
+  if (!canvas || !statsCache) return;
+  if (ratioChart) ratioChart.destroy();
+  const offenses = statsCache.offenses || {};
+  const blocks = statsCache.blocks || {};
+  const offenseTimeline = offenses.timeline?.['24h'] || [];
+  const blockTimeline = blocks.timeline?.['24h'] || [];
+  const ratios = offenseTimeline.map((entry, idx) => {
+    const offenseCount = Number(entry.count || 0);
+    const blockCount = Number(blockTimeline[idx]?.count || 0);
+    return offenseCount ? Number((blockCount / offenseCount).toFixed(2)) : 0;
+  });
+  ratioChart = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: offenseTimeline.map(entry => entry.bucket),
+      datasets: [
+        { label: 'Ratio', data: ratios, borderColor: '#fbbf24', backgroundColor: 'rgba(251,191,36,0.15)', tension: 0.25, fill: true, pointRadius: 3 }
+      ]
+    },
+    options: { scales: { x: { ticks: { color: '#94a3b8' } }, y: { ticks: { color: '#94a3b8' } } }, plugins: { legend: { labels: { color: '#e2e8f0' } } } }
+  });
 }
 
 async function loadStats() {
@@ -300,6 +499,159 @@ async function loadStats() {
 
 function renderTableMessage(tbody, message, colspan) {
   tbody.innerHTML = `<tr><td colspan="${colspan}" class="muted">${message}</td></tr>`;
+}
+
+async function loadTopIps() {
+  const tbody = document.getElementById('top-ips-table');
+  if (!tbody) return;
+  renderTableMessage(tbody, 'Cargando...', 4);
+  try {
+    const res = await fetch('/api/dashboard/top_ips?limit=10');
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || 'No se pudieron cargar las IPs.');
+    }
+    if (!data.length) {
+      renderTableMessage(tbody, 'Sin datos.', 4);
+      return;
+    }
+    tbody.innerHTML = '';
+    data.forEach(item => {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${item.ip}</td><td>${item.score}</td><td>${item.offenses}</td><td>${item.blocks}</td>`;
+      tbody.appendChild(row);
+    });
+  } catch (error) {
+    renderTableMessage(tbody, error.message || 'Error al cargar.', 4);
+  }
+}
+
+async function loadExpiringBlocks() {
+  const tbody = document.getElementById('expiring-blocks-table');
+  if (!tbody) return;
+  renderTableMessage(tbody, 'Cargando...', 3);
+  try {
+    const res = await fetch('/api/dashboard/blocks/expiring?within_minutes=60&limit=10');
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || 'No se pudieron cargar los bloqueos.');
+    }
+    if (!data.length) {
+      renderTableMessage(tbody, 'Sin bloqueos próximos.', 3);
+      return;
+    }
+    tbody.innerHTML = '';
+    data.forEach(item => {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${item.ip}</td><td>${item.minutes_left}</td><td>${item.reason || '-'}</td>`;
+      tbody.appendChild(row);
+    });
+  } catch (error) {
+    renderTableMessage(tbody, error.message || 'Error al cargar.', 3);
+  }
+}
+
+async function loadBlockReasons() {
+  const tbody = document.getElementById('block-reasons-table');
+  if (!tbody) return;
+  renderTableMessage(tbody, 'Cargando...', 2);
+  try {
+    const res = await fetch('/api/dashboard/blocks/reasons?limit=10');
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || 'No se pudieron cargar los motivos.');
+    }
+    if (!data.length) {
+      renderTableMessage(tbody, 'Sin datos.', 2);
+      return;
+    }
+    tbody.innerHTML = '';
+    data.forEach(item => {
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${item.reason}</td><td>${item.count}</td>`;
+      tbody.appendChild(row);
+    });
+  } catch (error) {
+    renderTableMessage(tbody, error.message || 'Error al cargar.', 2);
+  }
+}
+
+async function loadDashboardHealth() {
+  const firewallTbody = document.getElementById('firewall-health-table');
+  const pluginTbody = document.getElementById('plugin-health-table');
+  if (firewallTbody) renderTableMessage(firewallTbody, 'Cargando...', 3);
+  if (pluginTbody) renderTableMessage(pluginTbody, 'Cargando...', 3);
+  try {
+    const res = await fetch('/api/dashboard/health');
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || 'No se pudo cargar el estado.');
+    }
+    if (firewallTbody) {
+      firewallTbody.innerHTML = '';
+      const items = data.firewalls || [];
+      if (!items.length) {
+        renderTableMessage(firewallTbody, 'Sin firewalls.', 3);
+      } else {
+        items.forEach(item => {
+          const tag = item.available ? 'ok' : 'bad';
+          const label = item.available ? 'ONLINE' : 'OFFLINE';
+          const latency = item.latency_ms !== null ? `${item.latency_ms} ms` : '—';
+          const row = document.createElement('tr');
+          row.innerHTML = `<td>${item.name} (${item.type})</td><td><span class="tag ${tag}">${label}</span></td><td>${latency}</td>`;
+          firewallTbody.appendChild(row);
+        });
+      }
+    }
+    if (pluginTbody) {
+      pluginTbody.innerHTML = '';
+      const items = data.plugins || [];
+      if (!items.length) {
+        renderTableMessage(pluginTbody, 'Sin plugins.', 3);
+      } else {
+        items.forEach(item => {
+          const tag = item.enabled ? 'ok' : 'warn';
+          const label = item.enabled ? 'ACTIVO' : 'APAGADO';
+          const row = document.createElement('tr');
+          row.innerHTML = `<td>${item.name}</td><td><span class="tag ${tag}">${label}</span></td><td>${item.last_24h || 0}</td>`;
+          pluginTbody.appendChild(row);
+        });
+      }
+    }
+  } catch (error) {
+    if (firewallTbody) renderTableMessage(firewallTbody, error.message || 'Error al cargar.', 3);
+    if (pluginTbody) renderTableMessage(pluginTbody, error.message || 'Error al cargar.', 3);
+  }
+}
+
+async function loadLiveFeed() {
+  const tbody = document.getElementById('live-feed-table');
+  const filter = document.getElementById('live-feed-filter');
+  if (!tbody) return;
+  renderTableMessage(tbody, 'Cargando...', 3);
+  const plugin = filter ? filter.value : '';
+  const url = plugin ? `/api/dashboard/feed?limit=30&plugin=${plugin}` : '/api/dashboard/feed?limit=30';
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || 'No se pudo cargar el feed.');
+    }
+    if (!data.length) {
+      renderTableMessage(tbody, 'Sin eventos recientes.', 3);
+      return;
+    }
+    tbody.innerHTML = '';
+    data.forEach(item => {
+      const row = document.createElement('tr');
+      const time = new Date(item.created_at).toLocaleTimeString();
+      const detail = item.description_clean || item.description || '-';
+      row.innerHTML = `<td>${time}</td><td>${item.source_ip}</td><td>${detail}</td>`;
+      tbody.appendChild(row);
+    });
+  } catch (error) {
+    renderTableMessage(tbody, error.message || 'Error al cargar.', 3);
+  }
 }
 
 async function loadProxyTrapStats() {
@@ -520,8 +872,18 @@ document.getElementById('blocks-range-selector').addEventListener('change', (e) 
 
 loadStats();
 loadPluginStats();
+loadTopIps();
+loadExpiringBlocks();
+loadBlockReasons();
+loadDashboardHealth();
+loadLiveFeed();
 setInterval(loadStats, 60000);
 setInterval(loadPluginStats, 120000);
+setInterval(loadTopIps, 120000);
+setInterval(loadExpiringBlocks, 60000);
+setInterval(loadBlockReasons, 180000);
+setInterval(loadDashboardHealth, 180000);
+setInterval(loadLiveFeed, 30000);
 setInterval(() => {
   const active = document.querySelector('.dash-panel.active');
   if (active && active.id === 'dash-map') {
@@ -531,6 +893,10 @@ setInterval(() => {
 
 document.getElementById('heatmap-window').addEventListener('change', () => {
   loadHeatmap();
+});
+
+document.getElementById('live-feed-filter').addEventListener('change', () => {
+  loadLiveFeed();
 });
 </script>
 {% endblock %}

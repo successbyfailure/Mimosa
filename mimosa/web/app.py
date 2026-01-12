@@ -752,6 +752,154 @@ def create_app(
         offenses = offense_store.list_recent_by_description_prefix("mimosanpm:", limit)
         return [_serialize_offense(offense) for offense in offenses]
 
+    @app.get("/api/dashboard/top_ips")
+    def dashboard_top_ips(limit: int = 10) -> List[Dict[str, object]]:
+        profiles = offense_store.list_ip_profiles(500)
+        scored = []
+        for profile in profiles:
+            score = int(profile.offenses) + int(profile.blocks) * 3
+            scored.append(
+                {
+                    "ip": profile.ip,
+                    "offenses": int(profile.offenses),
+                    "blocks": int(profile.blocks),
+                    "score": score,
+                    "last_seen": profile.last_seen.isoformat(),
+                }
+            )
+        scored.sort(key=lambda item: (item["score"], item["last_seen"]), reverse=True)
+        return scored[:limit]
+
+    @app.get("/api/dashboard/feed")
+    def dashboard_feed(limit: int = 50, plugin: str | None = None) -> List[Dict[str, object]]:
+        offenses = offense_store.list_recent(limit=max(limit, 200))
+        serialized = [_serialize_offense(offense) for offense in offenses]
+        if plugin:
+            normalized = plugin.lower().strip()
+            serialized = [
+                entry
+                for entry in serialized
+                if (entry.get("plugin") or "").lower() == normalized
+            ]
+        return serialized[:limit]
+
+    @app.get("/api/dashboard/blocks/expiring")
+    def dashboard_expiring_blocks(
+        within_minutes: int = 60, limit: int = 10
+    ) -> List[Dict[str, object]]:
+        now = datetime.utcnow()
+        entries = []
+        for block in block_manager.list():
+            if not block.expires_at:
+                continue
+            delta = block.expires_at - now
+            minutes = int(delta.total_seconds() // 60)
+            if minutes < 0 or minutes > within_minutes:
+                continue
+            entries.append(
+                {
+                    "ip": block.ip,
+                    "reason": block.reason,
+                    "expires_at": block.expires_at.isoformat(),
+                    "minutes_left": minutes,
+                }
+            )
+        entries.sort(key=lambda item: item["minutes_left"])
+        return entries[:limit]
+
+    @app.get("/api/dashboard/blocks/reasons")
+    def dashboard_block_reasons(limit: int = 10) -> List[Dict[str, object]]:
+        counts: Dict[str, Dict[str, object]] = {}
+        for entry in block_manager.history():
+            reason = entry.reason or "sin razón"
+            if reason not in counts:
+                counts[reason] = {"reason": reason, "count": 0, "last_at": entry.created_at}
+            counts[reason]["count"] = int(counts[reason]["count"]) + 1
+            if entry.created_at > counts[reason]["last_at"]:
+                counts[reason]["last_at"] = entry.created_at
+        ordered = sorted(counts.values(), key=lambda item: item["count"], reverse=True)
+        return [
+            {
+                "reason": item["reason"],
+                "count": item["count"],
+                "last_at": item["last_at"].isoformat(),
+            }
+            for item in ordered[:limit]
+        ]
+
+    @app.get("/api/dashboard/health")
+    def dashboard_health() -> Dict[str, object]:
+        firewalls = []
+        for config in config_store.list():
+            try:
+                gateway = build_firewall_gateway(config)
+                start = datetime.utcnow()
+                gateway.check_connection()
+                latency_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
+                firewalls.append(
+                    {
+                        "id": config.id,
+                        "name": config.name,
+                        "type": config.type,
+                        "available": True,
+                        "latency_ms": latency_ms,
+                        "error": None,
+                    }
+                )
+            except Exception as exc:  # pragma: no cover - depende del firewall
+                firewalls.append(
+                    {
+                        "id": config.id,
+                        "name": config.name,
+                        "type": config.type,
+                        "available": False,
+                        "latency_ms": None,
+                        "error": str(exc),
+                    }
+                )
+
+        now = datetime.utcnow()
+        plugin_stats = []
+        proxytrap_config = plugin_store.get_proxytrap()
+        portdetector_config = plugin_store.get_port_detector()
+        mimosanpm_config = plugin_store.get_mimosanpm()
+        plugin_stats.append(
+            {
+                "name": "proxytrap",
+                "enabled": proxytrap_config.enabled,
+                "last_event_at": offense_store.last_seen_by_description_prefix("proxytrap:") or None,
+                "last_24h": offense_store.count_by_description_prefix_since(
+                    "proxytrap:", now - timedelta(hours=24)
+                ),
+            }
+        )
+        plugin_stats.append(
+            {
+                "name": "portdetector",
+                "enabled": portdetector_config.enabled,
+                "last_event_at": offense_store.last_seen_by_description_prefix("portdetector ") or None,
+                "last_24h": offense_store.count_by_description_prefix_since(
+                    "portdetector ", now - timedelta(hours=24)
+                ),
+            }
+        )
+        plugin_stats.append(
+            {
+                "name": "mimosanpm",
+                "enabled": mimosanpm_config.enabled,
+                "last_event_at": offense_store.last_seen_by_description_prefix("mimosanpm:") or None,
+                "last_24h": offense_store.count_by_description_prefix_since(
+                    "mimosanpm:", now - timedelta(hours=24)
+                ),
+            }
+        )
+
+        for item in plugin_stats:
+            if item["last_event_at"]:
+                item["last_event_at"] = item["last_event_at"].isoformat()
+
+        return {"firewalls": firewalls, "plugins": plugin_stats}
+
     @app.post("/api/plugins/mimosanpm/ingest", status_code=202)
     def ingest_mimosanpm(payload: MimosaNpmBatchInput, request: Request) -> Dict[str, object]:
         config = plugin_store.get_mimosanpm()
