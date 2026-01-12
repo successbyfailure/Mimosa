@@ -62,7 +62,10 @@
 4. **Dashboard de Métricas**
    - Grafana dashboards pre-configurados
    - Alertas de Prometheus (firewall down, high offense rate)
-
+5. **Integracion con homeassistant**
+   - Estadisticas, alertas, activar/desactivar las reglas de firewall bloquear/desbloquear ips
+6. **Bot de Telegram**
+   Estadisticas, alertas, activar/desactivar las reglas de firewall, bloquear/desbloquear ips
 **Estimación:** 2 semanas
 
 ---
@@ -351,33 +354,401 @@ jobs:
 
 ---
 
-## 🎨 Mejoras de UX en Dashboard
+## 🎨 Modernización de UI (Prioridad Media-Alta)
 
-### Ideas para mejorar la interfaz:
+**Problema Actual:**
+- 4,208 líneas de HTML total (3,238 solo en admin.html)
+- CSS/JS inline dificulta mantenimiento
+- Sin componentes reutilizables
+- Dificultad para compartir UI con integraciones (Home Assistant)
 
-1. **Dashboard Moderno**
-   - Migrar a framework moderno (React, Vue, Svelte)
-   - Gráficos interactivos con Chart.js o D3.js
-   - Real-time updates con WebSockets
-   - Dark mode
+**Estado actual:**
+- Templates Jinja2 con CSS/JS inline
+- Vanilla JavaScript para interactividad
+- Chart.js + Leaflet (mantener)
+- Design system dark mode funcional
 
-2. **Gestión Visual de Reglas**
-   - Drag & drop para priorizar reglas
-   - Preview de regla antes de guardar
-   - Import/export de reglas (JSON/YAML)
-   - Templates de reglas comunes
+---
 
-3. **Mapa de Ofensas**
-   - Mapa mundial con GeoIP
-   - Animaciones de ataques en tiempo real
-   - Filtros por país/región
-   - Heatmap de actividad
+### Opción 1: Svelte + SvelteKit ⭐ RECOMENDADA
 
-4. **Notificaciones**
-   - Alertas push en navegador
-   - Integración con Telegram/Slack/Discord
-   - Email notifications
-   - Webhooks configurables
+**Por qué Svelte:**
+- ✅ Bundle mínimo (~3KB vs 40KB React) - crítico para acceso móvil
+- ✅ Sintaxis limpia sin JSX
+- ✅ Reactivity nativa sin hooks
+- ✅ TypeScript built-in
+- ✅ Excelente para dashboards en tiempo real
+- ✅ Componentes reutilizables para Home Assistant
+
+**Arquitectura propuesta:**
+```
+mimosa-ui/                    # Nueva SPA separada
+├── src/
+│   ├── lib/
+│   │   ├── components/
+│   │   │   ├── ui/           # Design system
+│   │   │   │   ├── Card.svelte
+│   │   │   │   ├── Table.svelte
+│   │   │   │   ├── Modal.svelte
+│   │   │   │   ├── Toggle.svelte
+│   │   │   │   └── Button.svelte
+│   │   │   ├── charts/
+│   │   │   │   ├── TimelineChart.svelte
+│   │   │   │   ├── RatioChart.svelte
+│   │   │   │   └── Heatmap.svelte
+│   │   │   └── dashboard/
+│   │   │       ├── StatsGrid.svelte
+│   │   │       ├── LiveFeed.svelte
+│   │   │       ├── TopIPs.svelte
+│   │   │       └── PluginStats.svelte
+│   │   ├── api/              # Cliente API tipado
+│   │   │   ├── client.ts
+│   │   │   ├── types.ts
+│   │   │   └── websocket.ts  # WebSocket para live updates
+│   │   └── stores/           # Estado global reactivo
+│   │       ├── stats.ts
+│   │       ├── firewalls.ts
+│   │       └── auth.ts
+│   └── routes/
+│       ├── +layout.svelte    # Layout común
+│       ├── +page.svelte      # Dashboard
+│       ├── login/
+│       │   └── +page.svelte
+│       └── admin/
+│           ├── +page.svelte
+│           ├── blocks/
+│           ├── offenses/
+│           ├── firewall/
+│           └── whitelist/
+├── vite.config.ts
+├── tsconfig.json
+└── package.json
+```
+
+**Plan de implementación (6-7 semanas):**
+
+**Semana 1-2: Setup + Design System**
+- [ ] Inicializar proyecto SvelteKit con TypeScript
+- [ ] Migrar tokens CSS a variables (`tokens.ts`)
+- [ ] Crear componentes base:
+  ```typescript
+  // src/lib/components/ui/Card.svelte
+  // src/lib/components/ui/Table.svelte
+  // src/lib/components/ui/Button.svelte
+  // src/lib/components/ui/Modal.svelte
+  // src/lib/components/ui/Toggle.svelte
+  ```
+- [ ] Cliente API con tipos generados desde FastAPI
+  ```typescript
+  // src/lib/api/client.ts
+  export const api = {
+    stats: () => fetch('/api/stats').then(r => r.json()),
+    blocks: {
+      list: () => fetch('/api/blocks').then(r => r.json()),
+      create: (data) => fetch('/api/blocks', { method: 'POST', body: JSON.stringify(data) })
+    }
+  }
+  ```
+
+**Semana 3-4: Dashboard**
+- [ ] Stats grid con auto-refresh
+  ```svelte
+  <script lang="ts">
+    import { onMount, onDestroy } from 'svelte';
+    import { statsStore } from '$lib/stores/stats';
+
+    let interval: number;
+    onMount(() => {
+      statsStore.fetch();
+      interval = setInterval(() => statsStore.fetch(), 60000);
+    });
+    onDestroy(() => clearInterval(interval));
+  </script>
+
+  <div class="stats-grid">
+    {#each $statsStore.cards as stat}
+      <StatsCard {stat} />
+    {/each}
+  </div>
+  ```
+- [ ] Charts con `svelte-chartjs`
+- [ ] Mapa con `svelte-leaflet`
+- [ ] Live feed con WebSocket (reemplazar polling actual)
+  ```typescript
+  // src/lib/api/websocket.ts
+  export function connectLiveFeed() {
+    const ws = new WebSocket('ws://localhost:8000/ws/live');
+    return {
+      subscribe: (callback) => {
+        ws.onmessage = (e) => callback(JSON.parse(e.data));
+      }
+    }
+  }
+  ```
+
+**Semana 5-6: Admin Panel**
+- [ ] Tabs de configuración
+- [ ] CRUD de firewalls con validación
+- [ ] Inspector de IPs con búsqueda
+- [ ] Gestión de reglas (drag & drop para prioridad)
+- [ ] Whitelist manager
+
+**Semana 7: Polish & Deploy**
+- [ ] Dark/light mode toggle (mantener dark por defecto)
+- [ ] Responsive mobile (breakpoints en 640px, 768px, 1024px)
+- [ ] Loading states y skeletons
+- [ ] Error boundaries con retry
+- [ ] E2E tests con Playwright
+- [ ] Build production y deploy junto a FastAPI:
+  ```dockerfile
+  # Dockerfile - multi-stage
+  FROM node:18 AS frontend-builder
+  WORKDIR /app/mimosa-ui
+  COPY mimosa-ui/package*.json ./
+  RUN npm ci
+  COPY mimosa-ui/ ./
+  RUN npm run build
+
+  FROM python:3.11
+  COPY --from=frontend-builder /app/mimosa-ui/build /app/static
+  # ... resto del build Python
+  ```
+
+**Ventajas:**
+- 50% reducción de código estimada
+- Hot reload instantáneo en desarrollo
+- TypeScript para API safety
+- Componentes compartibles con Home Assistant
+- SSR opcional (mejor SEO si se necesita público)
+
+**Contras:**
+- Requiere separar completamente backend/frontend
+- Curva de aprendizaje (pequeña, ~2-3 días)
+- Despliegue ligeramente más complejo
+
+---
+
+### Opción 2: HTMX + Alpine.js (Conservadora)
+
+**Por qué HTMX:**
+- ✅ Mantiene arquitectura Jinja2 actual
+- ✅ Interactividad sin frameworks pesados
+- ✅ SSR-first (buen SEO)
+- ✅ Migración incremental posible
+
+**Cambios mínimos:**
+```html
+<!-- Antes: JavaScript manual -->
+<form onsubmit="blockIp(event)">...</form>
+
+<!-- Después: HTMX -->
+<form hx-post="/api/blocks"
+      hx-target="#blocks-table"
+      hx-swap="afterbegin"
+      hx-indicator="#spinner">
+  <input name="ip" required />
+  <button type="submit">Bloquear</button>
+</form>
+
+<!-- Alpine.js para tabs -->
+<div x-data="{ tab: 'config' }">
+  <button @click="tab = 'config'" :class="{ active: tab === 'config' }">
+    Configuración
+  </button>
+  <div x-show="tab === 'config'">...</div>
+</div>
+```
+
+**Estructura:**
+```
+mimosa/web/
+├── static/
+│   ├── css/
+│   │   ├── base.css         # Extraer del <style> inline
+│   │   ├── components.css   # Cards, tables, forms
+│   │   └── dashboard.css
+│   └── js/
+│       ├── alpine-setup.js
+│       └── charts.js        # Mantener Chart.js
+└── templates/
+    ├── components/          # Partials reutilizables
+    │   ├── stats_card.html
+    │   ├── table.html
+    │   └── modal.html
+    └── pages/
+```
+
+**Ventajas:**
+- ✅ Migración incremental (1-2 semanas)
+- ✅ Mantiene arquitectura actual
+- ✅ Menos complejidad de despliegue
+
+**Contras:**
+- ⚠️ No resuelve problema de 3,238 líneas en admin
+- ⚠️ Limitado para apps complejas
+- ⚠️ Sin componentes para Home Assistant
+
+---
+
+### Opción 3: Vue 3 + Vite (Híbrida)
+
+**Migración progresiva:**
+1. **Fase 1**: Admin panel → Vue SPA
+2. **Fase 2**: Dashboard → Mantener o migrar
+3. **Fase 3**: Componentes compartidos
+
+**Por qué Vue:**
+- ✅ Puede empezar con un solo tab
+- ✅ Composition API (similar a React hooks)
+- ✅ Gran ecosistema (Pinia, VueRouter)
+
+**Ventajas:**
+- ✅ Migración por partes (menos riesgo)
+- ✅ Gran documentación
+
+**Contras:**
+- ⚠️ Más pesado que Svelte (~35KB gzipped)
+- ⚠️ Sintaxis más verbose
+
+---
+
+### 🎯 Recomendación Final: Svelte + SvelteKit
+
+**Razones específicas para Mimosa:**
+1. Tamaño: 3,238 líneas en admin.html es insostenible a largo plazo
+2. Home Assistant: Podrás compartir componentes Svelte directamente
+3. Performance: Dashboards en tiempo real se benefician de reactivity nativa
+4. Bundle size: Crítico para acceso desde móvil o redes lentas
+5. DX: Hot reload + TypeScript = desarrollo 3x más rápido
+
+**Dependencias a añadir:**
+```json
+{
+  "dependencies": {
+    "@sveltejs/kit": "^2.0.0",
+    "svelte": "^4.2.0",
+    "chart.js": "^4.4.0",
+    "svelte-chartjs": "^3.1.0",
+    "leaflet": "^1.9.4",
+    "svelte-leaflet": "^0.8.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@sveltejs/adapter-static": "^3.0.0",
+    "@sveltejs/vite-plugin-svelte": "^3.0.0",
+    "typescript": "^5.3.0",
+    "vite": "^5.0.0"
+  }
+}
+```
+
+**Backend changes necesarios:**
+```python
+# mimosa/web/app.py - Servir SPA build
+
+from fastapi.staticfiles import StaticFiles
+
+# Montar build de Svelte
+app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
+
+# Catch-all para SPA routing
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    """Sirve la SPA de Svelte para todas las rutas no-API."""
+    if full_path.startswith("api/"):
+        raise HTTPException(404)
+    return FileResponse("static/index.html")
+```
+
+---
+
+### 💡 Siguientes Pasos
+
+**Antes de empezar:**
+1. [ ] Crear branch `feature/ui-modernization`
+2. [ ] Documentar API actual con OpenAPI para generar tipos
+3. [ ] Decidir: ¿WebSocket para live updates? (recomendado)
+
+**Primeras tareas:**
+1. [ ] `npm create svelte@latest mimosa-ui`
+2. [ ] Setup de tokens CSS como variables TS
+3. [ ] Componente `<Card>` (aparece 9 veces, alto ROI)
+4. [ ] Cliente API tipado
+5. [ ] Página de login (necesaria para la Fase 1: Autenticación)
+
+**Nota:** Esta modernización se alinea perfectamente con:
+- Fase 1 (Autenticación): Login page moderno
+- Fase 2 (Home Assistant): Componentes reutilizables
+- Fase 2 (Telegram Bot): API consistente
+
+---
+
+### 🎨 Design System a Extraer
+
+**Componentes prioritarios (por frecuencia de uso):**
+
+1. **`<StatsCard>`** - Aparece 9 veces
+   ```svelte
+   <script lang="ts">
+     export let title: string;
+     export let value: number;
+     export let subtitle: string;
+     export let trend: 'up' | 'down' | 'neutral' = 'neutral';
+   </script>
+   ```
+
+2. **`<DataTable>`** - Aparece 12+ veces
+   - Props: columns, data, sortable, onRowClick
+   - Features: sorting, pagination, search
+
+3. **`<Modal>`** - Múltiples variantes
+   - Confirm, Form, Info
+
+4. **`<TabGroup>`** - Dashboard y admin
+   - Reactivo, persiste en localStorage
+
+5. **`<Toggle>`** - Switches de firewall
+   - Estados: enabled/disabled/loading
+
+**Tokens CSS a migrar:**
+```typescript
+// src/lib/tokens.ts
+export const colors = {
+  bg: '#0f172a',
+  card: '#111827',
+  text: '#e2e8f0',
+  muted: '#94a3b8',
+  accent: '#38bdf8',
+  success: '#4ade80',
+  warning: '#fbbf24',
+  error: '#f87171',
+} as const;
+
+export const spacing = {
+  xs: '4px',
+  sm: '8px',
+  md: '12px',
+  lg: '16px',
+  xl: '24px',
+} as const;
+
+export const borderRadius = {
+  sm: '10px',
+  md: '12px',
+  lg: '16px',
+  full: '999px',
+} as const;
+```
+
+---
+
+### 📊 Estimación Comparativa
+
+| Opción | Tiempo | Complejidad | Mantenibilidad | Performance | Reutilización |
+|--------|--------|-------------|----------------|-------------|---------------|
+| **Svelte** | 6-7 sem | Media | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+| **HTMX** | 1-2 sem | Baja | ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐ |
+| **Vue** | 5-6 sem | Media | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
 
 ---
 
