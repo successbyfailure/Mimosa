@@ -343,7 +343,11 @@ def create_app(
         return request.session.get("user")
 
     def _is_public_api(path: str) -> bool:
-        return path.startswith("/api/public") or path.startswith("/api/auth")
+        return (
+            path.startswith("/api/public")
+            or path.startswith("/api/auth")
+            or path == "/api/plugins/mimosanpm/ingest"
+        )
 
     def _require_admin(request: Request) -> None:
         user = _current_user(request)
