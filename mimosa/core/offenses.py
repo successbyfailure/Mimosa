@@ -20,7 +20,7 @@ import json
 import os
 import socket
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
@@ -61,7 +61,7 @@ class OffenseStore:
     ) -> OffenseRecord:
         """Inserta una ofensa y devuelve la fila creada."""
 
-        created_at = datetime.utcnow()
+        created_at = datetime.now(timezone.utc)
         self._ensure_ip_profile(source_ip, seen_at=created_at)
         context_json = json.dumps(context) if context else None
         with self._connection() as conn:
@@ -103,7 +103,7 @@ class OffenseStore:
         with self._connection() as conn:
             rows = []
             for offense in offenses:
-                created_at = offense.get("created_at") or datetime.utcnow().isoformat()
+                created_at = offense.get("created_at") or datetime.now(timezone.utc).isoformat()
                 self._ensure_ip_profile(offense.get("source_ip", "desconocido"))
                 rows.append(
                     (
@@ -313,7 +313,7 @@ class OffenseStore:
     def timeline(self, window: timedelta, *, bucket: str = "hour") -> List[Dict[str, str | int]]:
         """Devuelve recuentos agregados por intervalo para un periodo."""
 
-        cutoff = datetime.utcnow() - window
+        cutoff = datetime.now(timezone.utc) - window
         format_map = {
             "day": "%Y-%m-%d",
             "hour": "%Y-%m-%d %H:00",
@@ -379,7 +379,7 @@ class OffenseStore:
         """Recalcula los datos enriquecidos de una IP."""
 
         metadata = self._enrich_ip(ip)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         with self._connection() as conn:
             conn.execute(
                 """
@@ -408,7 +408,7 @@ class OffenseStore:
     def add_whitelist(self, cidr: str, note: Optional[str] = None) -> WhitelistEntry:
         """Inserta una entrada en la lista blanca local."""
 
-        created_at = datetime.utcnow()
+        created_at = datetime.now(timezone.utc)
         with self._connection() as conn:
             cursor = conn.execute(
                 """
@@ -463,7 +463,7 @@ class OffenseStore:
     def _ensure_ip_profile(self, ip: str, *, seen_at: Optional[datetime] = None) -> None:
         """Garantiza que existe una entrada de IP y actualiza last_seen."""
 
-        seen = seen_at or datetime.utcnow()
+        seen = seen_at or datetime.now(timezone.utc)
         with self._connection() as conn:
             row = conn.execute(
                 "SELECT ip FROM ip_profiles WHERE ip = ? LIMIT 1;", (ip,)

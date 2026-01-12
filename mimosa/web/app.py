@@ -543,7 +543,7 @@ def create_app(
         return templates.TemplateResponse("admin.html", {"request": request})
 
     def _stats_payload() -> Dict[str, Dict[str, object]]:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         seven_days = timedelta(days=7)
         day = timedelta(hours=24)
         hour = timedelta(hours=1)
@@ -819,7 +819,7 @@ def create_app(
     def dashboard_expiring_blocks(
         within_minutes: int = 60, limit: int = 10
     ) -> List[Dict[str, object]]:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         entries = []
         for block in block_manager.list():
             if not block.expires_at:
@@ -865,9 +865,9 @@ def create_app(
         for config in config_store.list():
             try:
                 gateway = build_firewall_gateway(config)
-                start = datetime.utcnow()
+                start = datetime.now(timezone.utc)
                 gateway.check_connection()
-                latency_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
+                latency_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
                 firewalls.append(
                     {
                         "id": config.id,
@@ -890,7 +890,7 @@ def create_app(
                     }
                 )
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         plugin_stats = []
         proxytrap_config = plugin_store.get_proxytrap()
         portdetector_config = plugin_store.get_port_detector()
@@ -985,7 +985,7 @@ def create_app(
             return serialized
 
         rules = rule_store.list() or [OffenseRule()]
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         latest_created = max(
             (offense.created_at for offense in offenses), default=now
         )
@@ -1064,13 +1064,13 @@ def create_app(
             return block_manager.list(), label
         if normalized in {"24h", "24horas"}:
             label = "24h"
-            cutoff = datetime.utcnow() - timedelta(hours=24)
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
         elif normalized in {"week", "7d", "semana"}:
             label = "week"
-            cutoff = datetime.utcnow() - timedelta(days=7)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=7)
         elif normalized in {"month", "30d", "mes"}:
             label = "month"
-            cutoff = datetime.utcnow() - timedelta(days=30)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=30)
         else:
             return block_manager.history(), label
         return [entry for entry in block_manager.history() if entry.created_at >= cutoff], label
@@ -1545,7 +1545,7 @@ def create_app(
         )
         duration_minutes = None
         if entry.expires_at:
-            delta = entry.expires_at - datetime.utcnow()
+            delta = entry.expires_at - datetime.now(timezone.utc)
             duration_minutes = max(int(delta.total_seconds() // 60), 1)
         should_sync = block_manager.should_sync(payload.ip)
         if should_sync:

@@ -2,7 +2,7 @@
 
 Expone endpoints internos para interacción entre módulos (web, proxy, bot).
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from mimosa.core.blocking import BlockEntry, BlockManager
@@ -44,7 +44,7 @@ class CoreAPI:
         sync_with_firewall = self.block_manager.should_sync(request.source_ip)
         duration_minutes = None
         if entry.expires_at:
-            delta = entry.expires_at - datetime.utcnow()
+            delta = entry.expires_at - datetime.now(timezone.utc)
             duration_minutes = max(int(delta.total_seconds() // 60), 1)
         if sync_with_firewall:
             self.firewall_gateway.block_ip(

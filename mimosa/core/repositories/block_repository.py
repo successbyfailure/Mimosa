@@ -128,16 +128,39 @@ class BlockRepository:
 
     def _row_to_block(self, row: tuple) -> BlockEntry:
         """Convierte una fila de la BD a un BlockEntry."""
+        # Asegurar que todos los datetimes sean timezone-aware
+        created_at = datetime.fromisoformat(row[4])
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+
+        expires_at = None
+        if row[5]:
+            expires_at = datetime.fromisoformat(row[5])
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        synced_at = None
+        if row[7]:
+            synced_at = datetime.fromisoformat(row[7])
+            if synced_at.tzinfo is None:
+                synced_at = synced_at.replace(tzinfo=timezone.utc)
+
+        removed_at = None
+        if row[8]:
+            removed_at = datetime.fromisoformat(row[8])
+            if removed_at.tzinfo is None:
+                removed_at = removed_at.replace(tzinfo=timezone.utc)
+
         return BlockEntry(
             id=row[0],
             ip=row[1],
             reason=row[2],
             source=row[3],
-            created_at=datetime.fromisoformat(row[4]),
-            expires_at=datetime.fromisoformat(row[5]) if row[5] else None,
+            created_at=created_at,
+            expires_at=expires_at,
             active=bool(row[6]),
-            synced_at=datetime.fromisoformat(row[7]) if row[7] else None,
-            removed_at=datetime.fromisoformat(row[8]) if row[8] else None,
+            synced_at=synced_at,
+            removed_at=removed_at,
             sync_with_firewall=bool(row[9]) if len(row) > 9 else True,
         )
 

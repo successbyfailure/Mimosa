@@ -29,6 +29,13 @@ logger = logging.getLogger(__name__)
 __all__ = ["BlockEntry", "BlockManager"]
 
 
+def _normalize_datetime(dt: datetime) -> datetime:
+    """Normaliza datetime a timezone-aware UTC si es naive."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 class BlockManager:
     """Registra y maneja bloqueos de direcciones IP.
 
@@ -77,16 +84,39 @@ class BlockManager:
                 """
             ).fetchall()
         for row in rows:
+            # Asegurar que todos los datetimes sean timezone-aware
+            created_at = datetime.fromisoformat(row[4])
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+
+            expires_at = None
+            if row[5]:
+                expires_at = datetime.fromisoformat(row[5])
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+            synced_at = None
+            if row[7]:
+                synced_at = datetime.fromisoformat(row[7])
+                if synced_at.tzinfo is None:
+                    synced_at = synced_at.replace(tzinfo=timezone.utc)
+
+            removed_at = None
+            if row[8]:
+                removed_at = datetime.fromisoformat(row[8])
+                if removed_at.tzinfo is None:
+                    removed_at = removed_at.replace(tzinfo=timezone.utc)
+
             entry = BlockEntry(
                 id=row[0],
                 ip=row[1],
                 reason=row[2],
                 source=row[3],
-                created_at=datetime.fromisoformat(row[4]),
-                expires_at=datetime.fromisoformat(row[5]) if row[5] else None,
+                created_at=created_at,
+                expires_at=expires_at,
                 active=bool(row[6]),
-                synced_at=datetime.fromisoformat(row[7]) if row[7] else None,
-                removed_at=datetime.fromisoformat(row[8]) if row[8] else None,
+                synced_at=synced_at,
+                removed_at=removed_at,
                 sync_with_firewall=bool(row[9]) if len(row) > 9 else True,
             )
             self._history.append(entry)
@@ -257,7 +287,11 @@ class BlockManager:
     def count_since(self, since: datetime) -> int:
         """Cuenta bloqueos creados a partir de un instante dado."""
 
-        return len([entry for entry in self._history if entry.created_at >= since])
+        since_normalized = _normalize_datetime(since)
+        return len([
+            entry for entry in self._history
+            if _normalize_datetime(entry.created_at) >= since_normalized
+        ])
 
     def recent_activity(self, limit: int = 20) -> List[Dict[str, object]]:
         """Historial combinado de altas y bajas de bloqueos."""
@@ -305,9 +339,10 @@ class BlockManager:
         pattern = format_map[bucket]
         grouped: Dict[str, int] = {}
         for entry in self._history:
-            if entry.created_at < cutoff:
+            created_at_normalized = _normalize_datetime(entry.created_at)
+            if created_at_normalized < cutoff:
                 continue
-            grouped[entry.created_at.strftime(pattern)] = grouped.get(entry.created_at.strftime(pattern), 0) + 1
+            grouped[created_at_normalized.strftime(pattern)] = grouped.get(created_at_normalized.strftime(pattern), 0) + 1
 
         return [
             {"bucket": bucket_label, "count": count}
