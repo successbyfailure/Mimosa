@@ -185,6 +185,43 @@ class OffenseStore:
 
         return offenses
 
+    def list_recent_by_description_prefix(
+        self, prefix: str, limit: int = 50
+    ) -> List[OffenseRecord]:
+        """Recupera ofensas recientes filtradas por prefijo de descripción."""
+
+        pattern = f"{prefix}%"
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, source_ip, description, severity, host, path, user_agent, context, created_at
+                FROM offenses
+                WHERE description LIKE ?
+                ORDER BY datetime(created_at) DESC
+                LIMIT ?;
+                """,
+                (pattern, limit),
+            ).fetchall()
+
+        offenses: List[OffenseRecord] = []
+        for row in rows:
+            context = json.loads(row[7]) if row[7] else None
+            offenses.append(
+                OffenseRecord(
+                    id=row[0],
+                    source_ip=row[1],
+                    description=row[2],
+                    severity=row[3],
+                    host=row[4],
+                    path=row[5],
+                    user_agent=row[6],
+                    context=context,
+                    created_at=datetime.fromisoformat(row[8]),
+                )
+            )
+
+        return offenses
+
     def list_by_ip(self, ip: str, limit: int = 50) -> List[OffenseRecord]:
         """Devuelve ofensas asociadas a una IP concreta."""
 
@@ -300,7 +337,7 @@ class OffenseStore:
                 """
                 SELECT ip, geo, whois, reverse_dns, first_seen, last_seen, enriched_at,
                        (SELECT COUNT(*) FROM offenses o WHERE o.source_ip = ip_profiles.ip) AS offenses,
-                       (SELECT COUNT(*) FROM blocks b WHERE b.ip = ip_profiles.ip AND b.active = 1) AS blocks
+                       (SELECT COUNT(*) FROM blocks b WHERE b.ip = ip_profiles.ip) AS blocks
                 FROM ip_profiles
                 ORDER BY datetime(last_seen) DESC
                 LIMIT ?;
@@ -318,7 +355,7 @@ class OffenseStore:
                 """
                 SELECT ip, geo, whois, reverse_dns, first_seen, last_seen, enriched_at,
                        (SELECT COUNT(*) FROM offenses o WHERE o.source_ip = ip_profiles.ip) AS offenses,
-                       (SELECT COUNT(*) FROM blocks b WHERE b.ip = ip_profiles.ip AND b.active = 1) AS blocks
+                       (SELECT COUNT(*) FROM blocks b WHERE b.ip = ip_profiles.ip) AS blocks
                 FROM ip_profiles
                 WHERE ip = ?
                 LIMIT 1;

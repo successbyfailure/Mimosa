@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.43
+- **IP inspector**: distribución de ofensas por tipo en lugar de plugin.
+
+## 1.3.42
+- **MimosaNPM**: eventos completos con endpoint dedicado y auto refresco menos intrusivo.
+- **UI**: mejora de contraste en opciones de desplegables.
+- **IP inspector**: contador de bloqueos muestra históricos.
+- **OPNsense**: normaliza whitelist a CIDR al migrar alias.
+
 ## 1.3.41
 - **MimosaNPM**: corrección de comodines en el coloreado de eventos.
 

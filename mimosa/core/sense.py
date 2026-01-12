@@ -421,6 +421,15 @@ class OPNsenseClient(_BaseSenseClient):
                 if isinstance(value, dict) and value.get("selected") == 1:
                     selected.append(str(value.get("value", key)))
             content = "\n".join(selected)
+        if alias_type == "network":
+            normalized = []
+            for entry in str(content).splitlines():
+                entry = entry.strip()
+                if not entry:
+                    continue
+                resolved = self._resolve_whitelist_addresses(entry)
+                normalized.extend(resolved)
+            content = "\n".join(sorted(set(normalized)))
         payload = {
             "alias": {
                 "enabled": alias_item.get("enabled", "1"),
@@ -483,7 +492,8 @@ class OPNsenseClient(_BaseSenseClient):
         except ValueError:
             return address
         if network.prefixlen == network.max_prefixlen:
-            return str(network.network_address)
+            suffix = "/128" if network.version == 6 else "/32"
+            return f"{network.network_address}{suffix}"
         return str(network)
 
     def _resolve_whitelist_addresses(self, value: str) -> List[str]:

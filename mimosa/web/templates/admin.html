@@ -1053,8 +1053,21 @@ function refreshActiveTab() {
   if (tab === 'ips') loadIps();
   if (tab === 'whitelist') { loadWhitelist(); loadBlacklist(); }
   if (tab === 'firewall') { loadFirewallAliases(); loadFirewallRules(); }
-  if (tab === 'plugins') loadPlugins();
+  if (tab === 'plugins') {
+    const activePlugin = document.querySelector('.plugin-tab-btn.active');
+    if (activePlugin && activePlugin.dataset.pluginTab === 'mimosanpm') {
+      loadMimosaNpmEvents();
+    }
+  }
   if (tab === 'config') { loadBlockingSettings(); loadFirewalls(); }
+}
+
+function shouldAutoRefresh() {
+  const activeElement = document.activeElement;
+  if (activeElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeElement.tagName)) {
+    return false;
+  }
+  return !document.querySelector('.modal.open');
 }
 
 function closeEditModal() {
@@ -1558,13 +1571,12 @@ async function loadMimosaNpmEvents() {
     message.style.color = '';
   }
   try {
-    const res = await fetch('/api/offenses?limit=200');
+    const res = await fetch('/api/plugins/mimosanpm/events?limit=200');
     const data = await res.json();
     if (!res.ok) {
       throw new Error(data.detail || 'No se pudieron cargar los eventos.');
     }
     const events = (data || [])
-      .filter(item => item.plugin === 'mimosanpm')
       .map(item => ({
         host: item.host,
         path: item.path,
@@ -2935,14 +2947,23 @@ async function showIpDetail(ip) {
     .map(([source, count]) => `${source}: ${count}`)
     .join(' · ');
   const latestBlock = blocks[0] ? new Date(blocks[0].created_at).toLocaleString() : 'sin registros';
-  const pluginGroups = offenses.reduce((acc, offense) => {
-    const descriptionPlugin = (offense.description || '').split(':')[0];
-    const key = (offense.context?.plugin || descriptionPlugin || 'desconocido').trim() || 'desconocido';
+  const typeGroups = offenses.reduce((acc, offense) => {
+    const description = offense.description || '';
+    const contextType = offense.context?.alert_type || offense.context?.event_id;
+    let key = contextType;
+    if (!key && description.includes(':')) {
+      const after = description.split(':')[1] || '';
+      key = after.trim().split(/\s+/)[0];
+    }
+    if (!key) {
+      key = offense.context?.plugin || 'desconocido';
+    }
+    key = key.trim() || 'desconocido';
     acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
-  const pluginSummary = Object.entries(pluginGroups)
-    .map(([plugin, count]) => `${plugin}: ${count}`)
+  const typeSummary = Object.entries(typeGroups)
+    .map(([type, count]) => `${type}: ${count}`)
     .join(' · ');
   detail.innerHTML = `
     <div><strong>${profile.ip}</strong></div>
@@ -2956,10 +2977,10 @@ async function showIpDetail(ip) {
         <div style="font-weight:700;">${offenses.length} ofensas · ${blocks.length} bloqueos</div>
         <div class="muted">Último bloqueo: ${latestBlock}</div>
         <div class="muted">Tipos de bloqueo: ${blockTypeSummary || 'Sin bloqueos registrados'}</div>
-        <div class="muted">Plugins: ${pluginSummary || 'Sin ofensas registradas'}</div>
+        <div class="muted">Tipos de ofensa: ${typeSummary || 'Sin ofensas registradas'}</div>
       </div>
       <div class="card" style="padding:12px; background: rgba(255,255,255,.02); border:1px dashed rgba(255,255,255,.08);">
-        <div class="muted" style="margin-bottom:6px;">Distribución de ofensas por plugin</div>
+        <div class="muted" style="margin-bottom:6px;">Distribución de ofensas</div>
         <canvas id="ip-plugin-chart" height="140"></canvas>
         <div id="ip-plugin-chart-empty" class="muted" style="display:none;">Sin ofensas para graficar.</div>
       </div>
@@ -2985,8 +3006,17 @@ function renderIpPluginChart(offenses) {
     ipPluginChart = null;
   }
   const grouped = offenses.reduce((acc, offense) => {
-    const descriptionPlugin = (offense.description || '').split(':')[0];
-    const key = (offense.context?.plugin || descriptionPlugin || 'desconocido').trim() || 'desconocido';
+    const description = offense.description || '';
+    const contextType = offense.context?.alert_type || offense.context?.event_id;
+    let key = contextType;
+    if (!key && description.includes(':')) {
+      const after = description.split(':')[1] || '';
+      key = after.trim().split(/\s+/)[0];
+    }
+    if (!key) {
+      key = offense.context?.plugin || 'desconocido';
+    }
+    key = key.trim() || 'desconocido';
     acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
@@ -3199,6 +3229,10 @@ loadWhitelist();
 loadBlacklist();
 loadPlugins();
 if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-autoRefreshTimer = setInterval(refreshActiveTab, 30000);
+autoRefreshTimer = setInterval(() => {
+  if (shouldAutoRefresh()) {
+    refreshActiveTab();
+  }
+}, 30000);
 </script>
 {% endblock %}

@@ -747,6 +747,11 @@ def create_app(
         plugin_store.update_mimosanpm(config)
         return asdict(config)
 
+    @app.get("/api/plugins/mimosanpm/events")
+    def list_mimosanpm_events(limit: int = 200) -> List[Dict[str, object]]:
+        offenses = offense_store.list_recent_by_description_prefix("mimosanpm:", limit)
+        return [_serialize_offense(offense) for offense in offenses]
+
     @app.post("/api/plugins/mimosanpm/ingest", status_code=202)
     def ingest_mimosanpm(payload: MimosaNpmBatchInput, request: Request) -> Dict[str, object]:
         config = plugin_store.get_mimosanpm()
