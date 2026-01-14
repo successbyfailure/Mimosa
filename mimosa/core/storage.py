@@ -136,4 +136,60 @@ def ensure_database(path: Path | str = DEFAULT_DB_PATH) -> Path:
             );
             """
         )
+        # Tablas para el bot de Telegram
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id INTEGER UNIQUE NOT NULL,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                authorized INTEGER NOT NULL DEFAULT 0,
+                authorized_at TEXT,
+                authorized_by TEXT,
+                first_seen TEXT,
+                last_seen TEXT,
+                interaction_count INTEGER NOT NULL DEFAULT 0
+            );
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_telegram_users_telegram_id
+            ON telegram_users(telegram_id);
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_telegram_users_authorized
+            ON telegram_users(authorized);
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_interactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id INTEGER NOT NULL,
+                username TEXT,
+                command TEXT,
+                message TEXT,
+                authorized INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(telegram_id) REFERENCES telegram_users(telegram_id)
+            );
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_telegram_interactions_created
+            ON telegram_interactions(created_at);
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_telegram_interactions_telegram_id
+            ON telegram_interactions(telegram_id);
+            """
+        )
     return db_path
