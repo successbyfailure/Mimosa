@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Optional
@@ -17,6 +18,8 @@ class TelegramConfigStore:
 
     def __init__(self, db_path: Path | str = DEFAULT_DB_PATH) -> None:
         self.db_path = ensure_database(db_path)
+        # Inicializar configuración desde variables de entorno si no existe
+        self._maybe_seed_from_env()
 
     def _connection(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
@@ -119,6 +122,44 @@ class TelegramConfigStore:
     def disable_bot(self) -> None:
         """Deshabilita el bot."""
         self.update_setting("enabled", False)
+
+    def _maybe_seed_from_env(self) -> None:
+        """Inicializa la configuración desde variables de entorno si no existe.
+
+        Solo se ejecuta cuando no hay configuración previa del bot para evitar
+        sobrescribir configuraciones existentes en arranques sucesivos.
+        """
+        # Verificar si ya existe configuración
+        config = self.get_config()
+        if config.bot_token:
+            # Ya existe configuración, no hacer nada
+            return
+
+        # Leer variables de entorno
+        env_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+        if not env_token:
+            # No hay token en variables de entorno, no hacer nada
+            return
+
+        # Leer otras variables de entorno
+        env_enabled = os.environ.get("TELEGRAM_BOT_ENABLED", "false").strip().lower() == "true"
+        env_welcome = os.environ.get(
+            "TELEGRAM_WELCOME_MESSAGE", "Bienvenido al bot de Mimosa"
+        ).strip()
+        env_unauthorized = os.environ.get(
+            "TELEGRAM_UNAUTHORIZED_MESSAGE", "No estás autorizado para usar este bot"
+        ).strip()
+
+        # Crear configuración inicial
+        initial_config = TelegramBotConfig(
+            enabled=env_enabled,
+            bot_token=env_token,
+            welcome_message=env_welcome,
+            unauthorized_message=env_unauthorized,
+        )
+
+        # Guardar configuración
+        self.save_config(initial_config)
 
 
 __all__ = ["TelegramConfigStore"]
