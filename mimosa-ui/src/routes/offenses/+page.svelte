@@ -124,6 +124,8 @@
     return 'Normal';
   };
 
+  const ipHref = (ip: string) => `/ips/${encodeURIComponent(ip)}`;
+
   $: filtered = offenses.filter((offense) => {
     const needle = query.trim().toLowerCase();
     if (!needle) {
@@ -156,34 +158,34 @@
 </section>
 
 {#if error}
-  <div class="surface" style="padding: 16px; border-color: rgba(248, 113, 113, 0.5);">
+  <div class="surface panel-sm" style="border-color: rgba(248, 113, 113, 0.5);">
     <strong>Error</strong>
     <div style="color: var(--muted); margin-top: 4px;">{error}</div>
   </div>
 {/if}
 
 <div class="section">
-  <div class="surface" style="padding: 18px;">
-    <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center;">
-      <div style="flex: 1; min-width: 200px;">
+  <div class="surface panel">
+    <div class="toolbar">
+      <div class="grow">
         <input placeholder="Buscar por IP, plugin, severidad" bind:value={query} />
       </div>
-      <div style="width: 120px;">
-        <input type="number" min="10" step="10" bind:value={limit} />
+      <div class="compact">
+        <input type="number" min="10" step="10" bind:value={limit} aria-label="Limite" />
       </div>
       <button class="ghost" on:click={loadOffenses}>Recargar</button>
     </div>
 
     <div style="margin-top: 16px; overflow-x: auto;">
-      <table class="table">
+      <table class="table table-responsive">
         <thead>
           <tr>
-            <th>IP</th>
-            <th>Severidad</th>
-            <th>Estado</th>
+            <th class="cell-nowrap">IP</th>
+            <th class="cell-nowrap">Severidad</th>
+            <th class="cell-nowrap">Estado</th>
             <th>Descripcion</th>
-            <th>Plugin</th>
-            <th>Fecha</th>
+            <th class="cell-nowrap">Plugin</th>
+            <th class="cell-nowrap">Fecha</th>
           </tr>
         </thead>
         <tbody>
@@ -198,16 +200,28 @@
           {:else}
             {#each filtered as offense}
               <tr>
-                <td>{offense.source_ip}</td>
-                <td>
+                <td class="cell-nowrap" data-label="IP">
+                  <a class="ip-link" href={ipHref(offense.source_ip)}>{offense.source_ip}</a>
+                </td>
+                <td data-label="Severidad">
                   <span class="tag" style="color: {severityColor(offense.severity)};">
                     {offense.severity || 'n/a'}
                   </span>
                 </td>
-                <td>{statusLabel(offense.escalation_status)}</td>
-                <td>{offense.description_clean || offense.description}</td>
-                <td>{offense.plugin || 'manual'}</td>
-                <td>{formatDate(offense.created_at)}</td>
+                <td class="cell-nowrap" data-label="Estado">
+                  {statusLabel(offense.escalation_status)}
+                </td>
+                <td
+                  class="cell-truncate"
+                  title={offense.description_clean || offense.description}
+                  data-label="Descripcion"
+                >
+                  {offense.description_clean || offense.description}
+                </td>
+                <td class="cell-muted cell-nowrap" data-label="Plugin">
+                  {offense.plugin || 'manual'}
+                </td>
+                <td class="cell-nowrap" data-label="Fecha">{formatDate(offense.created_at)}</td>
               </tr>
             {/each}
           {/if}
@@ -216,9 +230,9 @@
     </div>
   </div>
 
-  <div class="surface" style="padding: 18px;">
+  <div class="surface panel">
     <div class="badge">Manual</div>
-    <h3 style="margin-top: 12px;">Crear ofensa</h3>
+    <h3 class="card-title" style="margin-top: 12px;">Crear ofensa</h3>
     <div style="display: grid; gap: 12px; margin-top: 12px;">
       <label>
         <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">IP</div>

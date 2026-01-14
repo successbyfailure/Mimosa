@@ -62,6 +62,9 @@
     return response.json() as Promise<T>;
   };
 
+  const ipHref = (ip: string) => `/ips/${encodeURIComponent(ip)}`;
+  const isIpTarget = (value: string) => !value.includes('/');
+
   const loadWhitelist = async () => {
     loading = true;
     error = null;
@@ -240,7 +243,7 @@
     </div>
 
     <div style="margin-top: 16px; overflow-x: auto;">
-      <table class="table">
+      <table class="table table-responsive">
         <thead>
           <tr>
             <th>CIDR</th>
@@ -261,10 +264,16 @@
           {:else}
             {#each entries as entry}
               <tr>
-                <td>{entry.cidr}</td>
-                <td>{entry.note || '-'}</td>
-                <td>{formatDate(entry.created_at)}</td>
-                <td>
+                <td data-label="CIDR">
+                  {#if isIpTarget(entry.cidr)}
+                    <a class="ip-link" href={ipHref(entry.cidr)}>{entry.cidr}</a>
+                  {:else}
+                    {entry.cidr}
+                  {/if}
+                </td>
+                <td data-label="Nota">{entry.note || '-'}</td>
+                <td data-label="Creado">{formatDate(entry.created_at)}</td>
+                <td data-label="Accion">
                   <button class="ghost" on:click={() => removeEntry(entry)}>Eliminar</button>
                 </td>
               </tr>
@@ -350,7 +359,7 @@
         {/if}
       </div>
       <div style="overflow-x: auto;">
-        <table class="table">
+        <table class="table table-responsive">
           <thead>
             <tr>
               <th>Entrada</th>
@@ -365,8 +374,14 @@
             {:else}
               {#each blacklistEntries as entry}
                 <tr>
-                  <td>{entry}</td>
-                  <td>
+                  <td data-label="Entrada">
+                    {#if isIpTarget(entry)}
+                      <a class="ip-link" href={ipHref(entry)}>{entry}</a>
+                    {:else}
+                      {entry}
+                    {/if}
+                  </td>
+                  <td data-label="Accion">
                     <button class="ghost" on:click={() => removeBlacklist(entry)}>Eliminar</button>
                   </td>
                 </tr>

@@ -9,6 +9,34 @@
     authStore.checkSession();
   });
 
+  let sidebarOpen = true;
+  let logoPulse = false;
+  let logoPulseTimer: number | null = null;
+
+  onMount(() => {
+    if (typeof window !== 'undefined') {
+      sidebarOpen = window.innerWidth > 900;
+    }
+    const handleOffense = () => {
+      logoPulse = false;
+      if (logoPulseTimer) {
+        window.clearTimeout(logoPulseTimer);
+      }
+      logoPulse = true;
+      logoPulseTimer = window.setTimeout(() => {
+        logoPulse = false;
+        logoPulseTimer = null;
+      }, 900);
+    };
+    window.addEventListener('mimosa:offense', handleOffense);
+    return () => {
+      window.removeEventListener('mimosa:offense', handleOffense);
+      if (logoPulseTimer) {
+        window.clearTimeout(logoPulseTimer);
+      }
+    };
+  });
+
   $: isLogin = $page.url.pathname.startsWith('/login');
   $: isPublicHome = $page.url.pathname === '/';
   $: if (!isLogin && !isPublicHome && !$authStore.loading && !$authStore.user) {
@@ -20,12 +48,21 @@
 {#if isLogin || (isPublicHome && !$authStore.user)}
   <slot />
 {:else}
-  <div class="app-shell">
-    <aside class="sidebar">
-      <div class="brand">
-        Mimosa
-        <span>Defense Core</span>
-      </div>
+  <div class={`app-shell ${sidebarOpen ? '' : 'collapsed'}`}>
+    <aside class={`sidebar ${sidebarOpen ? '' : 'collapsed'}`}>
+      <button
+        class="brand brand-toggle"
+        type="button"
+        on:click={() => (sidebarOpen = !sidebarOpen)}
+        aria-label="Abrir menu"
+      >
+        <span class={`brand-logo mimosa-mark ${logoPulse ? 'pulse' : ''}`}>M</span>
+        <span class="brand-text">
+          Mimosa
+          <span>Defense Core</span>
+        </span>
+      </button>
+      {#if sidebarOpen}
       <nav class="nav-links">
         <a href="/" class={$page.url.pathname === '/' ? 'active' : ''}>Dashboard</a>
         <a
@@ -72,7 +109,7 @@
         </a>
       </nav>
       <div class="section">
-        <div class="surface" style="padding: 16px;">
+        <div class="surface panel-sm">
           <div class="badge">Sesion</div>
           <div style="margin-top: 8px; color: var(--muted); font-size: 13px;">
             {#if $authStore.user}
@@ -90,6 +127,7 @@
           </div>
         </div>
       </div>
+      {/if}
     </aside>
     <main class="main">
       <slot />

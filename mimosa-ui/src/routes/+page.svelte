@@ -116,12 +116,21 @@
     ip: string;
     minutes_left: number;
     reason?: string | null;
+    reason_text?: string | null;
+    reason_plugin?: string | null;
+    reason_counts?: {
+      offenses_total?: number | null;
+      offenses_1h?: number | null;
+      blocks_total?: number | null;
+    };
   };
 
   type BlockReason = {
     reason: string;
     count: number;
     last_at: string;
+    reason_text?: string | null;
+    reason_plugin?: string | null;
   };
 
   type FirewallHealth = {
@@ -140,11 +149,41 @@
     last_event_at?: string | null;
   };
 
+  type ReasonCounts = {
+    offenses_total?: number | null;
+    offenses_1h?: number | null;
+    blocks_total?: number | null;
+  };
+
+  type RecentOffense = {
+    source_ip: string;
+    description: string;
+    description_clean?: string | null;
+    created_at: string;
+    plugin?: string | null;
+    reason_text?: string | null;
+    reason_plugin?: string | null;
+    reason_counts?: ReasonCounts;
+    lat?: number | null;
+    lon?: number | null;
+    country?: string | null;
+    country_code?: string | null;
+  };
+
+  type RecentBlock = {
+    ip: string;
+    reason: string;
+    created_at: string;
+    reason_text?: string | null;
+    reason_plugin?: string | null;
+    reason_counts?: ReasonCounts;
+  };
+
   type DashboardTab = 'overview' | 'map' | 'insights' | 'health' | 'plugins';
 
   const tabs: { value: DashboardTab; label: string }[] = [
-    { value: 'overview', label: 'Resumen' },
     { value: 'map', label: 'Mapa' },
+    { value: 'overview', label: 'Detalle' },
     { value: 'insights', label: 'Insights' },
     { value: 'health', label: 'Salud' },
     { value: 'plugins', label: 'Plugins' }
@@ -198,6 +237,8 @@
   ];
   let publicWindow: PublicWindow = '24h';
 
+  const ipHref = (ip: string) => `/ips/${encodeURIComponent(ip)}`;
+
   let plugins: Plugin[] = [];
   let proxyStats: ProxyStats | null = null;
   let portStats: PortStats | null = null;
@@ -227,11 +268,17 @@
   let firewallsHealth: FirewallHealth[] = [];
   let pluginsHealth: PluginHealth[] = [];
   let insightsError: string | null = null;
+  let latestOffenses: RecentOffense[] = [];
+  let latestBlocks: RecentBlock[] = [];
+  let mapAttackOrigins: { lat: number; lon: number }[] = [];
+  let mapAttackKey = 0;
+  let mapLatestEventMs: number | null = null;
 
   let statsInterval: number | undefined;
   let insightInterval: number | undefined;
   let pluginInterval: number | undefined;
   let heatmapInterval: number | undefined;
+  let mapActivityInterval: number | undefined;
   let publicFeedInterval: number | undefined;
   let publicGeoInterval: number | undefined;
   let publicTypesInterval: number | undefined;
@@ -270,8 +317,7 @@
     return timeline[key] || timeline['24h'];
   };
 
-  const applyStats = (payload: StatsPayload) => {
-    stats = payload;
+  const updateStatsView = (payload: StatsPayload) => {
     const offenseTimeline = getTimeline(payload.offenses.timeline, offenseWindow);
     const blockTimeline = getTimeline(payload.blocks.timeline, blockWindow);
     offenseLabels = offenseTimeline.map((entry) => formatBucket(entry.bucket));
@@ -290,6 +336,11 @@
       }
       return Number((offenseCount / blockCount).toFixed(2));
     });
+  };
+
+  const applyStats = (payload: StatsPayload) => {
+    stats = payload;
+    updateStatsView(payload);
   };
 
   const loadStats = async () => {
@@ -567,6 +618,39 @@
     }
   };
 
+  const loadMapActivity = async () => {
+    try {
+      latestOffenses = await fetchJson<RecentOffense[]>('/api/offenses?limit=6');
+      const latest = latestOffenses[0]?.created_at;
+      const latestMs = latest ? new Date(latest).getTime() : null;
+      const attackOrigins: { lat: number; lon: number }[] = [];
+      if (latestMs && latestMs != mapLatestEventMs) {
+        for (const item of latestOffenses) {
+          const itemMs = new Date(item.created_at).getTime();
+          if (mapLatestEventMs && itemMs <= mapLatestEventMs) {
+            continue;
+          }
+          if (item.lat == null || item.lon == null) {
+            continue;
+          }
+          attackOrigins.push({ lat: item.lat, lon: item.lon });
+        }
+        if (attackOrigins.length) {
+          mapAttackOrigins = attackOrigins;
+          mapAttackKey += 1;
+        }
+        mapLatestEventMs = latestMs;
+      }
+    } catch (err) {
+      latestOffenses = [];
+    }
+    try {
+      latestBlocks = await fetchJson<RecentBlock[]>('/api/blocks?include_expired=false&limit=6');
+    } catch (err) {
+      latestBlocks = [];
+    }
+  };
+
   const buildLiveFeed = (payload: { offenses?: any[]; blocks?: any[] }) => {
     const items: LiveItem[] = [];
     for (const offense of payload.offenses || []) {
@@ -609,6 +693,12 @@
         if (payload.stats) {
           applyStats(payload.stats as StatsPayload);
         }
+        if (wsStatus !== 'connected') {
+          wsStatus = 'connected';
+        }
+        if (payload.offenses && payload.offenses.length) {
+          window.dispatchEvent(new CustomEvent('mimosa:offense'));
+        }
         buildLiveFeed(payload);
         lastLiveAt = payload.timestamp || new Date().toISOString();
       } catch (err) {
@@ -648,6 +738,17 @@
     return date.toLocaleString();
   };
 
+  const hasOffenseCounts = (counts?: ReasonCounts | null) => {
+    if (!counts) {
+      return false;
+    }
+    return (
+      counts.offenses_total != null ||
+      counts.offenses_1h != null ||
+      counts.blocks_total != null
+    );
+  };
+
   const countryFlag = (code?: string | null) => {
     if (!code || code.length !== 2) {
       return '—';
@@ -661,14 +762,14 @@
   const handleOffenseWindowChange = (event: Event) => {
     offenseWindow = (event.target as HTMLSelectElement).value as WindowKey;
     if (stats) {
-      applyStats(stats);
+      updateStatsView(stats);
     }
   };
 
   const handleBlockWindowChange = (event: Event) => {
     blockWindow = (event.target as HTMLSelectElement).value as WindowKey;
     if (stats) {
-      applyStats(stats);
+      updateStatsView(stats);
     }
   };
 
@@ -703,6 +804,7 @@
     }
     if (tab === 'map') {
       loadHeatmap();
+      loadMapActivity();
     }
     if (tab === 'insights' || tab === 'health') {
       loadInsights();
@@ -710,7 +812,7 @@
     if (tab === 'plugins') {
       loadPlugins();
     }
-    if (tab === 'overview' && wsStatus !== 'connected') {
+    if (tab === 'overview' && $authStore.user && wsStatus !== 'connected' && wsStatus !== 'connecting') {
       connectLiveFeed();
     }
   };
@@ -727,6 +829,9 @@
     }
     if (heatmapInterval) {
       window.clearInterval(heatmapInterval);
+    }
+    if (mapActivityInterval) {
+      window.clearInterval(mapActivityInterval);
     }
     if (ws) {
       ws.close();
@@ -757,6 +862,8 @@
     isPublic = false;
     loadStats();
     loadHeatmap();
+    loadMapActivity();
+    loadMimosaLocation();
     loadPlugins();
     loadInsights();
     connectLiveFeed();
@@ -764,6 +871,7 @@
     insightInterval = window.setInterval(loadInsights, 120000);
     pluginInterval = window.setInterval(loadPlugins, 120000);
     heatmapInterval = window.setInterval(loadHeatmap, 180000);
+    mapActivityInterval = window.setInterval(loadMapActivity, 90000);
   };
 
   const initPublic = () => {
@@ -804,6 +912,8 @@
     }
   }
 
+  $: showOffenseCounts = latestOffenses.some((item) => hasOffenseCounts(item.reason_counts));
+
   onMount(() => {
     if (!$authStore.loading) {
       if ($authStore.user) {
@@ -826,17 +936,17 @@
   </section>
 
   {#if publicError}
-    <div class="surface" style="padding: 16px; border-color: rgba(248, 113, 113, 0.5);">
+    <div class="surface panel-sm" style="border-color: rgba(248, 113, 113, 0.5);">
       <strong>Error</strong>
       <div style="color: var(--muted); margin-top: 4px;">{publicError}</div>
     </div>
   {/if}
 
   <section class="section split public-geo">
-    <div class="surface" style="padding: 18px;">
+    <div class="surface panel">
       <div class="badge">Heatmap</div>
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h3 style="margin-top: 12px;">Actividad global</h3>
+      <div class="card-title-row">
+        <h3 class="card-title">Actividad global</h3>
         <select value={publicWindow} on:change={handlePublicWindowChange} style="max-width: 140px;">
           {#each publicWindowOptions as option}
             <option value={option.value}>{option.label}</option>
@@ -856,9 +966,9 @@
         {publicHeatmapMessage}
       </div>
     </div>
-    <div class="surface" style="padding: 18px;">
+    <div class="surface panel">
       <div class="badge">Geo</div>
-      <h3 style="margin-top: 12px;">Ranking por pais</h3>
+      <h3 class="card-title" style="margin-top: 12px;">Ranking por pais</h3>
       <div class="list" style="margin-top: 12px;">
         {#if publicCountries.length === 0}
           <div class="list-item">Sin datos geo.</div>
@@ -875,11 +985,11 @@
   </section>
 
   <section class="section split">
-    <div class="surface" style="padding: 18px;">
+    <div class="surface panel">
       <div class="badge">Actividad</div>
-      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
-        <h3 style="margin-top: 12px;">Actividad en vivo</h3>
-        <div style="color: var(--muted); font-size: 12px;">
+      <div class="card-title-row">
+        <h3 class="card-title">Actividad en vivo</h3>
+        <div class="card-subtitle">
           {#if publicLastAt}
             Actualizado: {formatTime(publicLastAt)}
           {/if}
@@ -892,7 +1002,8 @@
           {#each publicFeed as item}
             <div class="list-item live-row">
               <span class="live-left">
-                {countryFlag(item.country_code)} {item.source_ip}
+                {countryFlag(item.country_code)}
+                <a class="ip-link" href={ipHref(item.source_ip)}>{item.source_ip}</a>
                 <span class="live-plugin">· {item.plugin || 'ofensa'}</span>
               </span>
               <span
@@ -907,10 +1018,10 @@
         {/if}
       </div>
     </div>
-    <div class="surface" style="padding: 18px;">
+    <div class="surface panel">
       <div class="badge">Tipos</div>
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h3 style="margin-top: 12px;">Tipo de ofensa</h3>
+      <div class="card-title-row">
+        <h3 class="card-title">Tipo de ofensa</h3>
         <select value={publicWindow} on:change={handlePublicWindowChange} style="max-width: 140px;">
           {#each publicWindowOptions as option}
             <option value={option.value}>{option.label}</option>
@@ -939,12 +1050,6 @@
     </div>
   </section>
 {:else}
-<section class="page-header">
-  <div class="badge">Resumen</div>
-  <h1>Estado de Mimosa</h1>
-  <p>Actividad en tiempo real, tendencias y salud operativa.</p>
-</section>
-
 <div class="dashboard-tabs">
   {#each tabs as tab}
     <button
@@ -957,7 +1062,7 @@
 </div>
 
 {#if error}
-  <div class="surface" style="padding: 16px; border-color: rgba(248, 113, 113, 0.5);">
+  <div class="surface panel-sm" style="border-color: rgba(248, 113, 113, 0.5);">
     <strong>Error</strong>
     <div style="color: var(--muted); margin-top: 4px;">{error}</div>
   </div>
@@ -996,11 +1101,11 @@
   {/if}
 
   <section class="section split">
-    <div class="surface" style="padding: 18px;">
+    <div class="surface panel">
       <div class="badge">Tendencias</div>
-      <div style="display: flex; align-items: center; justify-content: space-between;">
-        <h3 style="margin-top: 12px;">Ofensas</h3>
-        <select value={offenseWindow} on:change={handleOffenseWindowChange} style="max-width: 120px;">
+      <div class="card-title-row">
+        <h3 class="card-title">Ofensas</h3>
+        <select bind:value={offenseWindow} on:change={handleOffenseWindowChange} style="max-width: 120px;">
           {#each windowOptions as option}
             <option value={option.value}>{option.label}</option>
           {/each}
@@ -1008,11 +1113,11 @@
       </div>
       <ChartCanvas labels={offenseLabels} data={offenseValues} label="Ofensas" color="#38bdf8" />
     </div>
-    <div class="surface" style="padding: 18px;">
+    <div class="surface panel">
       <div class="badge">Tendencias</div>
-      <div style="display: flex; align-items: center; justify-content: space-between;">
-        <h3 style="margin-top: 12px;">Bloqueos</h3>
-        <select value={blockWindow} on:change={handleBlockWindowChange} style="max-width: 120px;">
+      <div class="card-title-row">
+        <h3 class="card-title">Bloqueos</h3>
+        <select bind:value={blockWindow} on:change={handleBlockWindowChange} style="max-width: 120px;">
           {#each windowOptions as option}
             <option value={option.value}>{option.label}</option>
           {/each}
@@ -1023,9 +1128,9 @@
   </section>
 
   <section class="section split">
-    <div class="surface" style="padding: 18px;">
+    <div class="surface panel">
       <div class="badge">Ratio</div>
-      <h3 style="margin-top: 12px;">Ofensas por bloqueo (24h)</h3>
+      <h3 class="card-title" style="margin-top: 12px;">Ofensas por bloqueo (24h)</h3>
       <ChartCanvas
         labels={ratioLabels}
         data={ratioValues}
@@ -1033,13 +1138,13 @@
         color="#fbbf24"
       />
     </div>
-    <div class="surface" style="padding: 18px;">
+    <div class="surface panel">
       <div class="badge">Live</div>
-      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
-        <h3 style="margin-top: 12px;">Feed en vivo</h3>
+      <div class="card-title-row">
+        <h3 class="card-title">Feed en vivo</h3>
         <span class="tag">{wsLabel()}</span>
       </div>
-      <div style="display: flex; gap: 10px; align-items: center; margin-top: 8px;">
+      <div class="toolbar" style="margin-top: 8px;">
         <select bind:value={liveFilter} style="max-width: 200px;">
           <option value="">Todas</option>
           <option value="mimosanpm">MimosaNPM</option>
@@ -1047,7 +1152,7 @@
           <option value="portdetector">Port Detector</option>
           <option value="blocks">Bloqueos</option>
         </select>
-        <div style="color: var(--muted); font-size: 12px;">
+        <div class="card-subtitle">
           {#if wsStatus === 'auth_required'}
             Inicia sesion para ver eventos.
           {:else if lastLiveAt}
@@ -1063,7 +1168,8 @@
             <div class="list-item">
               <div>
                 <div style="font-weight: 600;">
-                  {item.kind === 'offense' ? 'Ofensa' : 'Bloqueo'} - {item.ip}
+                  {item.kind === 'offense' ? 'Ofensa' : 'Bloqueo'} -
+                  <a class="ip-link" href={ipHref(item.ip)}>{item.ip}</a>
                 </div>
                 <div style="color: var(--muted); font-size: 12px;">{item.detail}</div>
               </div>
@@ -1077,24 +1183,32 @@
 {/if}
 
 {#if activeTab === 'map'}
-  <section class="section split">
-    <div class="surface" style="padding: 18px;">
-      <div class="badge">Geo</div>
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h3 style="margin-top: 12px;">Bloqueos por pais</h3>
+  <section class="section split public-geo">
+    <div class="surface panel">
+      <div class="badge">Heatmap</div>
+      <div class="card-title-row">
+        <h3 class="card-title">Actividad global</h3>
         <select value={heatmapWindow} on:change={handleHeatmapChange} style="max-width: 140px;">
           {#each heatmapOptions as option}
             <option value={option.value}>{option.label}</option>
           {/each}
         </select>
       </div>
-      <ChartCanvas
-        labels={countryLabels}
-        data={countryValues}
-        label="Bloqueos"
-        color="#fbbf24"
-        type="bar"
+      <HeatMap
+        points={heatPoints}
+        height={520}
+        emptyMessage={heatmapMessage}
+        mimosaLocation={mimosaLocation}
+        attackOrigins={mapAttackOrigins}
+        attackKey={mapAttackKey}
       />
+      <div style="margin-top: 8px; color: var(--muted); font-size: 12px;">
+        {heatmapMessage}
+      </div>
+    </div>
+    <div class="surface panel">
+      <div class="badge">Geo</div>
+      <h3 class="card-title" style="margin-top: 12px;">Ranking por pais</h3>
       <div class="list" style="margin-top: 12px;">
         {#if countryEntries.length === 0}
           <div class="list-item">Sin datos geo.</div>
@@ -1108,12 +1222,88 @@
         {/if}
       </div>
     </div>
-    <div class="surface" style="padding: 18px;">
-      <div class="badge">Heatmap</div>
-      <h3 style="margin-top: 12px;">Actividad global</h3>
-      <HeatMap points={heatPoints} height={280} emptyMessage={heatmapMessage} />
-      <div style="margin-top: 8px; color: var(--muted); font-size: 12px;">
-        {heatmapMessage}
+  </section>
+
+  <section class="section split">
+    <div class="surface panel">
+      <div class="badge">Ultimas ofensas</div>
+      <h3 class="card-title" style="margin-top: 12px;">Actividad reciente</h3>
+      <div style="margin-top: 12px; overflow-x: auto;">
+        <table class="table table-responsive table-prominent table-fixed">
+          <thead>
+            <tr>
+              <th>IP</th>
+              <th>Motivo</th>
+              {#if showOffenseCounts}
+                <th class="cell-right">1h</th>
+                <th class="cell-right">Total</th>
+                <th class="cell-right">Bloqueos</th>
+              {/if}
+            </tr>
+          </thead>
+          <tbody>
+            {#if latestOffenses.length === 0}
+              <tr><td colspan={showOffenseCounts ? 5 : 2}>Sin datos recientes.</td></tr>
+            {:else}
+              {#each latestOffenses as offense}
+                {@const reasonText = offense.reason_text || offense.description_clean || offense.description}
+                {@const pluginLabel = offense.reason_plugin || offense.plugin || 'ofensa'}
+                {@const counts = offense.reason_counts}
+                <tr>
+                  <td data-label="IP">
+                    <a class="ip-link" href={ipHref(offense.source_ip)}>{offense.source_ip}</a>
+                  </td>
+                  <td data-label="Motivo" class="cell-truncate" title={reasonText}>
+                    {reasonText}
+                    <div class="cell-muted">
+                      {pluginLabel}
+                    </div>
+                  </td>
+                  {#if showOffenseCounts}
+                    <td class="cell-right" data-label="1h">{counts?.offenses_1h ?? '-'}</td>
+                    <td class="cell-right" data-label="Total">{counts?.offenses_total ?? '-'}</td>
+                    <td class="cell-right" data-label="Bloqueos">{counts?.blocks_total ?? '-'}</td>
+                  {/if}
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="surface panel">
+      <div class="badge">Ultimos bloqueos</div>
+      <h3 class="card-title" style="margin-top: 12px;">Bloqueos recientes</h3>
+      <div style="margin-top: 12px; overflow-x: auto;">
+        <table class="table table-responsive table-prominent table-fixed">
+          <thead>
+            <tr>
+              <th>IP</th>
+              <th>Motivo</th>
+              <th class="cell-right">Bloqueos</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#if latestBlocks.length === 0}
+              <tr><td colspan="3">Sin bloqueos recientes.</td></tr>
+            {:else}
+              {#each latestBlocks as block}
+                {@const reasonText = block.reason_text || block.reason || '-'}
+                <tr>
+                  <td data-label="IP">
+                    <a class="ip-link" href={ipHref(block.ip)}>{block.ip}</a>
+                  </td>
+                  <td data-label="Motivo" class="cell-truncate" title={block.reason}>
+                    {reasonText}
+                  </td>
+                  <td class="cell-right" data-label="Bloqueos">
+                    {block.reason_counts?.blocks_total ?? '-'}
+                  </td>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
       </div>
     </div>
   </section>
@@ -1121,26 +1311,26 @@
 
 {#if activeTab === 'insights'}
   {#if insightsError}
-    <div class="surface" style="padding: 16px; border-color: rgba(248, 113, 113, 0.5);">
+    <div class="surface panel-sm" style="border-color: rgba(248, 113, 113, 0.5);">
       <strong>Error</strong>
       <div style="color: var(--muted); margin-top: 4px;">{insightsError}</div>
     </div>
   {/if}
   <section class="section" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));">
-    <div class="surface" style="padding: 18px;">
-      <div class="badge">Riesgo</div>
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h3 style="margin-top: 12px;">Top IPs</h3>
+    <div class="surface panel">
+      <div class="card-head">
+        <div class="badge">Riesgo</div>
         <button class="ghost" on:click={loadInsights}>Refrescar</button>
       </div>
+      <h3 class="card-title">Top IPs</h3>
       <div style="margin-top: 12px; overflow-x: auto;">
-        <table class="table">
+        <table class="table table-responsive">
           <thead>
             <tr>
-              <th>IP</th>
-              <th>Score</th>
-              <th>Ofensas</th>
-              <th>Bloqueos</th>
+              <th class="cell-nowrap">IP</th>
+              <th class="cell-right">Score</th>
+              <th class="cell-right">Ofensas</th>
+              <th class="cell-right">Bloqueos</th>
             </tr>
           </thead>
           <tbody>
@@ -1149,10 +1339,12 @@
             {:else}
               {#each topIps as item}
                 <tr>
-                  <td>{item.ip}</td>
-                  <td>{item.score}</td>
-                  <td>{item.offenses}</td>
-                  <td>{item.blocks}</td>
+                  <td data-label="IP">
+                    <a class="ip-link" href={ipHref(item.ip)}>{item.ip}</a>
+                  </td>
+                  <td class="cell-right" data-label="Score">{item.score}</td>
+                  <td class="cell-right" data-label="Ofensas">{item.offenses}</td>
+                  <td class="cell-right" data-label="Bloqueos">{item.blocks}</td>
                 </tr>
               {/each}
             {/if}
@@ -1160,30 +1352,40 @@
         </table>
       </div>
     </div>
-    <div class="surface" style="padding: 18px;">
-      <div class="badge">Expiran</div>
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h3 style="margin-top: 12px;">Bloqueos por expirar</h3>
+    <div class="surface panel">
+      <div class="card-head">
+        <div class="badge">Expiran</div>
         <button class="ghost" on:click={loadInsights}>Refrescar</button>
       </div>
+      <h3 class="card-title">Bloqueos por expirar</h3>
       <div style="margin-top: 12px; overflow-x: auto;">
-        <table class="table">
+        <table class="table table-responsive">
           <thead>
             <tr>
               <th>IP</th>
-              <th>Min</th>
+              <th class="cell-right">Min</th>
+              <th class="cell-right">Bloqueos</th>
               <th>Motivo</th>
+              <th>Plugin</th>
             </tr>
           </thead>
           <tbody>
             {#if expiringBlocks.length === 0}
-              <tr><td colspan="3">Sin datos.</td></tr>
+              <tr><td colspan="5">Sin datos.</td></tr>
             {:else}
               {#each expiringBlocks as item}
                 <tr>
-                  <td>{item.ip}</td>
-                  <td>{item.minutes_left}</td>
-                  <td>{item.reason || '-'}</td>
+                  <td data-label="IP">
+                    <a class="ip-link" href={ipHref(item.ip)}>{item.ip}</a>
+                  </td>
+                  <td class="cell-right" data-label="Min">{item.minutes_left}</td>
+                  <td class="cell-right" data-label="Bloqueos">
+                    {item.reason_counts?.blocks_total ?? '-'}
+                  </td>
+                  <td class="cell-truncate" title={item.reason || '-'} data-label="Motivo">
+                    {item.reason_text || item.reason || '-'}
+                  </td>
+                  <td data-label="Plugin">{item.reason_plugin || '-'}</td>
                 </tr>
               {/each}
             {/if}
@@ -1191,28 +1393,30 @@
         </table>
       </div>
     </div>
-    <div class="surface" style="padding: 18px;">
-      <div class="badge">Eficacia</div>
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h3 style="margin-top: 12px;">Motivos frecuentes</h3>
+    <div class="surface panel">
+      <div class="card-head">
+        <div class="badge">Eficacia</div>
         <button class="ghost" on:click={loadInsights}>Refrescar</button>
       </div>
+      <h3 class="card-title">Motivos frecuentes</h3>
       <div style="margin-top: 12px; overflow-x: auto;">
-        <table class="table">
+        <table class="table table-responsive">
           <thead>
             <tr>
               <th>Motivo</th>
-              <th>Bloqueos</th>
+              <th>Plugin</th>
+              <th class="cell-right">Bloqueos</th>
             </tr>
           </thead>
           <tbody>
             {#if blockReasons.length === 0}
-              <tr><td colspan="2">Sin datos.</td></tr>
+              <tr><td colspan="3">Sin datos.</td></tr>
             {:else}
               {#each blockReasons as item}
                 <tr>
-                  <td>{item.reason}</td>
-                  <td>{item.count}</td>
+                  <td data-label="Motivo">{item.reason_text || item.reason}</td>
+                  <td data-label="Plugin">{item.reason_plugin || '-'}</td>
+                  <td class="cell-right" data-label="Bloqueos">{item.count}</td>
                 </tr>
               {/each}
             {/if}
@@ -1225,19 +1429,19 @@
 
 {#if activeTab === 'health'}
   <section class="section split">
-    <div class="surface" style="padding: 18px;">
-      <div class="badge">Health</div>
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h3 style="margin-top: 12px;">Firewalls</h3>
+    <div class="surface panel">
+      <div class="card-head">
+        <div class="badge">Health</div>
         <button class="ghost" on:click={loadInsights}>Refrescar</button>
       </div>
+      <h3 class="card-title">Firewalls</h3>
       <div style="margin-top: 12px; overflow-x: auto;">
-        <table class="table">
+        <table class="table table-responsive">
           <thead>
             <tr>
               <th>Nombre</th>
               <th>Estado</th>
-              <th>Latencia</th>
+              <th class="cell-right">Latencia</th>
             </tr>
           </thead>
           <tbody>
@@ -1246,13 +1450,15 @@
             {:else}
               {#each firewallsHealth as fw}
                 <tr>
-                  <td>{fw.name} ({fw.type})</td>
-                  <td>
+                  <td data-label="Nombre">{fw.name} ({fw.type})</td>
+                  <td data-label="Estado">
                     <span class="tag" style="color: {fw.available ? 'var(--success)' : 'var(--danger)'};">
                       {fw.available ? 'Online' : 'Offline'}
                     </span>
                   </td>
-                  <td>{fw.latency_ms ?? '-'}{fw.latency_ms ? ' ms' : ''}</td>
+                  <td class="cell-right" data-label="Latencia">
+                    {fw.latency_ms ?? '-'}{fw.latency_ms ? ' ms' : ''}
+                  </td>
                 </tr>
               {/each}
             {/if}
@@ -1260,20 +1466,20 @@
         </table>
       </div>
     </div>
-    <div class="surface" style="padding: 18px;">
-      <div class="badge">Health</div>
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h3 style="margin-top: 12px;">Plugins</h3>
+    <div class="surface panel">
+      <div class="card-head">
+        <div class="badge">Health</div>
         <button class="ghost" on:click={loadInsights}>Refrescar</button>
       </div>
+      <h3 class="card-title">Plugins</h3>
       <div style="margin-top: 12px; overflow-x: auto;">
-        <table class="table">
+        <table class="table table-responsive">
           <thead>
             <tr>
               <th>Plugin</th>
               <th>Estado</th>
-              <th>Eventos 24h</th>
-              <th>Ultimo</th>
+              <th class="cell-right">Eventos 24h</th>
+              <th class="cell-nowrap">Ultimo</th>
             </tr>
           </thead>
           <tbody>
@@ -1282,14 +1488,14 @@
             {:else}
               {#each pluginsHealth as plugin}
                 <tr>
-                  <td>{plugin.name}</td>
-                  <td>
+                  <td data-label="Plugin">{plugin.name}</td>
+                  <td data-label="Estado">
                     <span class="tag" style="color: {plugin.enabled ? 'var(--success)' : 'var(--warning)'};">
                       {plugin.enabled ? 'Activo' : 'Inactivo'}
                     </span>
                   </td>
-                  <td>{plugin.last_24h}</td>
-                  <td>{formatDate(plugin.last_event_at)}</td>
+                  <td class="cell-right" data-label="Eventos 24h">{plugin.last_24h}</td>
+                  <td class="cell-nowrap" data-label="Ultimo">{formatDate(plugin.last_event_at)}</td>
                 </tr>
               {/each}
             {/if}
@@ -1302,9 +1508,9 @@
 
 {#if activeTab === 'plugins'}
   <section class="section" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));">
-    <div class="surface" style="padding: 18px;">
+    <div class="surface panel">
       <div class="badge">Plugins</div>
-      <h3 style="margin-top: 12px;">ProxyTrap</h3>
+      <h3 class="card-title" style="margin-top: 12px;">ProxyTrap</h3>
       <ChartCanvas
         labels={proxyLabels}
         data={proxyValues}
@@ -1325,9 +1531,9 @@
         {/if}
       </div>
     </div>
-    <div class="surface" style="padding: 18px;">
+    <div class="surface panel">
       <div class="badge">Plugins</div>
-      <h3 style="margin-top: 12px;">PortDetector</h3>
+      <h3 class="card-title" style="margin-top: 12px;">PortDetector</h3>
       <ChartCanvas
         labels={portLabels}
         data={portValues}
@@ -1348,14 +1554,14 @@
         {/if}
       </div>
     </div>
-    <div class="surface" style="padding: 18px;">
+    <div class="surface panel">
       <div class="badge">Plugins</div>
-      <h3 style="margin-top: 12px;">MimosaNPM</h3>
+      <h3 class="card-title" style="margin-top: 12px;">MimosaNPM</h3>
       {#if mimosanpmStats}
         <div style="margin-top: 10px; color: var(--muted); font-size: 12px;">
           {mimosanpmStats.total} eventos (muestra {mimosanpmStats.sample})
         </div>
-        <div class="section" style="margin-top: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+        <div class="mini-grid" style="margin-top: 12px;">
           <div>
             <div style="font-size: 12px; color: var(--muted); margin-bottom: 6px;">Hosts</div>
             <ChartCanvas

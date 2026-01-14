@@ -4,6 +4,7 @@
   import { page } from '$app/stores';
   import { authStore } from '$lib/stores/auth';
   import ChartCanvas from '$lib/components/charts/ChartCanvas.svelte';
+  import HeatMap from '$lib/components/charts/HeatMap.svelte';
 
   type IpProfile = {
     ip: string;
@@ -52,6 +53,10 @@
   let blockSummary = '';
   let offenseSummary = '';
   let latestBlock = '';
+  let geoPoint: { lat: number; lon: number; count: number }[] = [];
+  let geoLabel = 'Sin datos de geolocalizacion.';
+  let geoFlag = '—';
+  let geoLocation = '';
 
   const requestJson = async <T>(path: string, options?: RequestInit): Promise<T> => {
     const response = await fetch(path, {
@@ -122,6 +127,7 @@
       blocks = data.blocks;
       groupOffenses(offenses);
       groupBlocks(blocks);
+      updateGeo(profile.geo);
     } catch (err) {
       error = err instanceof Error ? err.message : 'Error inesperado';
     } finally {
@@ -158,6 +164,63 @@
     return date.toLocaleString();
   };
 
+  const countryFlag = (code?: string | null) => {
+    if (!code || code.length !== 2) {
+      return '—';
+    }
+    const base = 0x1f1e6;
+    const first = code.toUpperCase().charCodeAt(0) - 65 + base;
+    const second = code.toUpperCase().charCodeAt(1) - 65 + base;
+    return String.fromCodePoint(first, second);
+  };
+
+  const parseGeo = (value?: string | null) => {
+    if (!value) {
+      return null;
+    }
+    try {
+      return JSON.parse(value) as {
+        lat?: number;
+        lon?: number;
+        city?: string;
+        region?: string;
+        country?: string;
+        country_code?: string;
+      };
+    } catch (err) {
+      return null;
+    }
+  };
+
+  const updateGeo = (value?: string | null) => {
+    const parsed = parseGeo(value);
+    if (!parsed || parsed.lat == null || parsed.lon == null) {
+      geoPoint = [];
+      geoLabel = 'Sin datos de geolocalizacion.';
+      geoFlag = '—';
+      geoLocation = '';
+      return;
+    }
+    geoPoint = [{ lat: parsed.lat, lon: parsed.lon, count: 1 }];
+    geoFlag = countryFlag(parsed.country_code);
+    const parts = [parsed.city, parsed.region, parsed.country].filter(Boolean);
+    geoLocation = parts.join(', ');
+    geoLabel = geoLocation || 'Ubicacion registrada';
+  };
+
+  const activeDays = (value?: IpProfile | null) => {
+    if (!value) {
+      return '-';
+    }
+    const start = new Date(value.first_seen).getTime();
+    const end = new Date(value.last_seen).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end)) {
+      return '-';
+    }
+    const diff = Math.max(0, end - start);
+    return Math.max(1, Math.ceil(diff / (1000 * 60 * 60 * 24)));
+  };
+
   $: if (!$authStore.loading && !$authStore.user) {
     goto('/login');
   }
@@ -169,7 +232,10 @@
 
 <section class="page-header">
   <div class="badge">IP</div>
-  <h1>Perfil {profile?.ip || $page.params.ip}</h1>
+  <h1>
+    {geoFlag} IP: {profile?.ip || $page.params.ip} : {profile?.offenses ?? '-'} ofensas / {profile?.blocks ?? '-'}
+    bloqueos en {activeDays(profile)} días.
+  </h1>
   <p>Detalle de actividad y enriquecimiento.</p>
 </section>
 
@@ -200,7 +266,10 @@
       <div class="card-grid" style="margin-top: 16px;">
         <div class="surface" style="padding: 12px; border: 1px solid var(--border);">
           <strong>Geo</strong>
-          <div style="color: var(--muted); margin-top: 6px;">{profile.geo || '-'}</div>
+          <div style="color: var(--muted); margin-top: 6px;">
+            {geoFlag} {geoLocation || 'Sin datos'}
+          </div>
+          <HeatMap points={geoPoint} height={160} emptyMessage={geoLabel} />
         </div>
         <div class="surface" style="padding: 12px; border: 1px solid var(--border);">
           <strong>Reverse DNS</strong>
@@ -208,11 +277,11 @@
         </div>
         <div class="surface" style="padding: 12px; border: 1px solid var(--border);">
           <strong>Ofensas</strong>
-          <div style="color: var(--muted); margin-top: 6px;">{profile.offenses}</div>
+          <div class="stat-value" style="margin-top: 6px;">{profile.offenses}</div>
         </div>
         <div class="surface" style="padding: 12px; border: 1px solid var(--border);">
           <strong>Bloqueos</strong>
-          <div style="color: var(--muted); margin-top: 6px;">{profile.blocks}</div>
+          <div class="stat-value" style="margin-top: 6px;">{profile.blocks}</div>
         </div>
       </div>
       <div style="margin-top: 12px; color: var(--muted); font-size: 12px;">
@@ -226,6 +295,9 @@
           </div>
           <div style="color: var(--muted); margin-top: 6px;">
             Ultimo bloqueo: {latestBlock}
+          </div>
+          <div style="color: var(--muted); margin-top: 6px;">
+            Primera deteccion: {formatDate(profile.first_seen)}
           </div>
           <div style="color: var(--muted); margin-top: 6px;">
             Tipos de bloqueo: {blockSummary || 'Sin bloqueos registrados'}
@@ -264,7 +336,7 @@
 
   <div class="surface" style="padding: 18px; overflow-x: auto;">
     <div class="badge">Ofensas</div>
-    <table class="table" style="margin-top: 12px;">
+    <table class="table table-responsive" style="margin-top: 12px;">
       <thead>
         <tr>
           <th>ID</th>
@@ -282,11 +354,11 @@
         {:else}
           {#each offenses as offense}
             <tr>
-              <td>{offense.id}</td>
-              <td>{offense.plugin || 'manual'}</td>
-              <td>{offense.severity || '-'}</td>
-              <td>{offense.description_clean || offense.description}</td>
-              <td>{formatDate(offense.created_at)}</td>
+              <td data-label="ID">{offense.id}</td>
+              <td data-label="Plugin">{offense.plugin || 'manual'}</td>
+              <td data-label="Severidad">{offense.severity || '-'}</td>
+              <td data-label="Descripcion">{offense.description_clean || offense.description}</td>
+              <td data-label="Fecha">{formatDate(offense.created_at)}</td>
             </tr>
           {/each}
         {/if}
@@ -296,7 +368,7 @@
 
   <div class="surface" style="padding: 18px; overflow-x: auto;">
     <div class="badge">Bloqueos</div>
-    <table class="table" style="margin-top: 12px;">
+    <table class="table table-responsive" style="margin-top: 12px;">
       <thead>
         <tr>
           <th>ID</th>
@@ -315,12 +387,12 @@
         {:else}
           {#each blocks as block}
             <tr>
-              <td>{block.id}</td>
-              <td>{block.reason || '-'}</td>
-              <td>{block.source || '-'}</td>
-              <td>{formatDate(block.created_at)}</td>
-              <td>{formatDate(block.expires_at)}</td>
-              <td>{block.active ? 'Activo' : 'Inactivo'}</td>
+              <td data-label="ID">{block.id}</td>
+              <td data-label="Motivo">{block.reason || '-'}</td>
+              <td data-label="Fuente">{block.source || '-'}</td>
+              <td data-label="Creado">{formatDate(block.created_at)}</td>
+              <td data-label="Expira">{formatDate(block.expires_at)}</td>
+              <td data-label="Estado">{block.active ? 'Activo' : 'Inactivo'}</td>
             </tr>
           {/each}
         {/if}

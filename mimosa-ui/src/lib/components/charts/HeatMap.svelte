@@ -123,7 +123,39 @@
       ).addTo(attackLayer);
       window.setTimeout(() => {
         attackLayer.removeLayer(ray);
-      }, 1200);
+      }, 5000);
+    }
+    const latest = attackOrigins[attackOrigins.length - 1];
+    if (latest) {
+      const latestRay = L.polyline(
+        [
+          [latest.lat, latest.lon],
+          [mimosaLocation.lat, mimosaLocation.lon]
+        ],
+        {
+          color: '#94a3b8',
+          weight: 3,
+          opacity: 0.8,
+          className: 'attack-latest-ray'
+        }
+      ).addTo(attackLayer);
+      latestRay.bringToFront();
+      L.circleMarker([latest.lat, latest.lon], {
+        radius: 7,
+        color: '#a855f7',
+        fillColor: '#c084fc',
+        fillOpacity: 0.7,
+        weight: 2,
+        className: 'attack-latest'
+      }).addTo(attackLayer);
+      L.circleMarker([latest.lat, latest.lon], {
+        radius: 12,
+        color: '#cbd5f5',
+        fillColor: '#cbd5f5',
+        fillOpacity: 0.08,
+        weight: 1,
+        className: 'attack-latest-halo'
+      }).addTo(attackLayer);
     }
   };
 

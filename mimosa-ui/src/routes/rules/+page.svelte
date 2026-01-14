@@ -88,6 +88,8 @@
     return response.json() as Promise<T>;
   };
 
+  const ipHref = (ip: string) => `/ips/${encodeURIComponent(ip)}`;
+
   const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
   const matchesPattern = (pattern: string, value: string) => {
@@ -283,7 +285,7 @@
       </div>
       <button class="ghost" on:click={loadRules}>Recargar</button>
     </div>
-    <table class="table" style="margin-top: 16px;">
+    <table class="table table-responsive" style="margin-top: 16px;">
       <thead>
         <tr>
           <th>ID</th>
@@ -308,16 +310,16 @@
         {:else}
           {#each rules as rule}
             <tr>
-              <td>{rule.id}</td>
-              <td>{rule.plugin}</td>
-              <td>{rule.event_id}</td>
-              <td>{rule.severity}</td>
-              <td>{rule.description}</td>
-              <td>
+              <td data-label="ID">{rule.id}</td>
+              <td data-label="Plugin">{rule.plugin}</td>
+              <td data-label="Event">{rule.event_id}</td>
+              <td data-label="Severidad">{rule.severity}</td>
+              <td data-label="Descripcion">{rule.description}</td>
+              <td data-label="Umbrales">
                 {rule.min_last_hour} / {rule.min_total} / {rule.min_blocks_total}
               </td>
-              <td>{rule.block_minutes ?? '-'}</td>
-              <td>
+              <td data-label="Bloqueo">{rule.block_minutes ?? '-'}</td>
+              <td data-label="Accion">
                 <div style="display: flex; gap: 8px;">
                   <button class="ghost" on:click={() => editRule(rule)}>Editar</button>
                   <button class="ghost" on:click={() => deleteRule(rule)}>Borrar</button>
@@ -408,7 +410,7 @@
         {offensesError}
       </div>
     {/if}
-    <table class="table" style="margin-top: 16px;">
+    <table class="table table-responsive" style="margin-top: 16px;">
       <thead>
         <tr>
           <th>Fecha</th>
@@ -431,12 +433,20 @@
         {:else}
           {#each offenseMatches as entry}
             <tr class={entry.matches > 0 ? 'offense-match' : 'offense-no-match'}>
-              <td>{new Date(entry.offense.created_at).toLocaleString()}</td>
-              <td>{entry.offense.source_ip}</td>
-              <td>{entry.offense.plugin || 'manual'}</td>
-              <td>{entry.offense.severity || '-'}</td>
-              <td>{entry.offense.description_clean || entry.offense.description}</td>
-              <td>{entry.matches > 0 ? entry.matches : '-'}</td>
+              <td data-label="Fecha">
+                {new Date(entry.offense.created_at).toLocaleString()}
+              </td>
+              <td data-label="IP">
+                <a class="ip-link" href={ipHref(entry.offense.source_ip)}>
+                  {entry.offense.source_ip}
+                </a>
+              </td>
+              <td data-label="Plugin">{entry.offense.plugin || 'manual'}</td>
+              <td data-label="Severidad">{entry.offense.severity || '-'}</td>
+              <td data-label="Descripcion">
+                {entry.offense.description_clean || entry.offense.description}
+              </td>
+              <td data-label="Matches">{entry.matches > 0 ? entry.matches : '-'}</td>
             </tr>
           {/each}
         {/if}

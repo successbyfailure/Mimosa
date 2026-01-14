@@ -62,6 +62,9 @@
     return response.json() as Promise<T>;
   };
 
+  const ipHref = (ip: string) => `/ips/${encodeURIComponent(ip)}`;
+  const isIpTarget = (value: string) => !value.includes('/');
+
   const loadFirewalls = async () => {
     try {
       firewalls = await requestJson<FirewallConfig[]>('/api/firewalls');
@@ -210,7 +213,7 @@
         <div class="surface" style="padding: 12px; border: 1px solid var(--border);">
           <strong>Temporal ({aliases.aliases.temporal})</strong>
           <div style="margin-top: 10px; max-height: 200px; overflow: auto;">
-            <table class="table">
+            <table class="table table-responsive">
               <thead>
                 <tr><th>IP</th></tr>
               </thead>
@@ -219,7 +222,15 @@
                   <tr><td>Sin entradas.</td></tr>
                 {:else}
                   {#each aliases.block_entries as entry}
-                    <tr><td>{entry}</td></tr>
+                    <tr>
+                      <td data-label="IP">
+                        {#if isIpTarget(entry)}
+                          <a class="ip-link" href={ipHref(entry)}>{entry}</a>
+                        {:else}
+                          {entry}
+                        {/if}
+                      </td>
+                    </tr>
                   {/each}
                 {/if}
               </tbody>
@@ -229,7 +240,7 @@
         <div class="surface" style="padding: 12px; border: 1px solid var(--border);">
           <strong>Blacklist ({aliases.aliases.blacklist})</strong>
           <div style="margin-top: 10px; max-height: 200px; overflow: auto;">
-            <table class="table">
+            <table class="table table-responsive">
               <thead>
                 <tr><th>IP</th></tr>
               </thead>
@@ -238,7 +249,15 @@
                   <tr><td>Sin entradas.</td></tr>
                 {:else}
                   {#each aliases.blacklist_entries as entry}
-                    <tr><td>{entry}</td></tr>
+                    <tr>
+                      <td data-label="IP">
+                        {#if isIpTarget(entry)}
+                          <a class="ip-link" href={ipHref(entry)}>{entry}</a>
+                        {:else}
+                          {entry}
+                        {/if}
+                      </td>
+                    </tr>
                   {/each}
                 {/if}
               </tbody>
@@ -248,7 +267,7 @@
         <div class="surface" style="padding: 12px; border: 1px solid var(--border);">
           <strong>Whitelist ({aliases.aliases.whitelist})</strong>
           <div style="margin-top: 10px; max-height: 200px; overflow: auto;">
-            <table class="table">
+            <table class="table table-responsive">
               <thead>
                 <tr><th>Entry</th></tr>
               </thead>
@@ -257,7 +276,15 @@
                   <tr><td>Sin entradas.</td></tr>
                 {:else}
                   {#each aliases.whitelist_entries as entry}
-                    <tr><td>{entry}</td></tr>
+                    <tr>
+                      <td data-label="Entry">
+                        {#if isIpTarget(entry)}
+                          <a class="ip-link" href={ipHref(entry)}>{entry}</a>
+                        {:else}
+                          {entry}
+                        {/if}
+                      </td>
+                    </tr>
                   {/each}
                 {/if}
               </tbody>
@@ -269,7 +296,7 @@
       <div class="surface" style="padding: 12px; border: 1px solid var(--border); margin-top: 16px;">
         <strong>Alias de puertos</strong>
         <div style="margin-top: 10px; max-height: 220px; overflow: auto;">
-          <table class="table">
+          <table class="table table-responsive">
             <thead>
               <tr>
                 <th>Protocolo</th>
@@ -283,12 +310,12 @@
               {:else}
                 {#each Object.entries(aliases.port_entries || {}) as entry}
                   <tr>
-                    <td>{entry[0].toUpperCase()}</td>
-                    <td>{aliases.ports_aliases?.[entry[0]] || '-'}</td>
-                    <td>{entry[1].join(', ') || '-'}</td>
+                    <td data-label="Protocolo">{entry[0].toUpperCase()}</td>
+                    <td data-label="Alias">{aliases.ports_aliases?.[entry[0]] || '-'}</td>
+                    <td data-label="Puertos">{entry[1].join(', ') || '-'}</td>
                   </tr>
                 {/each}
-              {/if}
+            {/if}
             </tbody>
           </table>
         </div>
@@ -303,7 +330,7 @@
       <div style="color: var(--warning); font-size: 12px; margin-top: 6px;">{message}</div>
     {/if}
     <div style="margin-top: 12px; overflow-x: auto;">
-      <table class="table">
+      <table class="table table-responsive">
         <thead>
           <tr>
             <th>Descripcion</th>
@@ -321,17 +348,17 @@
           {:else}
             {#each rules as rule}
               <tr>
-                <td>{rule.description}</td>
-                <td>
+                <td data-label="Descripcion">{rule.description}</td>
+                <td data-label="Estado">
                   <span class="tag" style="color: {rule.enabled ? 'var(--success)' : 'var(--warning)'};">
                     {rule.enabled ? 'Activa' : 'Inactiva'}
                   </span>
                 </td>
-                <td>{rule.type || '-'}</td>
-                <td>{rule.interface}</td>
-                <td>{rule.action}</td>
-                <td>{rule.source_net || '-'}</td>
-                <td>
+                <td data-label="Tipo">{rule.type || '-'}</td>
+                <td data-label="Interfaz">{rule.interface}</td>
+                <td data-label="Accion">{rule.action}</td>
+                <td data-label="Origen">{rule.source_net || '-'}</td>
+                <td data-label="Control">
                   <div style="display: flex; gap: 8px;">
                     <button class="ghost" on:click={() => toggleRule(rule)}>
                       {rule.enabled ? 'Desactivar' : 'Activar'}

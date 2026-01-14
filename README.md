@@ -2,17 +2,20 @@
 
 <div align="center">
 
-**Sistema de defensa inteligente para homelabs**
+**Sistema de defensa para homelabs**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
 
-Mimosa es un sistema de defensa automatizado para homelabs y entusiastas, diseñado para detectar y responder rápidamente ante actividad sospechosa. Se integra con firewalls OPNsense para aplicar bloqueos temporales coordinados.
-
+Mimosa es un sistema de defensa para homelabs, diseñado para correr detras de un firewall opnsense/pfsense/iptables, reacciona a la actividad sospechosa comunicandose con el firewall y bloqueando todas las conexiones 
 ## 🌸 ¿Por qué "Mimosa"?
 
-La *Mimosa pudica* repliega sus hojas al mínimo contacto. Mimosa replica esta respuesta rápida y defensiva ante señales hostiles, aplicando bloqueos ligeros y temporales en tu firewall.
+La *Mimosa pudica* repliega sus hojas al mínimo contacto. Mimosa replica esta respuesta rápida y defensiva ante señales hostiles.
+
+## ¿Es un honeypot? ¿es como snort/suricata?
+Este proyecto nace despues de varios años probando soluciones complejas como snort en las que hay miles de reglas y funcionalidad muy avanzada para inspeccionar paquetes pero es bastante complicado montar un sistema que reaccione a ataques automaticos.
+
 
 ## ✨ Características
 
@@ -30,7 +33,7 @@ La *Mimosa pudica* repliega sus hojas al mínimo contacto. Mimosa replica esta r
 ### Requisitos
 - Docker y Docker Compose
 - Firewall OPNsense con acceso API
-- Puerto 8000 disponible
+
 
 ### Instalación
 
@@ -93,7 +96,7 @@ MIMOSA_GEOIP_ENABLED=false
 MIMOSA_GEOIP_PROVIDER=ip-api
 MIMOSA_GEOIP_ENDPOINT=http://ip-api.com/json
 
-# IP del servidor Mimosa (opcional)
+# IP local del servidor Mimosa (opcional)
 MIMOSA_IP=
 ```
 
@@ -107,7 +110,7 @@ Alias mimosa_host:
 
 ### Actualización Automática
 
-Watchtower actualiza la imagen automáticamente cada 60 segundos. Para deshabilitarlo, comenta el servicio `watchtower` en `docker-compose.yml`.
+Watchtower actualiza la imagen automáticamente. Para deshabilitarlo, comenta el servicio `watchtower` en `docker-compose.yml`.
 
 ### GeoIP (ip-api)
 

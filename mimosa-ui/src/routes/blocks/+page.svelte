@@ -7,6 +7,13 @@
     id: number;
     ip: string;
     reason: string;
+    reason_text?: string | null;
+    reason_plugin?: string | null;
+    reason_counts?: {
+      offenses_total?: number | null;
+      offenses_1h?: number | null;
+      blocks_total?: number | null;
+    };
     created_at: string;
     expires_at?: string | null;
     active: boolean;
@@ -17,6 +24,13 @@
   type BlockHistoryEntry = {
     ip: string;
     reason: string;
+    reason_text?: string | null;
+    reason_plugin?: string | null;
+    reason_counts?: {
+      offenses_total?: number | null;
+      offenses_1h?: number | null;
+      blocks_total?: number | null;
+    };
     action: string;
     at: string;
     source?: string;
@@ -93,6 +107,9 @@
 
     return response.json() as Promise<T>;
   };
+
+  const ipHref = (ip: string) => `/ips/${encodeURIComponent(ip)}`;
+  const isIpTarget = (value: string) => !value.includes('/');
 
   const loadBlocks = async () => {
     loading = true;
@@ -283,12 +300,12 @@
 
 <div class="section">
   <div class="surface" style="padding: 18px;">
-    <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center;">
-      <label style="display: flex; align-items: center; gap: 8px;">
+    <div class="toolbar">
+      <label class="check-item">
         <input type="checkbox" bind:checked={includeExpired} />
         <span>Incluir expirados</span>
       </label>
-      <label style="display: flex; align-items: center; gap: 8px;">
+      <label class="check-item">
         <input type="checkbox" bind:checked={globalSync} on:change={updateGlobalSync} />
         <span>Enviar bloqueos al firewall</span>
       </label>
@@ -302,12 +319,14 @@
     </div>
 
     <div style="margin-top: 16px; overflow-x: auto;">
-      <table class="table">
+      <table class="table table-responsive">
         <thead>
           <tr>
             <th>IP</th>
             <th>Estado</th>
             <th>Motivo</th>
+            <th>Plugin</th>
+            <th class="cell-right">Bloqueos</th>
             <th>Fuente</th>
             <th>Creado</th>
             <th>Expira</th>
@@ -317,17 +336,19 @@
         <tbody>
           {#if loading}
             <tr>
-              <td colspan="7">Cargando bloqueos...</td>
+              <td colspan="9">Cargando bloqueos...</td>
             </tr>
           {:else if blocks.length === 0}
             <tr>
-              <td colspan="7">Sin bloqueos.</td>
+              <td colspan="9">Sin bloqueos.</td>
             </tr>
           {:else}
             {#each blocks as block}
               <tr>
-                <td>{block.ip}</td>
-                <td>
+                <td data-label="IP">
+                  <a class="ip-link" href={ipHref(block.ip)}>{block.ip}</a>
+                </td>
+                <td data-label="Estado">
                   <span
                     class="tag"
                     style="color: {block.active ? 'var(--success)' : 'var(--muted)'};"
@@ -335,11 +356,15 @@
                     {block.active ? 'Activo' : 'Inactivo'}
                   </span>
                 </td>
-                <td>{block.reason || '-'}</td>
-                <td>{block.source || '-'}</td>
-                <td>{formatDate(block.created_at)}</td>
-                <td>{formatDate(block.expires_at)}</td>
-                <td>
+                <td data-label="Motivo">{block.reason_text || block.reason || '-'}</td>
+                <td data-label="Plugin">{block.reason_plugin || '-'}</td>
+                <td class="cell-right" data-label="Bloqueos">
+                  {block.reason_counts?.blocks_total ?? '-'}
+                </td>
+                <td data-label="Fuente">{block.source || '-'}</td>
+                <td data-label="Creado">{formatDate(block.created_at)}</td>
+                <td data-label="Expira">{formatDate(block.expires_at)}</td>
+                <td data-label="Accion">
                   <button class="ghost" on:click={() => removeBlock(block)}>Eliminar</button>
                 </td>
               </tr>
@@ -411,7 +436,7 @@
       <div style="margin-top: 12px;">Sin entradas o sin firewall seleccionado.</div>
     {:else}
       <div style="margin-top: 12px; overflow-x: auto;">
-        <table class="table">
+        <table class="table table-responsive">
           <thead>
             <tr>
               <th>IP</th>
@@ -419,7 +444,15 @@
           </thead>
           <tbody>
             {#each firewallAliasEntries as entry}
-              <tr><td>{entry}</td></tr>
+              <tr>
+                <td data-label="IP">
+                  {#if isIpTarget(entry)}
+                    <a class="ip-link" href={ipHref(entry)}>{entry}</a>
+                  {:else}
+                    {entry}
+                  {/if}
+                </td>
+              </tr>
             {/each}
           </tbody>
         </table>
@@ -439,7 +472,7 @@
       <button class="ghost" on:click={loadHistory}>Actualizar</button>
     </div>
     <div style="margin-top: 12px; overflow-x: auto;">
-      <table class="table">
+      <table class="table table-responsive">
         <thead>
           <tr>
             <th>Accion</th>
@@ -457,11 +490,13 @@
           {:else}
             {#each history as entry}
               <tr>
-                <td>{entry.action}</td>
-                <td>{entry.ip}</td>
-                <td>{entry.reason || '-'}</td>
-                <td>{entry.source || '-'}</td>
-                <td>{formatDate(entry.at)}</td>
+                <td data-label="Accion">{entry.action}</td>
+                <td data-label="IP">
+                  <a class="ip-link" href={ipHref(entry.ip)}>{entry.ip}</a>
+                </td>
+                <td data-label="Motivo">{entry.reason_text || entry.reason || '-'}</td>
+                <td data-label="Fuente">{entry.source || '-'}</td>
+                <td data-label="Momento">{formatDate(entry.at)}</td>
               </tr>
             {/each}
           {/if}

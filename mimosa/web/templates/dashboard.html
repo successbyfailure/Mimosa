@@ -31,11 +31,11 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 
 <div class="dash-tabs">
-  <button class="dash-tab active" data-tab="overview" onclick="switchDashTab('overview')">Resumen</button>
-  <button class="dash-tab" data-tab="map" onclick="switchDashTab('map')">Mapa</button>
+  <button class="dash-tab active" data-tab="map" onclick="switchDashTab('map')">Mapa</button>
+  <button class="dash-tab" data-tab="overview" onclick="switchDashTab('overview')">Detalle</button>
 </div>
 
-<section id="dash-overview" class="dash-panel active">
+<section id="dash-overview" class="dash-panel">
 <section class="grid stats space">
   <div class="card">
     <h2>Ofensas totales (&gt;=)</h2>
@@ -328,7 +328,7 @@
 </section>
 </section>
 
-<section id="dash-map" class="dash-panel">
+<section id="dash-map" class="dash-panel active">
   <div class="heatmap-card">
     <div class="flex space" style="align-items:flex-start; justify-content:space-between;">
       <div>
@@ -877,6 +877,7 @@ loadExpiringBlocks();
 loadBlockReasons();
 loadDashboardHealth();
 loadLiveFeed();
+loadHeatmap();
 setInterval(loadStats, 60000);
 setInterval(loadPluginStats, 120000);
 setInterval(loadTopIps, 120000);

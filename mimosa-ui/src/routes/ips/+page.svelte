@@ -103,6 +103,8 @@
     return { country: '', code: '' };
   };
 
+  const ipHref = (ip: string) => `/ips/${encodeURIComponent(ip)}`;
+
   const countryFlag = (code?: string) => {
     if (!code || code.length !== 2) {
       return '—';
@@ -173,18 +175,18 @@
 
 <div class="section">
   <div class="surface" style="padding: 18px;">
-    <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center;">
-      <div style="flex: 1; min-width: 200px;">
+    <div class="toolbar">
+      <div class="grow">
         <input placeholder="Buscar por IP o DNS" bind:value={query} />
       </div>
-      <div style="width: 120px;">
-        <input type="number" min="10" step="10" bind:value={limit} />
+      <div class="compact">
+        <input type="number" min="10" step="10" bind:value={limit} aria-label="Limite" />
       </div>
       <button class="ghost" on:click={loadProfiles}>Recargar</button>
     </div>
 
     <div style="margin-top: 16px; overflow-x: auto;">
-      <table class="table">
+      <table class="table table-responsive table-prominent">
         <thead>
           <tr>
             <th on:click={() => toggleSort('ip')}>IP</th>
@@ -209,15 +211,17 @@
             {#each sortedProfiles as profile}
               {@const geo = parseGeoMeta(profile.geo)}
               <tr>
-                <td>{profile.ip}</td>
-                <td>{countryFlag(geo.code)} {geo.country || '-'}</td>
-                <td>{profile.reverse_dns || '-'}</td>
-                <td>{profile.offenses}</td>
-                <td>{profile.blocks}</td>
-                <td>{formatDate(profile.last_seen)}</td>
-                <td>
+                <td data-label="IP">
+                  <a class="ip-link" href={ipHref(profile.ip)}>{profile.ip}</a>
+                </td>
+                <td data-label="Pais">{countryFlag(geo.code)} {geo.country || '-'}</td>
+                <td data-label="Reverse DNS">{profile.reverse_dns || '-'}</td>
+                <td data-label="Ofensas">{profile.offenses}</td>
+                <td data-label="Bloqueos">{profile.blocks}</td>
+                <td data-label="Ultimo visto">{formatDate(profile.last_seen)}</td>
+                <td data-label="Accion">
                   <div style="display: flex; gap: 8px;">
-                    <a class="ghost" href={`/ips/${profile.ip}`}>Ver</a>
+                    <a class="ghost" href={ipHref(profile.ip)}>Ver</a>
                     <button
                       class="ghost"
                       disabled={actionLoading}

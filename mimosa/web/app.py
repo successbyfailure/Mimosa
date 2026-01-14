@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sqlite3
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -419,6 +420,8 @@ def create_app(
         config = config_store.get(config_id)
         if not config:
             raise HTTPException(status_code=404, detail="Firewall no encontrado")
+        if not config.enabled:
+            raise HTTPException(status_code=409, detail="Firewall desactivado")
         gateway = gateway_cache.get(config.id)
         if not gateway:
             gateway = build_firewall_gateway(config)
@@ -484,8 +487,73 @@ def create_app(
         except NotImplementedError:
             return []
 
+    def _known_plugins() -> set[str]:
+        names = {plugin.get("name") for plugin in plugin_store.list()}
+        names.update({"blocks", "manual"})
+        return {name for name in names if name}
+
+    def _parse_geo_payload(value: str | None) -> Dict[str, object]:
+        if not value:
+            return {}
+        try:
+            payload = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        return {
+            "lat": payload.get("lat"),
+            "lon": payload.get("lon"),
+            "country": payload.get("country"),
+            "country_code": payload.get("country_code"),
+        }
+
+    def _extract_reason_counts(raw: str) -> Dict[str, int | None]:
+        total = re.search(r"(\d+)\s+ofensas?\s+totales?", raw, re.IGNORECASE)
+        hour = re.search(r"(\d+)\s+en\s+1h", raw, re.IGNORECASE)
+        blocks = re.search(r"(\d+)\s+bloqueos?\s+previos?", raw, re.IGNORECASE)
+        return {
+            "offenses_total": int(total.group(1)) if total else None,
+            "offenses_1h": int(hour.group(1)) if hour else None,
+            "blocks_total": int(blocks.group(1)) if blocks else None,
+        }
+
+    def _parse_reason_fields(
+        raw: str | None, *, plugin_hint: str | None = None
+    ) -> Dict[str, object]:
+        if not raw:
+            return {
+                "reason_text": "",
+                "reason_plugin": plugin_hint,
+                "reason_counts": {"offenses_total": None, "offenses_1h": None, "blocks_total": None},
+            }
+        raw = raw.strip()
+        counts = _extract_reason_counts(raw)
+        base = raw.split(" · ")[0].strip()
+        if " - " in base:
+            left, right = base.split(" - ", 1)
+            if re.search(r"ofensas?|bloqueos?", right, re.IGNORECASE):
+                base = left.strip()
+        plugin = plugin_hint
+        if plugin and base.startswith(f"{plugin}:"):
+            base = base[len(plugin) + 1 :].lstrip()
+        if not plugin and ":" in base:
+            prefix, rest = base.split(":", 1)
+            prefix = prefix.strip()
+            if prefix and all(ch.isalnum() or ch in "-_." for ch in prefix):
+                plugin = prefix
+                base = rest.lstrip()
+        if not plugin and " " in base:
+            first, rest = base.split(" ", 1)
+            if first.lower() in _known_plugins():
+                plugin = first
+                base = rest.strip() or base
+        return {"reason_text": base or raw, "reason_plugin": plugin, "reason_counts": counts}
+
     def _serialize_block(entry: BlockEntry) -> Dict[str, object]:
-        return entry.to_dict()
+        payload = entry.to_dict()
+        payload.update(_parse_reason_fields(payload.get("reason")))
+        return payload
 
     def _serialize_offense(offense: OffenseRecord) -> Dict[str, object]:
         created_at = offense.created_at
@@ -507,6 +575,10 @@ def create_app(
             if prefix and all(ch.isalnum() or ch in "-_." for ch in prefix):
                 plugin = prefix
                 description_clean = rest.lstrip()
+        reason_fields = _parse_reason_fields(description, plugin_hint=plugin)
+        plugin = plugin or reason_fields.get("reason_plugin")
+        profile = offense_store.get_ip_profile(offense.source_ip)
+        geo = _parse_geo_payload(profile.geo if profile else None)
 
         return {
             "id": offense.id,
@@ -514,12 +586,19 @@ def create_app(
             "description": offense.description,
             "description_clean": description_clean,
             "plugin": plugin,
+            "reason_text": reason_fields.get("reason_text"),
+            "reason_plugin": reason_fields.get("reason_plugin"),
+            "reason_counts": reason_fields.get("reason_counts"),
             "severity": offense.severity,
             "created_at": created_at.isoformat(),
             "host": offense.host,
             "path": offense.path,
             "user_agent": offense.user_agent,
             "context": offense.context,
+            "lat": geo.get("lat"),
+            "lon": geo.get("lon"),
+            "country": geo.get("country"),
+            "country_code": geo.get("country_code"),
         }
 
     def _serialize_rule(rule: OffenseRule) -> Dict[str, object]:
@@ -1092,10 +1171,14 @@ def create_app(
             minutes = int(delta.total_seconds() // 60)
             if minutes < 0 or minutes > within_minutes:
                 continue
+            reason_fields = _parse_reason_fields(block.reason)
             entries.append(
                 {
                     "ip": block.ip,
                     "reason": block.reason,
+                    "reason_text": reason_fields.get("reason_text"),
+                    "reason_plugin": reason_fields.get("reason_plugin"),
+                    "reason_counts": reason_fields.get("reason_counts"),
                     "expires_at": block.expires_at.isoformat(),
                     "minutes_left": minutes,
                 }
@@ -1108,8 +1191,15 @@ def create_app(
         counts: Dict[str, Dict[str, object]] = {}
         for entry in block_manager.history():
             reason = entry.reason or "sin razón"
+            reason_fields = _parse_reason_fields(reason)
             if reason not in counts:
-                counts[reason] = {"reason": reason, "count": 0, "last_at": entry.created_at}
+                counts[reason] = {
+                    "reason": reason,
+                    "reason_text": reason_fields.get("reason_text"),
+                    "reason_plugin": reason_fields.get("reason_plugin"),
+                    "count": 0,
+                    "last_at": entry.created_at,
+                }
             counts[reason]["count"] = int(counts[reason]["count"]) + 1
             if entry.created_at > counts[reason]["last_at"]:
                 counts[reason]["last_at"] = entry.created_at
@@ -1117,6 +1207,8 @@ def create_app(
         return [
             {
                 "reason": item["reason"],
+                "reason_text": item["reason_text"],
+                "reason_plugin": item["reason_plugin"],
                 "count": item["count"],
                 "last_at": item["last_at"].isoformat(),
             }
@@ -1307,6 +1399,12 @@ def create_app(
 
             counts = counts_by_ip.get(offense.source_ip, {"total": 0, "last_hour": 0})
             total_blocks = blocks_by_ip.get(offense.source_ip, 0)
+
+            item["reason_counts"] = {
+                "offenses_total": counts["total"],
+                "offenses_1h": counts["last_hour"],
+                "blocks_total": total_blocks,
+            }
 
             status = ""
             warning = False
@@ -1799,7 +1897,10 @@ def create_app(
 
     @app.get("/api/blocks/history")
     def block_history(limit: int = 20) -> List[Dict[str, object]]:
-        return block_manager.recent_activity(limit)
+        history = block_manager.recent_activity(limit)
+        for entry in history:
+            entry.update(_parse_reason_fields(entry.get("reason")))
+        return history
 
     @app.get("/api/firewalls")
     def list_firewalls() -> List[FirewallConfig]:

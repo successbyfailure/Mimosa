@@ -595,7 +595,7 @@
       <h3 style="margin-top: 12px;">Accesos registrados</h3>
       <div class="split" style="margin-top: 16px;">
         <div style="overflow-x: auto;">
-          <table class="table">
+          <table class="table table-responsive">
             <thead>
               <tr>
                 <th>Usuario</th>
@@ -616,8 +616,8 @@
               {:else}
                 {#each users as user}
                   <tr>
-                    <td>{user.username}</td>
-                    <td style="min-width: 140px;">
+                    <td data-label="Usuario">{user.username}</td>
+                    <td data-label="Rol" style="min-width: 140px;">
                       <select
                         value={userEdits[user.username]?.role || user.role}
                         on:change={(event) => handleRoleChange(user.username, event)}
@@ -626,7 +626,7 @@
                         <option value="viewer">Viewer</option>
                       </select>
                     </td>
-                    <td style="min-width: 160px;">
+                    <td data-label="Reset" style="min-width: 160px;">
                       <input
                         type="password"
                         placeholder="Nueva contrasena"
@@ -634,7 +634,7 @@
                         on:input={(event) => handlePasswordChange(user.username, event)}
                       />
                     </td>
-                    <td style="min-width: 200px;">
+                    <td data-label="Accion" style="min-width: 200px;">
                       <div style="display: flex; gap: 8px;">
                         <button class="ghost" disabled={userLoading} on:click={() => saveUser(user)}>
                           Guardar

@@ -478,7 +478,7 @@
 </section>
 
 {#if error}
-  <div class="surface" style="padding: 16px; border-color: rgba(248, 113, 113, 0.5);">
+  <div class="surface panel-sm" style="border-color: rgba(248, 113, 113, 0.5);">
     <strong>Error</strong>
     <div style="color: var(--muted); margin-top: 4px;">{error}</div>
   </div>
@@ -507,30 +507,30 @@
 
 <div class="section">
   {#if activeTab === 'proxytrap'}
-  <div class="surface" style="padding: 18px;">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
+  <div class="surface panel">
+    <div class="card-head">
       <div>
         <div class="badge">ProxyTrap</div>
-        <h3 style="margin-top: 12px;">Servidor honeypot</h3>
+        <h3 class="card-title" style="margin-top: 12px;">Servidor honeypot</h3>
       </div>
-      <button class="ghost" on:click={loadPlugins}>Recargar</button>
+      <button class="secondary" on:click={loadPlugins}>Recargar</button>
     </div>
 
     {#if !proxyConfig}
       <div style="margin-top: 12px;">Cargando configuracion...</div>
     {:else}
-      <div style="display: grid; gap: 12px; margin-top: 12px;">
-        <label style="display: flex; align-items: center; gap: 8px;">
+      <div class="form-grid" style="margin-top: 12px;">
+        <label class="check-item">
           <input type="checkbox" bind:checked={proxyConfig.enabled} />
           <span>Habilitar ProxyTrap</span>
         </label>
-        <div class="split" style="gap: 12px;">
+        <div class="form-row">
           <label>
-            <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Puerto</div>
+            <div class="field-label">Puerto</div>
             <input type="number" min="1" bind:value={proxyConfig.port} />
           </label>
           <label>
-            <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Severidad</div>
+            <div class="field-label">Severidad</div>
             <select bind:value={proxyConfig.default_severity}>
               <option value="bajo">Bajo</option>
               <option value="medio">Medio</option>
@@ -538,11 +538,9 @@
             </select>
           </label>
         </div>
-        <div class="split" style="gap: 12px;">
+        <div class="form-row">
           <label>
-            <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">
-              Respuesta
-            </div>
+            <div class="field-label">Respuesta</div>
             <select bind:value={proxyConfig.response_type}>
               <option value="silence">Silencio (204)</option>
               <option value="404">404</option>
@@ -550,15 +548,13 @@
             </select>
           </label>
           <label>
-            <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">
-              Trap hosts (coma)
-            </div>
+            <div class="field-label">Trap hosts (coma)</div>
             <input bind:value={proxyHostsText} placeholder="admin.ejemplo.com, intranet.local" />
           </label>
         </div>
         {#if proxyConfig.response_type === 'custom'}
           <label>
-            <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">HTML</div>
+            <div class="field-label">HTML</div>
             <textarea rows="4" bind:value={proxyConfig.custom_html} placeholder="<h1>No permitido</h1>"></textarea>
           </label>
         {/if}
@@ -566,14 +562,14 @@
 
       <div style="margin-top: 16px;">
         <div class="badge">Severidad por dominio</div>
-        <div style="display: grid; gap: 10px; margin-top: 10px;">
-          <div class="split" style="gap: 10px;">
+        <div class="form-grid" style="margin-top: 10px;">
+          <div class="form-row">
             <label>
-              <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Patron</div>
+              <div class="field-label">Patron</div>
               <input bind:value={proxyPolicyPattern} placeholder="*.admin o cpanel.*" />
             </label>
             <label>
-              <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Severidad</div>
+              <div class="field-label">Severidad</div>
               <select bind:value={proxyPolicySeverity}>
                 <option value="bajo">Bajo</option>
                 <option value="medio">Medio</option>
@@ -581,13 +577,13 @@
               </select>
             </label>
           </div>
-          <div style="display: flex; gap: 10px;">
-            <button class="ghost" on:click={addProxyPolicy}>Agregar</button>
+          <div class="action-row">
+            <button class="secondary" on:click={addProxyPolicy}>Agregar</button>
             <button class="ghost" on:click={resetProxyPolicies}>Defaults</button>
           </div>
         </div>
         <div style="margin-top: 12px; overflow-x: auto;">
-          <table class="table">
+          <table class="table table-responsive">
             <thead>
               <tr>
                 <th>Patron</th>
@@ -601,9 +597,9 @@
               {:else}
                 {#each proxyConfig.domain_policies as policy, index}
                   <tr>
-                    <td>{policy.pattern}</td>
-                    <td>{policy.severity}</td>
-                    <td>
+                    <td data-label="Patron">{policy.pattern}</td>
+                    <td data-label="Severidad">{policy.severity}</td>
+                    <td data-label="Accion">
                       <button class="ghost" on:click={() => removeProxyPolicy(index)}>
                         Quitar
                       </button>
@@ -630,25 +626,25 @@
   {/if}
 
   {#if activeTab === 'portdetector'}
-  <div class="surface" style="padding: 18px;">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
+  <div class="surface panel">
+    <div class="card-head">
       <div>
         <div class="badge">Port Detector</div>
-        <h3 style="margin-top: 12px;">Escucha de puertos</h3>
+        <h3 class="card-title" style="margin-top: 12px;">Escucha de puertos</h3>
       </div>
-      <button class="ghost" on:click={loadPlugins}>Recargar</button>
+      <button class="secondary" on:click={loadPlugins}>Recargar</button>
     </div>
 
     {#if !portConfig}
       <div style="margin-top: 12px;">Cargando configuracion...</div>
     {:else}
-      <div style="display: grid; gap: 12px; margin-top: 12px;">
-        <label style="display: flex; align-items: center; gap: 8px;">
+      <div class="form-grid" style="margin-top: 12px;">
+        <label class="check-item">
           <input type="checkbox" bind:checked={portConfig.enabled} />
           <span>Habilitar Port Detector</span>
         </label>
         <label>
-          <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Severidad</div>
+          <div class="field-label">Severidad</div>
           <select bind:value={portConfig.default_severity}>
             <option value="bajo">Bajo</option>
             <option value="medio">Medio</option>
@@ -659,17 +655,17 @@
 
       <div style="margin-top: 16px;">
         <div class="badge">Reglas</div>
-        <div style="display: grid; gap: 10px; margin-top: 10px;">
-          <div class="split" style="gap: 10px;">
+        <div class="form-grid" style="margin-top: 10px;">
+          <div class="form-row">
             <label>
-              <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Protocolo</div>
+              <div class="field-label">Protocolo</div>
               <select bind:value={portRuleProtocol}>
                 <option value="tcp">TCP</option>
                 <option value="udp">UDP</option>
               </select>
             </label>
             <label>
-              <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Severidad</div>
+              <div class="field-label">Severidad</div>
               <select bind:value={portRuleSeverity}>
                 <option value="bajo">Bajo</option>
                 <option value="medio">Medio</option>
@@ -678,26 +674,26 @@
             </label>
           </div>
           <label>
-            <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Puertos (coma)</div>
+            <div class="field-label">Puertos (coma)</div>
             <input bind:value={portRulePorts} placeholder="22, 80, 443" />
           </label>
-          <div class="split" style="gap: 10px;">
+          <div class="form-row">
             <label>
-              <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Inicio rango</div>
+              <div class="field-label">Inicio rango</div>
               <input type="number" min="1" bind:value={portRuleStart} placeholder="1000" />
             </label>
             <label>
-              <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Fin rango</div>
+              <div class="field-label">Fin rango</div>
               <input type="number" min="1" bind:value={portRuleEnd} placeholder="2000" />
             </label>
           </div>
-          <button class="ghost" on:click={addPortRule}>Agregar regla</button>
+          <button class="secondary" on:click={addPortRule}>Agregar regla</button>
         </div>
         {#if portError}
           <div style="margin-top: 10px; color: var(--danger); font-size: 13px;">{portError}</div>
         {/if}
         <div style="margin-top: 12px; overflow-x: auto;">
-          <table class="table">
+          <table class="table table-responsive">
             <thead>
               <tr>
                 <th>Protocolo</th>
@@ -712,10 +708,10 @@
               {:else}
                 {#each portConfig.rules as rule, index}
                   <tr>
-                    <td>{rule.protocol}</td>
-                    <td>{formatPortRule(rule)}</td>
-                    <td>{rule.severity}</td>
-                    <td>
+                    <td data-label="Protocolo">{rule.protocol}</td>
+                    <td data-label="Detalle">{formatPortRule(rule)}</td>
+                    <td data-label="Severidad">{rule.severity}</td>
+                    <td data-label="Accion">
                       <button class="ghost" on:click={() => removePortRule(index)}>
                         Quitar
                       </button>
@@ -730,15 +726,15 @@
 
       <div style="margin-top: 16px;">
         <div class="badge">Alias</div>
-        <div style="display: flex; gap: 10px; margin-top: 10px;">
-          <button class="ghost" on:click={loadPortAliases}>Ver alias</button>
+        <div class="action-row" style="margin-top: 10px;">
+          <button class="secondary" on:click={loadPortAliases}>Ver alias</button>
           <button class="ghost" on:click={syncPortAliases}>Sincronizar alias</button>
         </div>
         {#if portAliasMessage}
           <div style="margin-top: 8px; color: var(--muted); font-size: 12px;">{portAliasMessage}</div>
         {/if}
         <div style="margin-top: 12px; overflow-x: auto;">
-          <table class="table">
+          <table class="table table-responsive">
             <thead>
               <tr>
                 <th>Protocolo</th>
@@ -752,15 +748,15 @@
               {:else}
                 {#each Object.entries(portAlias.port_entries || {}) as entry}
                   <tr>
-                    <td>{entry[0].toUpperCase()}</td>
-                    <td>
+                    <td data-label="Protocolo">{entry[0].toUpperCase()}</td>
+                    <td data-label="Alias">
                       {#if Array.isArray(portAlias.ports_aliases)}
                         -
                       {:else}
                         {portAlias.ports_aliases[entry[0]] || '-'}
                       {/if}
                     </td>
-                    <td>{entry[1].join(', ') || '-'}</td>
+                    <td data-label="Puertos">{entry[1].join(', ') || '-'}</td>
                   </tr>
                 {/each}
               {/if}
@@ -783,13 +779,13 @@
   {/if}
 
   {#if activeTab === 'mimosanpm'}
-  <div class="surface" style="padding: 18px;">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
+  <div class="surface panel">
+    <div class="card-head">
       <div>
         <div class="badge">MimosaNPM</div>
-        <h3 style="margin-top: 12px;">Agente para NPM</h3>
+        <h3 class="card-title" style="margin-top: 12px;">Agente para NPM</h3>
       </div>
-      <button class="ghost" on:click={() => { loadPlugins(); loadMimosaEvents(); loadMimosaStats(); }}>
+      <button class="secondary" on:click={() => { loadPlugins(); loadMimosaEvents(); loadMimosaStats(); }}>
         Recargar
       </button>
     </div>
@@ -797,14 +793,14 @@
     {#if !mimosaConfig}
       <div style="margin-top: 12px;">Cargando configuracion...</div>
     {:else}
-      <div style="display: grid; gap: 12px; margin-top: 12px;">
-        <label style="display: flex; align-items: center; gap: 8px;">
+      <div class="form-grid" style="margin-top: 12px;">
+        <label class="check-item">
           <input type="checkbox" bind:checked={mimosaConfig.enabled} />
           <span>Habilitar MimosaNPM</span>
         </label>
-        <div class="split" style="gap: 12px;">
+        <div class="form-row">
           <label>
-            <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Severidad</div>
+            <div class="field-label">Severidad</div>
             <select bind:value={mimosaConfig.default_severity}>
               <option value="bajo">Bajo</option>
               <option value="medio">Medio</option>
@@ -812,53 +808,56 @@
             </select>
           </label>
           <label>
-            <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Endpoint</div>
+            <div class="field-label">Endpoint</div>
             <input readonly value={mimosaEndpoint} />
           </label>
         </div>
         <label>
-          <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Secreto</div>
-          <div style="display: flex; gap: 8px;">
+          <div class="field-label">Secreto</div>
+          <div class="action-row">
             <input bind:value={mimosaConfig.shared_secret} />
             <button class="ghost" on:click={() => saveMimosaNpm(true)}>Rotar</button>
           </div>
         </label>
-        <div class="split" style="gap: 12px;">
-          <label style="display: flex; align-items: center; gap: 8px;">
-            <input type="checkbox" bind:checked={mimosaConfig.alert_fallback} />
-            <span>Alertas fallback</span>
-          </label>
-          <label style="display: flex; align-items: center; gap: 8px;">
-            <input type="checkbox" bind:checked={mimosaConfig.alert_unregistered_domain} />
-            <span>Dominios sin registrar</span>
-          </label>
-          <label style="display: flex; align-items: center; gap: 8px;">
-            <input type="checkbox" bind:checked={mimosaConfig.alert_suspicious_path} />
-            <span>Rutas sospechosas</span>
-          </label>
+        <div>
+          <div class="field-label">Alertas</div>
+          <div class="check-grid" style="margin-top: 6px;">
+            <label class="check-item">
+              <input type="checkbox" bind:checked={mimosaConfig.alert_fallback} />
+              <span>Alertas fallback</span>
+            </label>
+            <label class="check-item">
+              <input type="checkbox" bind:checked={mimosaConfig.alert_unregistered_domain} />
+              <span>Dominios sin registrar</span>
+            </label>
+            <label class="check-item">
+              <input type="checkbox" bind:checked={mimosaConfig.alert_suspicious_path} />
+              <span>Rutas sospechosas</span>
+            </label>
+          </div>
         </div>
       </div>
 
       <div style="margin-top: 16px;">
         <div class="badge">Reglas severidad</div>
-        <div style="display: grid; gap: 10px; margin-top: 10px;">
-          <div class="split" style="gap: 10px;">
+        <div class="form-grid" style="margin-top: 10px;">
+          <div class="form-row">
             <label>
-              <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Host</div>
+              <div class="field-label">Host</div>
               <input bind:value={mimosaRuleForm.host} />
             </label>
             <label>
-              <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Path</div>
+              <div class="field-label">Path</div>
               <input bind:value={mimosaRuleForm.path} />
             </label>
           </div>
-          <div class="split" style="gap: 10px;">
+          <div class="form-row">
             <label>
-              <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Status</div>
+              <div class="field-label">Status</div>
               <input bind:value={mimosaRuleForm.status} />
             </label>
             <label>
-              <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Severidad</div>
+              <div class="field-label">Severidad</div>
               <select bind:value={mimosaRuleForm.severity}>
                 <option value="bajo">Bajo</option>
                 <option value="medio">Medio</option>
@@ -866,16 +865,16 @@
               </select>
             </label>
           </div>
-          <button class="ghost" on:click={addMimosaRule}>Agregar regla</button>
+          <button class="secondary" on:click={addMimosaRule}>Agregar regla</button>
         </div>
         <div style="margin-top: 12px; overflow-x: auto;">
-          <table class="table">
+          <table class="table table-responsive">
             <thead>
               <tr>
-                <th>Host</th>
+                <th class="cell-nowrap">Host</th>
                 <th>Path</th>
-                <th>Status</th>
-                <th>Severidad</th>
+                <th class="cell-nowrap">Status</th>
+                <th class="cell-nowrap">Severidad</th>
                 <th></th>
               </tr>
             </thead>
@@ -885,11 +884,11 @@
               {:else}
                 {#each mimosaConfig.rules as rule, index}
                   <tr>
-                    <td>{rule.host}</td>
-                    <td>{rule.path}</td>
-                    <td>{rule.status}</td>
-                    <td>{rule.severity}</td>
-                    <td>
+                    <td class="cell-nowrap" data-label="Host">{rule.host}</td>
+                    <td class="cell-truncate" title={rule.path} data-label="Path">{rule.path}</td>
+                    <td class="cell-nowrap" data-label="Status">{rule.status}</td>
+                    <td class="cell-nowrap" data-label="Severidad">{rule.severity}</td>
+                    <td data-label="Accion">
                       <button class="ghost" on:click={() => removeMimosaRule(index)}>Quitar</button>
                     </td>
                   </tr>
@@ -902,30 +901,30 @@
 
       <div style="margin-top: 16px;">
         <div class="badge">Ignore list</div>
-        <div style="display: grid; gap: 10px; margin-top: 10px;">
-          <div class="split" style="gap: 10px;">
+        <div class="form-grid" style="margin-top: 10px;">
+          <div class="form-row">
             <label>
-              <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Host</div>
+              <div class="field-label">Host</div>
               <input bind:value={mimosaIgnoreForm.host} />
             </label>
             <label>
-              <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Path</div>
+              <div class="field-label">Path</div>
               <input bind:value={mimosaIgnoreForm.path} />
             </label>
           </div>
           <label>
-            <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Status</div>
+            <div class="field-label">Status</div>
             <input bind:value={mimosaIgnoreForm.status} />
           </label>
-          <button class="ghost" on:click={addMimosaIgnore}>Agregar ignore</button>
+          <button class="secondary" on:click={addMimosaIgnore}>Agregar ignore</button>
         </div>
         <div style="margin-top: 12px; overflow-x: auto;">
-          <table class="table">
+          <table class="table table-responsive">
             <thead>
               <tr>
-                <th>Host</th>
+                <th class="cell-nowrap">Host</th>
                 <th>Path</th>
-                <th>Status</th>
+                <th class="cell-nowrap">Status</th>
                 <th></th>
               </tr>
             </thead>
@@ -935,10 +934,10 @@
               {:else}
                 {#each mimosaConfig.ignore_list as rule, index}
                   <tr>
-                    <td>{rule.host}</td>
-                    <td>{rule.path}</td>
-                    <td>{rule.status}</td>
-                    <td>
+                    <td class="cell-nowrap" data-label="Host">{rule.host}</td>
+                    <td class="cell-truncate" title={rule.path} data-label="Path">{rule.path}</td>
+                    <td class="cell-nowrap" data-label="Status">{rule.status}</td>
+                    <td data-label="Accion">
                       <button class="ghost" on:click={() => removeMimosaIgnore(index)}>Quitar</button>
                     </td>
                   </tr>
@@ -956,11 +955,11 @@
             {mimosaStatsMessage}
           </div>
         {/if}
-        <div class="card-grid" style="margin-top: 12px;">
-          <div class="surface" style="padding: 12px; border: 1px solid var(--border);">
+        <div class="mini-grid" style="margin-top: 12px;">
+          <div class="surface panel-sm">
             <strong>Por dominio</strong>
             <div style="margin-top: 10px; max-height: 220px; overflow: auto;">
-              <table class="table">
+              <table class="table table-compact table-responsive">
                 <thead>
                   <tr><th>Dominio</th><th>Hits</th></tr>
                 </thead>
@@ -970,8 +969,8 @@
                   {:else}
                     {#each mimosaStats.top_domains as entry}
                       <tr>
-                        <td>{entry.domain}</td>
-                        <td>{entry.count}</td>
+                        <td data-label="Dominio">{entry.domain}</td>
+                        <td data-label="Hits">{entry.count}</td>
                       </tr>
                     {/each}
                   {/if}
@@ -979,10 +978,10 @@
               </table>
             </div>
           </div>
-          <div class="surface" style="padding: 12px; border: 1px solid var(--border);">
+          <div class="surface panel-sm">
             <strong>Por ruta</strong>
             <div style="margin-top: 10px; max-height: 220px; overflow: auto;">
-              <table class="table">
+              <table class="table table-compact table-responsive">
                 <thead>
                   <tr><th>Path</th><th>Hits</th></tr>
                 </thead>
@@ -992,8 +991,8 @@
                   {:else}
                     {#each mimosaStats.top_paths as entry}
                       <tr>
-                        <td>{entry.path}</td>
-                        <td>{entry.count}</td>
+                        <td data-label="Path">{entry.path}</td>
+                        <td data-label="Hits">{entry.count}</td>
                       </tr>
                     {/each}
                   {/if}
@@ -1001,10 +1000,10 @@
               </table>
             </div>
           </div>
-          <div class="surface" style="padding: 12px; border: 1px solid var(--border);">
+          <div class="surface panel-sm">
             <strong>Por status</strong>
             <div style="margin-top: 10px; max-height: 220px; overflow: auto;">
-              <table class="table">
+              <table class="table table-compact table-responsive">
                 <thead>
                   <tr><th>Status</th><th>Hits</th></tr>
                 </thead>
@@ -1014,8 +1013,8 @@
                   {:else}
                     {#each mimosaStats.top_status_codes as entry}
                       <tr>
-                        <td>{entry.status}</td>
-                        <td>{entry.count}</td>
+                        <td data-label="Status">{entry.status}</td>
+                        <td data-label="Hits">{entry.count}</td>
                       </tr>
                     {/each}
                   {/if}
@@ -1029,14 +1028,14 @@
       <div style="margin-top: 16px;">
         <div class="badge">Eventos recientes</div>
         <div style="margin-top: 12px; overflow-x: auto;">
-          <table class="table">
+          <table class="table table-responsive">
             <thead>
               <tr>
-                <th>Fecha</th>
-                <th>Host</th>
+                <th class="cell-nowrap">Fecha</th>
+                <th class="cell-nowrap">Host</th>
                 <th>Path</th>
-                <th>Status</th>
-                <th>Severidad</th>
+                <th class="cell-nowrap">Status</th>
+                <th class="cell-nowrap">Severidad</th>
                 <th></th>
               </tr>
             </thead>
@@ -1046,12 +1045,16 @@
               {:else}
                 {#each mimosaEvents as event}
                   <tr>
-                    <td>{formatDate(event.created_at)}</td>
-                    <td>{event.host || '-'}</td>
-                    <td>{event.path || '-'}</td>
-                    <td>{event.context?.status_code ?? '-'}</td>
-                    <td>{event.severity || '-'}</td>
-                    <td>
+                    <td class="cell-nowrap" data-label="Fecha">{formatDate(event.created_at)}</td>
+                    <td class="cell-nowrap" data-label="Host">{event.host || '-'}</td>
+                    <td class="cell-truncate" title={event.path || '-'} data-label="Path">
+                      {event.path || '-'}
+                    </td>
+                    <td class="cell-nowrap" data-label="Status">
+                      {event.context?.status_code ?? '-'}
+                    </td>
+                    <td class="cell-nowrap" data-label="Severidad">{event.severity || '-'}</td>
+                    <td data-label="Accion">
                       <button class="ghost" on:click={() => applyEventToRule(event)}>Usar</button>
                     </td>
                   </tr>
