@@ -961,6 +961,7 @@
         mimosaLocation={mimosaLocation}
         attackOrigins={publicAttackOrigins}
         attackKey={publicAttackKey}
+        countryData={publicCountries}
       />
       <div style="margin-top: 8px; color: var(--muted); font-size: 12px;">
         {publicHeatmapMessage}
@@ -1201,6 +1202,7 @@
         mimosaLocation={mimosaLocation}
         attackOrigins={mapAttackOrigins}
         attackKey={mapAttackKey}
+        countryData={countryEntries}
       />
       <div style="margin-top: 8px; color: var(--muted); font-size: 12px;">
         {heatmapMessage}
