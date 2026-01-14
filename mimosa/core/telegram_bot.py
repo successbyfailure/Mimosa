@@ -288,8 +288,11 @@ También puedes usar los botones del menú para navegar.
 
         rules_text = "⚙️ *Reglas de bloqueo:*\n\n"
 
-        for i, rule in enumerate(rules[:5], 1):
-            rules_text += f"*{i}. {rule.description}*\n"
+        # Construir botones para activar/desactivar cada regla
+        keyboard = []
+        for i, rule in enumerate(rules[:10], 1):
+            status_icon = "✅" if rule.enabled else "❌"
+            rules_text += f"{status_icon} *{i}. {rule.description}*\n"
             rules_text += f"Plugin: {rule.plugin}\n"
             rules_text += f"Severidad: {rule.severity}\n"
             if rule.min_last_hour:
@@ -298,12 +301,19 @@ También puedes usar los botones del menú para navegar.
                 rules_text += f"Min. total: {rule.min_total}\n"
             if rule.block_minutes:
                 rules_text += f"Duración: {rule.block_minutes} min\n"
+
+            # Añadir botón para toggle
+            btn_text = f"{'🔴 Desactivar' if rule.enabled else '🟢 Activar'} Regla {i}"
+            keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"toggle_rule_{rule.id}")])
             rules_text += "\n"
 
-        if len(rules) > 5:
-            rules_text += f"\n_Mostrando 5 de {len(rules)} reglas_"
+        if len(rules) > 10:
+            rules_text += f"\n_Mostrando 10 de {len(rules)} reglas_"
 
-        keyboard = [[InlineKeyboardButton("« Menú", callback_data="menu")]]
+        keyboard.append([
+            InlineKeyboardButton("🔄 Actualizar", callback_data="rules"),
+            InlineKeyboardButton("« Menú", callback_data="menu")
+        ])
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.message.reply_text(
@@ -385,6 +395,17 @@ También puedes usar los botones del menú para navegar.
             await self._show_help(update, context)
         elif data == "menu":
             await self._show_menu(update, context)
+        elif data.startswith("toggle_rule_"):
+            # Extraer ID de la regla del callback
+            try:
+                rule_id = int(data.replace("toggle_rule_", ""))
+                new_state = self.rule_store.toggle(rule_id)
+                status = "activada" if new_state else "desactivada"
+                await query.answer(f"Regla {status}")
+                # Actualizar el mensaje con el nuevo estado
+                await self._show_rules(update, context)
+            except (ValueError, Exception) as e:
+                await query.answer(f"Error: {str(e)}")
 
     async def _show_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Muestra estadísticas (desde botón)."""
@@ -466,11 +487,15 @@ También puedes usar los botones del menú para navegar.
 
         if not rules:
             text = "No hay reglas configuradas."
+            keyboard = [[InlineKeyboardButton("« Menú", callback_data="menu")]]
         else:
             text = "⚙️ *Reglas de bloqueo:*\n\n"
 
-            for i, rule in enumerate(rules[:5], 1):
-                text += f"*{i}. {rule.description}*\n"
+            # Construir botones para activar/desactivar cada regla
+            keyboard = []
+            for i, rule in enumerate(rules[:10], 1):
+                status_icon = "✅" if rule.enabled else "❌"
+                text += f"{status_icon} *{i}. {rule.description}*\n"
                 text += f"Plugin: {rule.plugin}\n"
                 text += f"Severidad: {rule.severity}\n"
                 if rule.min_last_hour:
@@ -479,12 +504,20 @@ También puedes usar los botones del menú para navegar.
                     text += f"Min. total: {rule.min_total}\n"
                 if rule.block_minutes:
                     text += f"Duración: {rule.block_minutes} min\n"
+
+                # Añadir botón para toggle
+                btn_text = f"{'🔴 Desactivar' if rule.enabled else '🟢 Activar'} Regla {i}"
+                keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"toggle_rule_{rule.id}")])
                 text += "\n"
 
-            if len(rules) > 5:
-                text += f"\n_Mostrando 5 de {len(rules)} reglas_"
+            if len(rules) > 10:
+                text += f"\n_Mostrando 10 de {len(rules)} reglas_"
 
-        keyboard = [[InlineKeyboardButton("« Menú", callback_data="menu")]]
+            keyboard.append([
+                InlineKeyboardButton("🔄 Actualizar", callback_data="rules"),
+                InlineKeyboardButton("« Menú", callback_data="menu")
+            ])
+
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.callback_query.edit_message_text(

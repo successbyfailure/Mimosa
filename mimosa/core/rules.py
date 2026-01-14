@@ -46,7 +46,7 @@ class OffenseRuleStore:
             rows = conn.execute(
                 """
                 SELECT id, plugin, event_id, severity, description, min_last_hour, min_total,
-                       min_blocks_total, block_minutes
+                       min_blocks_total, block_minutes, enabled
                 FROM offense_rules
                 ORDER BY id ASC;
                 """
@@ -63,6 +63,7 @@ class OffenseRuleStore:
                 min_total=row[6],
                 min_blocks_total=row[7],
                 block_minutes=row[8],
+                enabled=bool(row[9]) if len(row) > 9 else True,
             )
             for row in rows
         ]
@@ -72,8 +73,8 @@ class OffenseRuleStore:
             cursor = conn.execute(
                 """
                 INSERT INTO offense_rules
-                    (plugin, event_id, severity, description, min_last_hour, min_total, min_blocks_total, block_minutes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                    (plugin, event_id, severity, description, min_last_hour, min_total, min_blocks_total, block_minutes, enabled)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     rule.plugin,
@@ -84,6 +85,7 @@ class OffenseRuleStore:
                     rule.min_total,
                     rule.min_blocks_total,
                     rule.block_minutes,
+                    int(rule.enabled),
                 ),
             )
             rule.id = cursor.lastrowid
@@ -95,7 +97,7 @@ class OffenseRuleStore:
                 """
                 UPDATE offense_rules
                 SET plugin = ?, event_id = ?, severity = ?, description = ?,
-                    min_last_hour = ?, min_total = ?, min_blocks_total = ?, block_minutes = ?
+                    min_last_hour = ?, min_total = ?, min_blocks_total = ?, block_minutes = ?, enabled = ?
                 WHERE id = ?;
                 """,
                 (
@@ -107,6 +109,7 @@ class OffenseRuleStore:
                     rule.min_total,
                     rule.min_blocks_total,
                     rule.block_minutes,
+                    int(rule.enabled),
                     rule_id,
                 ),
             )
@@ -114,6 +117,24 @@ class OffenseRuleStore:
                 return None
         rule.id = rule_id
         return rule
+
+    def toggle(self, rule_id: int) -> bool:
+        """Activa o desactiva una regla. Retorna el nuevo estado (True = enabled)."""
+        with self._connection() as conn:
+            # Obtener estado actual
+            row = conn.execute(
+                "SELECT enabled FROM offense_rules WHERE id = ?;", (rule_id,)
+            ).fetchone()
+            if not row:
+                return False
+
+            # Invertir estado
+            new_state = not bool(row[0])
+            conn.execute(
+                "UPDATE offense_rules SET enabled = ? WHERE id = ?;",
+                (int(new_state), rule_id),
+            )
+            return new_state
 
     def delete(self, rule_id: int) -> None:
         with self._connection() as conn:
@@ -158,6 +179,10 @@ class RuleManager:
         block_count = self.block_manager.count_for_ip(event.source_ip)
 
         for rule in self.rules:
+            # Saltar reglas deshabilitadas
+            if not rule.enabled:
+                continue
+
             if not rule.matches(
                 event,
                 last_hour=last_hour_count,

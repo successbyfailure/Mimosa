@@ -639,6 +639,7 @@ def create_app(
             "min_total": rule.min_total,
             "min_blocks_total": rule.min_blocks_total,
             "block_minutes": rule.block_minutes,
+            "enabled": rule.enabled,
         }
 
     def _load_setting(key: str) -> Optional[str]:
@@ -1954,6 +1955,17 @@ def create_app(
     def delete_rule(rule_id: int) -> Response:
         rule_store.delete(rule_id)
         return Response(status_code=204)
+
+    @app.post("/api/rules/{rule_id}/toggle")
+    def toggle_rule(rule_id: int) -> Dict[str, object]:
+        """Activa o desactiva una regla de bloqueo."""
+        new_state = rule_store.toggle(rule_id)
+        if new_state is False:
+            # Verificar si la regla existe
+            rules = rule_store.list()
+            if not any(r.id == rule_id for r in rules):
+                raise HTTPException(status_code=404, detail="Regla no encontrada")
+        return {"id": rule_id, "enabled": new_state}
 
     @app.get("/api/ips")
     def list_ips(limit: int = 100) -> List[Dict[str, object]]:

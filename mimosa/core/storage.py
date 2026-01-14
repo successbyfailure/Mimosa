@@ -132,10 +132,17 @@ def ensure_database(path: Path | str = DEFAULT_DB_PATH) -> Path:
                 min_last_hour INTEGER NOT NULL DEFAULT 0,
                 min_total INTEGER NOT NULL DEFAULT 0,
                 min_blocks_total INTEGER NOT NULL DEFAULT 0,
-                block_minutes INTEGER
+                block_minutes INTEGER,
+                enabled INTEGER NOT NULL DEFAULT 1
             );
             """
         )
+        # Migración: añadir columna enabled si no existe
+        rule_columns = {row[1] for row in conn.execute("PRAGMA table_info(offense_rules);")}
+        if "enabled" not in rule_columns:
+            conn.execute(
+                "ALTER TABLE offense_rules ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;"
+            )
         # Tablas para el bot de Telegram
         conn.execute(
             """
