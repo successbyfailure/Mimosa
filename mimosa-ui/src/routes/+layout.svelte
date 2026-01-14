@@ -99,6 +99,12 @@
           Firewall
         </a>
         <a
+          href="/telegram"
+          class={$page.url.pathname.startsWith('/telegram') ? 'active' : ''}
+        >
+          Telegram Bot
+        </a>
+        <a
           href="/settings"
           class={$page.url.pathname.startsWith('/settings') ? 'active' : ''}
         >

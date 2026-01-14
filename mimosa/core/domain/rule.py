@@ -38,6 +38,7 @@ class OffenseRule:
     min_total: int = 0
     min_blocks_total: int = 0
     block_minutes: Optional[int] = None
+    enabled: bool = True
     id: Optional[int] = None
 
     def matches(

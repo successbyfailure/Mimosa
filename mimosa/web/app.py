@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -18,6 +19,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
+
+logger = logging.getLogger(__name__)
 
 from mimosa.core.api import FirewallGateway
 from mimosa.core.blocking import BlockEntry, BlockManager
@@ -45,6 +48,11 @@ from mimosa.core.portdetector import (
 from mimosa.core.mimosanpm import MimosaNpmAlert, MimosaNpmService
 from mimosa.core.proxytrap import ProxyTrapService
 from mimosa.core.rules import OffenseEvent, OffenseRule, OffenseRuleStore, RuleManager
+from mimosa.core.telegram_config import TelegramConfigStore
+from mimosa.core.repositories.telegram_repository import (
+    TelegramUserRepository,
+    TelegramInteractionRepository,
+)
 from mimosa.web.config import (
     FirewallConfig,
     FirewallConfigStore,
@@ -247,6 +255,22 @@ class UserUpdateInput(BaseModel):
     role: Optional[Literal["admin", "viewer"]] = None
 
 
+class TelegramBotConfigInput(BaseModel):
+    """Configuración del bot de Telegram."""
+
+    enabled: bool = False
+    bot_token: Optional[str] = None
+    welcome_message: str = "Bienvenido al bot de Mimosa"
+    unauthorized_message: str = "No estás autorizado para usar este bot"
+
+
+class TelegramUserAuthInput(BaseModel):
+    """Entrada para autorizar/desautorizar usuarios del bot."""
+
+    telegram_id: int
+    authorized: bool = True
+
+
 class LoginInput(BaseModel):
     """Credenciales de acceso para la UI."""
 
@@ -313,6 +337,9 @@ def create_app(
     rule_store = rule_store or OffenseRuleStore(db_path=offense_store.db_path)
     plugin_store = PluginConfigStore()
     user_store = UserStore()
+    telegram_config_store = TelegramConfigStore(db_path=offense_store.db_path)
+    telegram_user_repo = TelegramUserRepository(db_path=offense_store.db_path)
+    telegram_interaction_repo = TelegramInteractionRepository(db_path=offense_store.db_path)
     gateway_cache = GatewayCache(ttl_seconds=300)  # TTL de 5 minutos
     proxytrap_stats_path = proxytrap_stats_path or Path("data/proxytrap_stats.json")
     portdetector_stats_path = portdetector_stats_path or Path(
@@ -612,6 +639,7 @@ def create_app(
             "min_total": rule.min_total,
             "min_blocks_total": rule.min_blocks_total,
             "block_minutes": rule.block_minutes,
+            "enabled": rule.enabled,
         }
 
     def _load_setting(key: str) -> Optional[str]:
@@ -815,6 +843,123 @@ def create_app(
                 raise HTTPException(status_code=400, detail="Debe existir al menos un administrador")
         user_store.delete_user(username)
         return Response(status_code=204)
+
+    # ====== Endpoints del Bot de Telegram ======
+
+    @app.get("/api/telegram/config")
+    def get_telegram_config(request: Request) -> Dict[str, object]:
+        """Obtiene la configuración del bot de Telegram."""
+        _require_admin(request)
+        config = telegram_config_store.get_config()
+        config_dict = config.to_dict()
+        # No enviar el token completo al frontend por seguridad
+        if config_dict.get("bot_token"):
+            token = str(config_dict["bot_token"])
+            if len(token) > 10:
+                config_dict["bot_token"] = token[:8] + "..." + token[-8:]
+        return config_dict
+
+    @app.put("/api/telegram/config")
+    def update_telegram_config(request: Request, payload: TelegramBotConfigInput) -> Dict[str, str]:
+        """Actualiza la configuración del bot de Telegram."""
+        _require_admin(request)
+        from mimosa.core.domain.telegram import TelegramBotConfig
+
+        config = TelegramBotConfig(
+            enabled=payload.enabled,
+            bot_token=payload.bot_token,
+            welcome_message=payload.welcome_message,
+            unauthorized_message=payload.unauthorized_message,
+        )
+        telegram_config_store.save_config(config)
+        return {"status": "ok", "message": "Configuración actualizada"}
+
+    @app.post("/api/telegram/toggle")
+    def toggle_telegram_bot(request: Request) -> Dict[str, object]:
+        """Activa o desactiva el bot de Telegram (toggle rápido)."""
+        _require_admin(request)
+        config = telegram_config_store.get_config()
+        new_state = not config.enabled
+        telegram_config_store.update_setting("enabled", new_state)
+
+        status_msg = "habilitado" if new_state else "deshabilitado"
+        return {
+            "status": "ok",
+            "enabled": new_state,
+            "message": f"Bot {status_msg}"
+        }
+
+    @app.get("/api/telegram/users")
+    def list_telegram_users(request: Request) -> Dict[str, List[Dict[str, object]]]:
+        """Lista todos los usuarios del bot (autorizados y no autorizados)."""
+        _require_admin(request)
+        authorized = telegram_user_repo.find_all_authorized()
+        unauthorized = telegram_user_repo.find_all_unauthorized(limit=50)
+
+        return {
+            "authorized": [user.to_dict() for user in authorized],
+            "unauthorized": [user.to_dict() for user in unauthorized],
+        }
+
+    @app.post("/api/telegram/users/{telegram_id}/authorize")
+    def authorize_telegram_user(request: Request, telegram_id: int) -> Dict[str, str]:
+        """Autoriza a un usuario para usar el bot."""
+        _require_admin(request)
+        user_data = _current_user(request)
+        if not user_data:
+            raise HTTPException(status_code=401, detail="No autenticado")
+
+        authorized_by = user_data.get("username", "unknown")
+        now = datetime.now(timezone.utc)
+
+        # Verificar si el usuario existe
+        user = telegram_user_repo.find_by_telegram_id(telegram_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+        # Autorizar
+        telegram_user_repo.authorize_user(telegram_id, authorized_by, now)
+        return {"status": "ok", "message": "Usuario autorizado"}
+
+    @app.post("/api/telegram/users/{telegram_id}/unauthorize")
+    def unauthorize_telegram_user(request: Request, telegram_id: int) -> Dict[str, str]:
+        """Desautoriza a un usuario del bot."""
+        _require_admin(request)
+
+        # Desautorizar
+        telegram_user_repo.unauthorize_user(telegram_id)
+        return {"status": "ok", "message": "Usuario desautorizado"}
+
+    @app.delete("/api/telegram/users/{telegram_id}", status_code=204, response_class=Response)
+    def delete_telegram_user(request: Request, telegram_id: int) -> Response:
+        """Elimina un usuario del bot."""
+        _require_admin(request)
+        telegram_user_repo.delete(telegram_id)
+        return Response(status_code=204)
+
+    @app.get("/api/telegram/interactions")
+    def list_telegram_interactions(
+        request: Request, limit: int = 100
+    ) -> List[Dict[str, object]]:
+        """Lista las interacciones recientes con el bot."""
+        _require_admin(request)
+        interactions = telegram_interaction_repo.find_recent(limit=limit)
+        return [interaction.to_dict() for interaction in interactions]
+
+    @app.get("/api/telegram/stats")
+    def get_telegram_stats(request: Request) -> Dict[str, object]:
+        """Obtiene estadísticas del bot de Telegram."""
+        _require_admin(request)
+        authorized_count = len(telegram_user_repo.find_all_authorized())
+        all_users = telegram_user_repo.find_all()
+        total_interactions = telegram_interaction_repo.count_total()
+
+        return {
+            "authorized_users": authorized_count,
+            "total_users": len(all_users),
+            "total_interactions": total_interactions,
+            "bot_enabled": telegram_config_store.is_enabled(),
+        }
 
     def _stats_payload() -> Dict[str, Dict[str, object]]:
         now = datetime.now(timezone.utc)
@@ -1826,6 +1971,17 @@ def create_app(
         rule_store.delete(rule_id)
         return Response(status_code=204)
 
+    @app.post("/api/rules/{rule_id}/toggle")
+    def toggle_rule(rule_id: int) -> Dict[str, object]:
+        """Activa o desactiva una regla de bloqueo."""
+        new_state = rule_store.toggle(rule_id)
+        if new_state is False:
+            # Verificar si la regla existe
+            rules = rule_store.list()
+            if not any(r.id == rule_id for r in rules):
+                raise HTTPException(status_code=404, detail="Regla no encontrada")
+        return {"id": rule_id, "enabled": new_state}
+
     @app.get("/api/ips")
     def list_ips(limit: int = 100) -> List[Dict[str, object]]:
         profiles = offense_store.list_ip_profiles(limit)
@@ -2212,6 +2368,34 @@ def create_app(
         if index_path.exists():
             return FileResponse(index_path)
         raise HTTPException(status_code=404, detail="UI build no encontrado")
+
+    # Inicializar el bot de Telegram
+    from mimosa.core.telegram_bot import TelegramBotService
+
+    telegram_bot = TelegramBotService(
+        config_store=telegram_config_store,
+        user_repo=telegram_user_repo,
+        interaction_repo=telegram_interaction_repo,
+        offense_store=offense_store,
+        block_manager=block_manager,
+        rule_store=rule_store,
+    )
+
+    @app.on_event("startup")
+    async def startup_event():
+        """Inicia los servicios en segundo plano."""
+        try:
+            await telegram_bot.start()
+        except Exception as e:
+            logger.error(f"Error al iniciar el bot de Telegram: {e}")
+
+    @app.on_event("shutdown")
+    async def shutdown_event():
+        """Detiene los servicios en segundo plano."""
+        try:
+            await telegram_bot.stop()
+        except Exception as e:
+            logger.error(f"Error al detener el bot de Telegram: {e}")
 
     return app
 

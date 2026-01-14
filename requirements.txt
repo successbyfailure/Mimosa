@@ -5,3 +5,4 @@ uvicorn
 jinja2
 itsdangerous
 python-multipart
+python-telegram-bot>=20.0
