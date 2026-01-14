@@ -874,6 +874,21 @@ def create_app(
         telegram_config_store.save_config(config)
         return {"status": "ok", "message": "Configuración actualizada"}
 
+    @app.post("/api/telegram/toggle")
+    def toggle_telegram_bot(request: Request) -> Dict[str, object]:
+        """Activa o desactiva el bot de Telegram (toggle rápido)."""
+        _require_admin(request)
+        config = telegram_config_store.get_config()
+        new_state = not config.enabled
+        telegram_config_store.update_setting("enabled", new_state)
+
+        status_msg = "habilitado" if new_state else "deshabilitado"
+        return {
+            "status": "ok",
+            "enabled": new_state,
+            "message": f"Bot {status_msg}"
+        }
+
     @app.get("/api/telegram/users")
     def list_telegram_users(request: Request) -> Dict[str, List[Dict[str, object]]]:
         """Lista todos los usuarios del bot (autorizados y no autorizados)."""

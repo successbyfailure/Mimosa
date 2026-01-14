@@ -111,9 +111,18 @@ class TelegramBotService:
         """Verifica si el bot está corriendo."""
         return self._running
 
+    def _is_bot_enabled(self) -> bool:
+        """Verifica si el bot está habilitado en la configuración."""
+        config = self.config_store.get_config()
+        return config.enabled
+
     async def _start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Maneja el comando /start."""
         await self._log_interaction(update, "/start")
+
+        # Verificar si el bot está habilitado
+        if not self._is_bot_enabled():
+            return
 
         if not update.effective_user:
             return
@@ -579,7 +588,12 @@ También puedes usar los botones del menú para navegar.
         )
 
     async def _is_authorized(self, update: Update) -> bool:
-        """Verifica si el usuario está autorizado."""
+        """Verifica si el usuario está autorizado y si el bot está habilitado."""
+        # Primero verificar si el bot está habilitado
+        if not self._is_bot_enabled():
+            # Si el bot está deshabilitado, no responder
+            return False
+
         if not update.effective_user:
             return False
 

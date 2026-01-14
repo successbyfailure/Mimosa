@@ -194,6 +194,24 @@
     return `Usuario ${user.telegram_id}`;
   };
 
+  const toggleBot = async () => {
+    if (!config) return;
+
+    error = null;
+    message = null;
+    try {
+      const response = await requestJson<{ enabled: boolean; message: string }>(
+        '/api/telegram/toggle',
+        { method: 'POST' }
+      );
+      config.enabled = response.enabled;
+      message = response.message;
+      await loadStats();
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Error al cambiar estado del bot';
+    }
+  };
+
   onMount(() => {
     loadConfig();
     loadUsers();
@@ -208,8 +226,27 @@
 
 <div class="container">
   <div class="header">
-    <h1>🤖 Bot de Telegram</h1>
-    <p class="subtitle">Gestiona el bot de Telegram para controlar Mimosa remotamente</p>
+    <div class="header-content">
+      <div>
+        <h1>🤖 Bot de Telegram</h1>
+        <p class="subtitle">Gestiona el bot de Telegram para controlar Mimosa remotamente</p>
+      </div>
+      {#if config}
+        <button
+          class="btn-toggle-bot {config.enabled ? 'enabled' : 'disabled'}"
+          on:click={toggleBot}
+          title={config.enabled ? 'Desactivar bot' : 'Activar bot'}
+        >
+          {#if config.enabled}
+            <span class="toggle-icon">🟢</span>
+            <span class="toggle-text">Bot Activo</span>
+          {:else}
+            <span class="toggle-icon">🔴</span>
+            <span class="toggle-text">Bot Inactivo</span>
+          {/if}
+        </button>
+      {/if}
+    </div>
   </div>
 
   {#if error}
@@ -453,6 +490,14 @@
     margin-bottom: 2rem;
   }
 
+  .header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 2rem;
+    flex-wrap: wrap;
+  }
+
   .header h1 {
     font-size: 2rem;
     font-weight: bold;
@@ -463,6 +508,50 @@
   .subtitle {
     color: #718096;
     font-size: 1rem;
+  }
+
+  .btn-toggle-bot {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1.5rem;
+    border: 2px solid;
+    border-radius: 0.5rem;
+    font-weight: 600;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+
+  .btn-toggle-bot.enabled {
+    background: #c6f6d5;
+    border-color: #48bb78;
+    color: #22543d;
+  }
+
+  .btn-toggle-bot.enabled:hover {
+    background: #9ae6b4;
+    border-color: #38a169;
+  }
+
+  .btn-toggle-bot.disabled {
+    background: #fed7d7;
+    border-color: #f56565;
+    color: #c53030;
+  }
+
+  .btn-toggle-bot.disabled:hover {
+    background: #fc8181;
+    border-color: #e53e3e;
+  }
+
+  .toggle-icon {
+    font-size: 1.25rem;
+  }
+
+  .toggle-text {
+    font-weight: 600;
   }
 
   .alert {
