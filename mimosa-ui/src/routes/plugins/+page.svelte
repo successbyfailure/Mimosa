@@ -95,6 +95,45 @@
     { pattern: 'cpanel.*', severity: 'alto' }
   ];
 
+  const defaultPortDetectorRules: PortDetectorRule[] = [
+    {
+      protocol: 'tcp',
+      severity: 'alto',
+      description: 'RemoteAccess',
+      ports: [2200, 2222, 3389, 5900, 5901, 5902, 5903, 5938, 6080, 7070, 8200, 12975]
+    },
+    {
+      protocol: 'udp',
+      severity: 'medio',
+      description: '-',
+      ports: [53, 123]
+    },
+    {
+      protocol: 'tcp',
+      severity: 'alto',
+      description: 'databases',
+      ports: [1521, 1433, 3306, 5432, 27017, 6379, 9200, 9042]
+    },
+    {
+      protocol: 'tcp',
+      severity: 'alto',
+      description: 'Infra',
+      ports: [21, 23, 389, 445, 636, 631]
+    },
+    {
+      protocol: 'tcp',
+      severity: 'alto',
+      description: 'HTTP-dev',
+      ports: [8000, 8001, 8080, 8443, 5000, 3000]
+    },
+    {
+      protocol: 'tcp',
+      severity: 'alto',
+      description: 'email',
+      ports: [25, 110, 143, 465, 587, 993, 995]
+    }
+  ];
+
   let loading = false;
   let error: string | null = null;
 
@@ -280,6 +319,19 @@
     portEditIndex = null;
   };
 
+  const addPortDetectorDefaults = () => {
+    if (!portConfig) {
+      return;
+    }
+    portConfig.rules = defaultPortDetectorRules.map((rule) => ({
+      ...rule,
+      ports: rule.ports ? [...rule.ports] : []
+    }));
+    resetPortRuleForm();
+    portMessage = 'Reglas por defecto añadidas';
+    portError = null;
+  };
+
   const startEditPortRule = (rule: PortDetectorRule, index: number) => {
     portEditIndex = index;
     portRuleProtocol = rule.protocol;
@@ -453,6 +505,20 @@
       return;
     }
     mimosaConfig.ignore_list = mimosaConfig.ignore_list.filter((_, idx) => idx !== index);
+  };
+
+  const addMimosaDefaults = () => {
+    if (!mimosaConfig) {
+      return;
+    }
+    mimosaConfig.rules = [];
+    mimosaConfig.ignore_list = [];
+    mimosaConfig.default_severity = 'alto';
+    mimosaConfig.alert_fallback = true;
+    mimosaConfig.alert_unregistered_domain = true;
+    mimosaConfig.alert_suspicious_path = true;
+    mimosaMessage = 'Defaults aplicados';
+    mimosaError = null;
   };
 
   const loadMimosaEvents = async () => {
@@ -698,7 +764,10 @@
       </div>
 
       <div style="margin-top: 16px;">
-        <div class="badge">Reglas</div>
+        <div class="card-head">
+          <div class="badge">Reglas</div>
+          <button class="ghost" on:click={addPortDetectorDefaults}>Añadir defaults</button>
+        </div>
         <div class="form-grid" style="margin-top: 10px;">
           <div class="form-row">
             <label>
@@ -899,7 +968,10 @@
       </div>
 
       <div style="margin-top: 16px;">
-        <div class="badge">Reglas severidad</div>
+        <div class="card-head">
+          <div class="badge">Reglas severidad</div>
+          <button class="ghost" on:click={addMimosaDefaults}>Añadir defaults</button>
+        </div>
         <div class="form-grid" style="margin-top: 10px;">
           <div class="form-row">
             <label>
