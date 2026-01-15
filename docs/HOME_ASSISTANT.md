@@ -70,6 +70,15 @@ custom cards:
 GET /api/homeassistant/heatmap?window=24h&limit=300&source=offenses
 ```
 
+Si quieres ver el mismo mapa con animaciones que en Mimosa, usa la vista
+publica en un iframe:
+
+```yaml
+type: iframe
+url: http://mimosa:8000/public-map
+aspect_ratio: 16:9
+```
+
 ## 4. Switches para reglas
 
 Puedes mapear reglas a switches REST con `state_resource` y `resource`.
