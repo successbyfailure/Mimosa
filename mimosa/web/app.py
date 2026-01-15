@@ -1186,6 +1186,12 @@ def create_app(
         payload["api_token"] = _mask_secret(config.api_token)
         return payload
 
+    @app.get("/api/homeassistant/token")
+    def get_homeassistant_token(request: Request) -> Dict[str, object]:
+        _require_admin(request)
+        config = homeassistant_config_store.get_config()
+        return {"api_token": config.api_token}
+
     @app.put("/api/homeassistant/config")
     def update_homeassistant_config(
         request: Request, payload: HomeAssistantConfigInput

@@ -22,6 +22,7 @@
   let message: string | null = null;
   let tokenMessage: string | null = null;
   let showToken = false;
+  let tokenLoading = false;
 
   const requestJson = async <T>(path: string, options?: RequestInit): Promise<T> => {
     const response = await fetch(path, {
@@ -58,6 +59,55 @@
     }
   };
 
+  const loadToken = async () => {
+    if (!config) {
+      return;
+    }
+    tokenLoading = true;
+    error = null;
+    tokenMessage = null;
+    try {
+      const payload = await requestJson<{ api_token: string | null }>(
+        '/api/homeassistant/token'
+      );
+      config.api_token = payload.api_token;
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'No se pudo cargar el token';
+    } finally {
+      tokenLoading = false;
+    }
+  };
+
+  const toggleToken = async () => {
+    if (!config) {
+      return;
+    }
+    if (!showToken) {
+      await loadToken();
+      showToken = true;
+      return;
+    }
+    showToken = false;
+  };
+
+  const copyToken = async () => {
+    if (!config) {
+      return;
+    }
+    await loadToken();
+    if (!config.api_token) {
+      error = 'No se pudo cargar el token';
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(config.api_token);
+      tokenMessage = 'Token copiado';
+      showToken = true;
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'No se pudo copiar el token';
+    }
+  };
+
   const saveConfig = async (rotateToken = false) => {
     if (!config) {
       return;
@@ -76,12 +126,12 @@
         body: JSON.stringify(payload)
       });
       message = 'Configuracion guardada';
-      if (rotateToken && response?.api_token) {
+      await loadConfig();
+      if (rotateToken && response?.api_token && config) {
         config.api_token = response.api_token;
         tokenMessage = `Token rotado: ${response.api_token}`;
         showToken = true;
       }
-      await loadConfig();
     } catch (err) {
       error = err instanceof Error ? err.message : 'No se pudo guardar';
     } finally {
@@ -131,8 +181,11 @@
                 style="flex: 1;"
               />
             {/if}
-            <button class="ghost" type="button" on:click={() => (showToken = !showToken)}>
+            <button class="ghost" type="button" disabled={tokenLoading} on:click={toggleToken}>
               {showToken ? 'Ocultar' : 'Mostrar'}
+            </button>
+            <button class="ghost" type="button" disabled={tokenLoading} on:click={copyToken}>
+              {tokenLoading ? 'Cargando...' : 'Copiar'}
             </button>
           </div>
         </label>
