@@ -69,6 +69,34 @@ def ensure_database(path: Path | str = DEFAULT_DB_PATH) -> Path:
             ON ip_profiles(last_seen);
             """
         )
+        # Migración: añadir columnas de clasificación de IP
+        ip_columns = {row[1] for row in conn.execute("PRAGMA table_info(ip_profiles);")}
+        if "ip_type" not in ip_columns:
+            conn.execute("ALTER TABLE ip_profiles ADD COLUMN ip_type TEXT;")
+        if "ip_type_confidence" not in ip_columns:
+            conn.execute("ALTER TABLE ip_profiles ADD COLUMN ip_type_confidence REAL;")
+        if "ip_type_source" not in ip_columns:
+            conn.execute("ALTER TABLE ip_profiles ADD COLUMN ip_type_source TEXT;")
+        if "ip_type_provider" not in ip_columns:
+            conn.execute("ALTER TABLE ip_profiles ADD COLUMN ip_type_provider TEXT;")
+        if "isp" not in ip_columns:
+            conn.execute("ALTER TABLE ip_profiles ADD COLUMN isp TEXT;")
+        if "org" not in ip_columns:
+            conn.execute("ALTER TABLE ip_profiles ADD COLUMN org TEXT;")
+        if "asn" not in ip_columns:
+            conn.execute("ALTER TABLE ip_profiles ADD COLUMN asn TEXT;")
+        if "is_proxy" not in ip_columns:
+            conn.execute("ALTER TABLE ip_profiles ADD COLUMN is_proxy INTEGER DEFAULT 0;")
+        if "is_mobile" not in ip_columns:
+            conn.execute("ALTER TABLE ip_profiles ADD COLUMN is_mobile INTEGER DEFAULT 0;")
+        if "is_hosting" not in ip_columns:
+            conn.execute("ALTER TABLE ip_profiles ADD COLUMN is_hosting INTEGER DEFAULT 0;")
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_ip_profiles_ip_type
+            ON ip_profiles(ip_type);
+            """
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS blocks (

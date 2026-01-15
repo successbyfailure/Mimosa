@@ -13,6 +13,33 @@
     enriched_at?: string | null;
     offenses: number;
     blocks: number;
+    // Campos de clasificación
+    ip_type?: string | null;
+    ip_type_confidence?: number | null;
+    ip_type_source?: string | null;
+    ip_type_provider?: string | null;
+    isp?: string | null;
+    org?: string | null;
+    asn?: string | null;
+    is_proxy?: boolean;
+    is_mobile?: boolean;
+    is_hosting?: boolean;
+  };
+
+  // Configuración de tipos de IP
+  const ipTypeConfig: Record<string, { label: string; color: string; bg: string }> = {
+    datacenter: { label: 'DC', color: 'var(--warning)', bg: 'rgba(251, 191, 36, 0.15)' },
+    residential: { label: 'RES', color: 'var(--success)', bg: 'rgba(74, 222, 128, 0.15)' },
+    governmental: { label: 'GOV', color: 'var(--accent)', bg: 'rgba(56, 189, 248, 0.15)' },
+    educational: { label: 'EDU', color: 'var(--accent)', bg: 'rgba(56, 189, 248, 0.15)' },
+    corporate: { label: 'CORP', color: 'var(--text)', bg: 'rgba(255, 255, 255, 0.1)' },
+    mobile: { label: 'MOB', color: 'var(--muted)', bg: 'rgba(148, 163, 184, 0.15)' },
+    proxy: { label: 'PROXY', color: 'var(--danger)', bg: 'rgba(248, 113, 113, 0.15)' },
+    unknown: { label: '?', color: 'var(--muted)', bg: 'rgba(148, 163, 184, 0.1)' }
+  };
+
+  const getTypeConfig = (type?: string | null) => {
+    return ipTypeConfig[type || 'unknown'] || ipTypeConfig.unknown;
   };
 
   let profiles: IpProfile[] = [];
@@ -20,7 +47,8 @@
   let error: string | null = null;
   let limit = 100;
   let query = '';
-  let sortKey: 'ip' | 'reverse_dns' | 'offenses' | 'blocks' | 'last_seen' = 'last_seen';
+  let filterType = '';
+  let sortKey: 'ip' | 'reverse_dns' | 'offenses' | 'blocks' | 'last_seen' | 'ip_type' = 'last_seen';
   let sortDir: 'asc' | 'desc' = 'desc';
   let sortedProfiles: IpProfile[] = [];
 
@@ -125,11 +153,16 @@
   };
 
   $: filtered = profiles.filter((profile) => {
+    // Filtro por tipo
+    if (filterType && (profile.ip_type || 'unknown') !== filterType) {
+      return false;
+    }
+    // Filtro por búsqueda
     const needle = query.trim().toLowerCase();
     if (!needle) {
       return true;
     }
-    return [profile.ip, profile.geo || '', profile.reverse_dns || '']
+    return [profile.ip, profile.geo || '', profile.reverse_dns || '', profile.ip_type || '']
       .join(' ')
       .toLowerCase()
       .includes(needle);
@@ -141,6 +174,11 @@
     }
     if (sortKey === 'last_seen') {
       return Date.parse(a.last_seen) - Date.parse(b.last_seen);
+    }
+    if (sortKey === 'ip_type') {
+      const av = (a.ip_type || 'unknown').toLowerCase();
+      const bv = (b.ip_type || 'unknown').toLowerCase();
+      return av.localeCompare(bv);
     }
     const av = (a[sortKey] || '').toString().toLowerCase();
     const bv = (b[sortKey] || '').toString().toLowerCase();
@@ -177,7 +215,20 @@
   <div class="surface" style="padding: 18px;">
     <div class="toolbar">
       <div class="grow">
-        <input placeholder="Buscar por IP o DNS" bind:value={query} />
+        <input placeholder="Buscar por IP, DNS o tipo" bind:value={query} />
+      </div>
+      <div class="compact">
+        <select bind:value={filterType} aria-label="Filtrar por tipo">
+          <option value="">Todos los tipos</option>
+          <option value="datacenter">Datacenter</option>
+          <option value="residential">Residencial</option>
+          <option value="governmental">Gubernamental</option>
+          <option value="educational">Educativo</option>
+          <option value="corporate">Corporativo</option>
+          <option value="mobile">Móvil</option>
+          <option value="proxy">Proxy/VPN</option>
+          <option value="unknown">Desconocido</option>
+        </select>
       </div>
       <div class="compact">
         <input type="number" min="10" step="10" bind:value={limit} aria-label="Limite" />
@@ -190,6 +241,7 @@
         <thead>
           <tr>
             <th on:click={() => toggleSort('ip')}>IP</th>
+            <th on:click={() => toggleSort('ip_type')}>Tipo</th>
             <th>Pais</th>
             <th on:click={() => toggleSort('reverse_dns')}>Reverse DNS</th>
             <th on:click={() => toggleSort('offenses')}>Ofensas</th>
@@ -201,18 +253,28 @@
         <tbody>
           {#if loading}
             <tr>
-              <td colspan="7">Cargando perfiles...</td>
+              <td colspan="8">Cargando perfiles...</td>
             </tr>
           {:else if sortedProfiles.length === 0}
             <tr>
-              <td colspan="7">Sin perfiles.</td>
+              <td colspan="8">Sin perfiles.</td>
             </tr>
           {:else}
             {#each sortedProfiles as profile}
               {@const geo = parseGeoMeta(profile.geo)}
+              {@const typeConf = getTypeConfig(profile.ip_type)}
               <tr>
                 <td data-label="IP">
                   <a class="ip-link" href={ipHref(profile.ip)}>{profile.ip}</a>
+                </td>
+                <td data-label="Tipo">
+                  <span
+                    class="ip-type-badge"
+                    style="color: {typeConf.color}; background: {typeConf.bg};"
+                    title="{profile.ip_type || 'unknown'}{profile.is_proxy ? ' +VPN' : ''}{profile.is_mobile ? ' +MOB' : ''}"
+                  >
+                    {typeConf.label}{#if profile.is_proxy}<span class="badge-extra">+VPN</span>{/if}
+                  </span>
                 </td>
                 <td data-label="Pais">{countryFlag(geo.code)} {geo.country || '-'}</td>
                 <td data-label="Reverse DNS">{profile.reverse_dns || '-'}</td>
@@ -249,3 +311,37 @@
     </div>
   </div>
 </div>
+
+<style>
+  .ip-type-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .badge-extra {
+    font-size: 9px;
+    opacity: 0.8;
+    margin-left: 2px;
+  }
+
+  select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+
+  select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+</style>

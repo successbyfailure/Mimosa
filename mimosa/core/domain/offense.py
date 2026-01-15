@@ -31,7 +31,7 @@ class IpProfile:
     """Información enriquecida de una IP conocida.
 
     Contiene metadata acumulada sobre una IP: geolocalización,
-    DNS inverso, estadísticas de ofensas y bloqueos.
+    DNS inverso, clasificación por tipo y estadísticas de ofensas y bloqueos.
     """
 
     ip: str
@@ -43,6 +43,17 @@ class IpProfile:
     enriched_at: Optional[datetime] = None
     offenses: int = 0
     blocks: int = 0
+    # Campos de clasificación de IP
+    ip_type: Optional[str] = None  # datacenter, residential, governmental, etc.
+    ip_type_confidence: Optional[float] = None  # 0.0 - 1.0
+    ip_type_source: Optional[str] = None  # Fuente que determinó la clasificación
+    ip_type_provider: Optional[str] = None  # Cloud provider específico (aws, gcp, etc.)
+    isp: Optional[str] = None
+    org: Optional[str] = None
+    asn: Optional[str] = None
+    is_proxy: bool = False
+    is_mobile: bool = False
+    is_hosting: bool = False
 
 
 @dataclass

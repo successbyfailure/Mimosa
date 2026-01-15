@@ -85,6 +85,7 @@
   };
 
   type PublicOffense = {
+    id?: number | null;
     source_ip: string;
     description: string;
     description_clean?: string | null;
@@ -209,31 +210,51 @@
   let offenseValues: number[] = [];
   let blockLabels: string[] = [];
   let blockValues: number[] = [];
+  let offenseHourlyLabels: string[] = [];
+  let offenseHourlyValues: number[] = [];
+  let blockHourlyLabels: string[] = [];
+  let blockHourlyValues: number[] = [];
   let ratioLabels: string[] = [];
   let ratioValues: number[] = [];
 
   let countryEntries: CountryEntry[] = [];
+  let countryTotal = 0;
   let countryLabels: string[] = [];
   let countryValues: number[] = [];
   let heatPoints: HeatPoint[] = [];
   let heatmapMessage = 'Sin datos de geolocalizacion.';
+  let realtimePoints: HeatPoint[] = [];
+  let realtimeCountries: CountryEntry[] = [];
+  let realtimeCountryTotal = 0;
+  let realtimePointsCount = 0;
+  let realtimePointsMap = new Map<string, HeatPoint>();
+  let realtimeCountryMap = new Map<string, CountryEntry>();
+  let realtimeSeenIds = new Set<number>();
+  let realtimeStartMs = 0;
 
-  type HeatmapWindow = 'current' | '24h' | 'week' | 'month' | 'total';
+  type HeatmapWindow = '24h' | 'week' | 'total' | 'realtime';
   const heatmapOptions: { value: HeatmapWindow; label: string }[] = [
-    { value: 'current', label: 'Actual' },
     { value: '24h', label: '24h' },
-    { value: 'week', label: 'Semana' },
-    { value: 'month', label: 'Mes' },
-    { value: 'total', label: 'Total' }
+    { value: 'week', label: '7d' },
+    { value: 'total', label: 'Todo' },
+    { value: 'realtime', label: 'Realtime' }
   ];
   let heatmapWindow: HeatmapWindow = 'total';
 
-  type PublicWindow = '24h' | 'week' | 'month' | 'total';
+  type PublicMapWindow = '24h' | 'week' | 'total' | 'realtime';
+  const publicMapWindowOptions: { value: PublicMapWindow; label: string }[] = [
+    { value: '24h', label: '24h' },
+    { value: 'week', label: '7d' },
+    { value: 'total', label: 'Todo' },
+    { value: 'realtime', label: 'Realtime' }
+  ];
+  let publicMapWindow: PublicMapWindow = '24h';
+
+  type PublicWindow = '24h' | 'week' | 'total';
   const publicWindowOptions: { value: PublicWindow; label: string }[] = [
     { value: '24h', label: '24h' },
-    { value: 'week', label: 'Semana' },
-    { value: 'month', label: 'Mes' },
-    { value: 'total', label: 'Total' }
+    { value: 'week', label: '7d' },
+    { value: 'total', label: 'Todo' }
   ];
   let publicWindow: PublicWindow = '24h';
 
@@ -265,9 +286,45 @@
   let topIps: TopIp[] = [];
   let expiringBlocks: ExpiringBlock[] = [];
   let blockReasons: BlockReason[] = [];
+  let ipTypeCounts: Record<string, number> = {};
+  let reactionTimeStats: {
+    total_blocks: number;
+    blocks_with_offense: number;
+    min_seconds: number | null;
+    max_seconds: number | null;
+    avg_seconds: number | null;
+    median_seconds: number | null;
+    p90_seconds: number | null;
+    p99_seconds: number | null;
+    distribution: Record<string, number>;
+  } | null = null;
+  let reactionTimeWindow: '24h' | '7d' | 'all' = '7d';
   let firewallsHealth: FirewallHealth[] = [];
   let pluginsHealth: PluginHealth[] = [];
   let insightsError: string | null = null;
+
+  // Configuración de tipos de IP para el dashboard
+  const ipTypeLabels: Record<string, string> = {
+    datacenter: 'Datacenter',
+    residential: 'Residencial',
+    governmental: 'Gubernamental',
+    educational: 'Educativo',
+    corporate: 'Corporativo',
+    mobile: 'Móvil',
+    proxy: 'Proxy/VPN',
+    unknown: 'Desconocido'
+  };
+
+  const ipTypeColors: Record<string, string> = {
+    datacenter: '#fbbf24',
+    residential: '#4ade80',
+    governmental: '#38bdf8',
+    educational: '#38bdf8',
+    corporate: '#94a3b8',
+    mobile: '#94a3b8',
+    proxy: '#f87171',
+    unknown: '#64748b'
+  };
   let latestOffenses: RecentOffense[] = [];
   let latestBlocks: RecentBlock[] = [];
   let mapAttackOrigins: { lat: number; lon: number }[] = [];
@@ -287,7 +344,16 @@
   let publicFeed: PublicOffense[] = [];
   let publicHeatPoints: HeatPoint[] = [];
   let publicHeatmapMessage = 'Sin datos de geolocalizacion.';
+  let publicRealtimePoints: HeatPoint[] = [];
+  let publicRealtimeCountries: PublicCountryEntry[] = [];
+  let publicRealtimeCountryTotal = 0;
+  let publicRealtimePointsCount = 0;
+  let publicRealtimePointsMap = new Map<string, HeatPoint>();
+  let publicRealtimeCountryMap = new Map<string, PublicCountryEntry>();
+  let publicRealtimeSeenIds = new Set<number>();
+  let publicRealtimeStartMs = 0;
   let publicCountries: PublicCountryEntry[] = [];
+  let publicCountryTotal = 0;
   let publicCountryLabels: string[] = [];
   let publicCountryValues: number[] = [];
   let publicTypes: OffenseTypeEntry[] = [];
@@ -317,13 +383,24 @@
     return timeline[key] || timeline['24h'];
   };
 
-  const updateStatsView = (payload: StatsPayload) => {
-    const offenseTimeline = getTimeline(payload.offenses.timeline, offenseWindow);
-    const blockTimeline = getTimeline(payload.blocks.timeline, blockWindow);
+  const updateStatsView = (
+    payload: StatsPayload,
+    offenseKey: WindowKey,
+    blockKey: WindowKey
+  ) => {
+    const offenseTimeline = getTimeline(payload.offenses.timeline, offenseKey);
+    const blockTimeline = getTimeline(payload.blocks.timeline, blockKey);
     offenseLabels = offenseTimeline.map((entry) => formatBucket(entry.bucket));
     offenseValues = offenseTimeline.map((entry) => entry.count);
     blockLabels = blockTimeline.map((entry) => formatBucket(entry.bucket));
     blockValues = blockTimeline.map((entry) => entry.count);
+
+    const offenseHourly = payload.offenses.timeline['24h'] || [];
+    const blockHourly = payload.blocks.timeline['24h'] || [];
+    offenseHourlyLabels = offenseHourly.map((entry) => formatBucket(entry.bucket));
+    offenseHourlyValues = offenseHourly.map((entry) => entry.count);
+    blockHourlyLabels = blockHourly.map((entry) => formatBucket(entry.bucket));
+    blockHourlyValues = blockHourly.map((entry) => entry.count);
 
     const ratioOffense = payload.offenses.timeline['24h'] || [];
     const ratioBlocks = payload.blocks.timeline['24h'] || [];
@@ -340,7 +417,7 @@
 
   const applyStats = (payload: StatsPayload) => {
     stats = payload;
-    updateStatsView(payload);
+    updateStatsView(payload, offenseWindow, blockWindow);
   };
 
   const loadStats = async () => {
@@ -360,14 +437,174 @@
     }
   };
 
+  const syncRealtimeHeatmap = () => {
+    realtimePoints = Array.from(realtimePointsMap.values()).sort((a, b) => b.count - a.count);
+    if (realtimePoints.length > 200) {
+      realtimePoints = realtimePoints.slice(0, 200);
+    }
+    realtimeCountries = Array.from(realtimeCountryMap.values()).sort(
+      (a, b) => (b.blocks || 0) - (a.blocks || 0)
+    );
+    realtimeCountryTotal = realtimeCountryMap.size;
+    if (heatmapWindow === 'realtime') {
+      heatPoints = realtimePoints;
+      countryEntries = realtimeCountries;
+      countryTotal = realtimeCountryTotal;
+      heatmapMessage = realtimePointsCount
+        ? `Puntos: ${realtimePointsCount}`
+        : 'Esperando eventos en tiempo real...';
+    }
+  };
+
+  const resetRealtimeHeatmap = () => {
+    realtimePointsMap = new Map();
+    realtimeCountryMap = new Map();
+    realtimeSeenIds = new Set();
+    realtimePointsCount = 0;
+    realtimeStartMs = Date.now();
+    syncRealtimeHeatmap();
+  };
+
+  const ingestRealtimeOffenses = (offenses: any[]) => {
+    if (heatmapWindow !== 'realtime') {
+      return;
+    }
+    let updated = false;
+    for (const offense of offenses || []) {
+      const createdAt = offense.created_at ? new Date(offense.created_at).getTime() : 0;
+      if (realtimeStartMs && createdAt && createdAt < realtimeStartMs) {
+        continue;
+      }
+      const id = Number(offense.id);
+      if (Number.isFinite(id) && realtimeSeenIds.has(id)) {
+        continue;
+      }
+      if (Number.isFinite(id)) {
+        realtimeSeenIds.add(id);
+      }
+      if (offense.lat == null || offense.lon == null) {
+        continue;
+      }
+      const key = `${Number(offense.lat).toFixed(4)},${Number(offense.lon).toFixed(4)}`;
+      let point = realtimePointsMap.get(key);
+      if (!point) {
+        point = { lat: Number(offense.lat), lon: Number(offense.lon), count: 0 };
+        realtimePointsMap.set(key, point);
+      }
+      point.count += 1;
+      realtimePointsCount += 1;
+      const countryName = (offense.country || offense.country_code || '').toString().trim();
+      if (countryName) {
+        const countryKey = (offense.country_code || offense.country || '').toString().toLowerCase();
+        let entry = realtimeCountryMap.get(countryKey);
+        if (!entry) {
+          entry = {
+            country: offense.country || offense.country_code,
+            country_code: offense.country_code,
+            blocks: 0
+          };
+          realtimeCountryMap.set(countryKey, entry);
+        }
+        entry.blocks = (entry.blocks || 0) + 1;
+      }
+      updated = true;
+    }
+    if (updated) {
+      syncRealtimeHeatmap();
+    }
+  };
+
+  const syncPublicRealtimeHeatmap = () => {
+    publicRealtimePoints = Array.from(publicRealtimePointsMap.values()).sort(
+      (a, b) => b.count - a.count
+    );
+    if (publicRealtimePoints.length > 200) {
+      publicRealtimePoints = publicRealtimePoints.slice(0, 200);
+    }
+    publicRealtimeCountries = Array.from(publicRealtimeCountryMap.values()).sort(
+      (a, b) => (b.offenses || 0) - (a.offenses || 0)
+    );
+    publicRealtimeCountryTotal = publicRealtimeCountryMap.size;
+    if (publicMapWindow === 'realtime') {
+      publicHeatPoints = publicRealtimePoints;
+      publicCountries = publicRealtimeCountries;
+      publicCountryTotal = publicRealtimeCountryTotal;
+      publicHeatmapMessage = publicRealtimePointsCount
+        ? `Puntos: ${publicRealtimePointsCount}`
+        : 'Esperando eventos en tiempo real...';
+    }
+  };
+
+  const resetPublicRealtimeHeatmap = () => {
+    publicRealtimePointsMap = new Map();
+    publicRealtimeCountryMap = new Map();
+    publicRealtimeSeenIds = new Set();
+    publicRealtimePointsCount = 0;
+    publicRealtimeStartMs = Date.now();
+    syncPublicRealtimeHeatmap();
+  };
+
+  const ingestPublicRealtimeOffenses = (offenses: PublicOffense[]) => {
+    if (publicMapWindow !== 'realtime') {
+      return;
+    }
+    let updated = false;
+    for (const offense of offenses || []) {
+      const createdAt = offense.created_at ? new Date(offense.created_at).getTime() : 0;
+      if (publicRealtimeStartMs && createdAt && createdAt < publicRealtimeStartMs) {
+        continue;
+      }
+      const id = Number(offense.id);
+      if (Number.isFinite(id) && publicRealtimeSeenIds.has(id)) {
+        continue;
+      }
+      if (Number.isFinite(id)) {
+        publicRealtimeSeenIds.add(id);
+      }
+      if (offense.lat == null || offense.lon == null) {
+        continue;
+      }
+      const key = `${Number(offense.lat).toFixed(4)},${Number(offense.lon).toFixed(4)}`;
+      let point = publicRealtimePointsMap.get(key);
+      if (!point) {
+        point = { lat: Number(offense.lat), lon: Number(offense.lon), count: 0 };
+        publicRealtimePointsMap.set(key, point);
+      }
+      point.count += 1;
+      publicRealtimePointsCount += 1;
+      const countryName = (offense.country || offense.country_code || '').toString().trim();
+      if (countryName) {
+        const countryKey = (offense.country_code || offense.country || '').toString().toLowerCase();
+        let entry = publicRealtimeCountryMap.get(countryKey);
+        if (!entry) {
+          entry = {
+            country: offense.country || offense.country_code,
+            country_code: offense.country_code,
+            offenses: 0
+          };
+          publicRealtimeCountryMap.set(countryKey, entry);
+        }
+        entry.offenses = (entry.offenses || 0) + 1;
+      }
+      updated = true;
+    }
+    if (updated) {
+      syncPublicRealtimeHeatmap();
+    }
+  };
+
   const loadHeatmap = async () => {
+    if (heatmapWindow === 'realtime') {
+      syncRealtimeHeatmap();
+      return;
+    }
     heatmapMessage = 'Cargando datos...';
     try {
       const [heatResponse, countryResponse] = await Promise.all([
         fetch(`/api/offenses/heatmap?window=${heatmapWindow}&limit=200`, {
           credentials: 'include'
         }),
-        fetch(`/api/offenses/blocks_by_country?window=${heatmapWindow}&limit=8`, {
+        fetch(`/api/offenses/blocks_by_country?window=${heatmapWindow}&limit=200`, {
           credentials: 'include'
         })
       ]);
@@ -392,6 +629,7 @@
       if (countryResponse.ok) {
         const payload = (await countryResponse.json()) as { countries: CountryEntry[] };
         countryEntries = payload.countries || [];
+        countryTotal = payload.total_countries ?? countryEntries.length;
         countryLabels = countryEntries.map((entry) => entry.country);
         countryValues = countryEntries.map((entry) => entry.blocks);
       }
@@ -434,6 +672,7 @@
       }
       publicLastAt = new Date().toISOString();
       publicError = null;
+      ingestPublicRealtimeOffenses(nextFeed);
     } catch (err) {
       publicError = err instanceof Error ? err.message : 'No se pudo cargar el feed';
     }
@@ -457,11 +696,15 @@
   };
 
   const loadPublicGeo = async () => {
+    if (publicMapWindow === 'realtime') {
+      syncPublicRealtimeHeatmap();
+      return;
+    }
     publicHeatmapMessage = 'Cargando datos...';
     try {
       const [heatResponse, countryResponse] = await Promise.all([
-        fetch(`/api/public/heatmap?window=${publicWindow}&limit=200`),
-        fetch(`/api/public/offenses_by_country?window=${publicWindow}&limit=8`)
+        fetch(`/api/public/heatmap?window=${publicMapWindow}&limit=200`),
+        fetch(`/api/public/offenses_by_country?window=${publicMapWindow}&limit=200`)
       ]);
       if (heatResponse.ok) {
         const payload = (await heatResponse.json()) as {
@@ -483,6 +726,7 @@
       if (countryResponse.ok) {
         const payload = (await countryResponse.json()) as { countries: PublicCountryEntry[] };
         publicCountries = payload.countries || [];
+        publicCountryTotal = payload.total_countries ?? publicCountries.length;
         publicCountryLabels = publicCountries.map((entry) => entry.country);
         publicCountryValues = publicCountries.map((entry) => entry.offenses);
       }
@@ -589,13 +833,15 @@
 
   const loadInsights = async () => {
     insightsError = null;
-    const [topResult, expiringResult, reasonsResult, healthResult] = await Promise.allSettled([
+    const [topResult, expiringResult, reasonsResult, healthResult, typesResult, reactionResult] = await Promise.allSettled([
       fetchJson<TopIp[]>('/api/dashboard/top_ips?limit=10'),
       fetchJson<ExpiringBlock[]>('/api/dashboard/blocks/expiring?within_minutes=60&limit=10'),
       fetchJson<BlockReason[]>('/api/dashboard/blocks/reasons?limit=10'),
       fetchJson<{ firewalls: FirewallHealth[]; plugins: PluginHealth[] }>(
         '/api/dashboard/health'
-      )
+      ),
+      fetchJson<Record<string, number>>('/api/dashboard/ip_types'),
+      fetchJson<typeof reactionTimeStats>('/api/dashboard/reaction_time')
     ]);
 
     if (topResult.status === 'fulfilled') {
@@ -615,6 +861,14 @@
     if (healthResult.status === 'fulfilled') {
       firewallsHealth = healthResult.value.firewalls || [];
       pluginsHealth = healthResult.value.plugins || [];
+    }
+
+    if (typesResult.status === 'fulfilled') {
+      ipTypeCounts = typesResult.value;
+    }
+
+    if (reactionResult.status === 'fulfilled') {
+      reactionTimeStats = reactionResult.value;
     }
   };
 
@@ -699,6 +953,7 @@
         if (payload.offenses && payload.offenses.length) {
           window.dispatchEvent(new CustomEvent('mimosa:offense'));
         }
+        ingestRealtimeOffenses(payload.offenses || []);
         buildLiveFeed(payload);
         lastLiveAt = payload.timestamp || new Date().toISOString();
       } catch (err) {
@@ -759,28 +1014,28 @@
     return String.fromCodePoint(first, second);
   };
 
-  const handleOffenseWindowChange = (event: Event) => {
-    offenseWindow = (event.target as HTMLSelectElement).value as WindowKey;
-    if (stats) {
-      updateStatsView(stats);
-    }
-  };
-
-  const handleBlockWindowChange = (event: Event) => {
-    blockWindow = (event.target as HTMLSelectElement).value as WindowKey;
-    if (stats) {
-      updateStatsView(stats);
-    }
-  };
+  $: if (stats) {
+    updateStatsView(stats, offenseWindow, blockWindow);
+  }
 
   const handleHeatmapChange = (event: Event) => {
     heatmapWindow = (event.target as HTMLSelectElement).value as HeatmapWindow;
+    if (heatmapWindow === 'realtime') {
+      resetRealtimeHeatmap();
+    }
     loadHeatmap();
+  };
+
+  const handlePublicMapWindowChange = (event: Event) => {
+    publicMapWindow = (event.target as HTMLSelectElement).value as PublicMapWindow;
+    if (publicMapWindow === 'realtime') {
+      resetPublicRealtimeHeatmap();
+    }
+    loadPublicGeo();
   };
 
   const handlePublicWindowChange = (event: Event) => {
     publicWindow = (event.target as HTMLSelectElement).value as PublicWindow;
-    loadPublicGeo();
     loadPublicTypes();
   };
 
@@ -860,6 +1115,9 @@
     authInitialized = true;
     publicInitialized = false;
     isPublic = false;
+    if (heatmapWindow === 'realtime') {
+      resetRealtimeHeatmap();
+    }
     loadStats();
     loadHeatmap();
     loadMapActivity();
@@ -879,6 +1137,9 @@
     publicInitialized = true;
     authInitialized = false;
     isPublic = true;
+    if (publicMapWindow === 'realtime') {
+      resetPublicRealtimeHeatmap();
+    }
     loadPublicFeed();
     loadPublicGeo();
     loadPublicTypes();
@@ -947,8 +1208,8 @@
       <div class="badge">Heatmap</div>
       <div class="card-title-row">
         <h3 class="card-title">Actividad global</h3>
-        <select value={publicWindow} on:change={handlePublicWindowChange} style="max-width: 140px;">
-          {#each publicWindowOptions as option}
+        <select value={publicMapWindow} on:change={handlePublicMapWindowChange} style="max-width: 140px;">
+          {#each publicMapWindowOptions as option}
             <option value={option.value}>{option.label}</option>
           {/each}
         </select>
@@ -969,12 +1230,12 @@
     </div>
     <div class="surface panel">
       <div class="badge">Geo</div>
-      <h3 class="card-title" style="margin-top: 12px;">Ranking por pais</h3>
+      <h3 class="card-title" style="margin-top: 12px;">Ranking por pais (Total: {publicCountryTotal})</h3>
       <div class="list" style="margin-top: 12px;">
         {#if publicCountries.length === 0}
           <div class="list-item">Sin datos geo.</div>
         {:else}
-          {#each publicCountries as entry}
+          {#each publicCountries.slice(0, 8) as entry}
             <div class="list-item">
               <span>{countryFlag(entry.country_code)} {entry.country}</span>
               <strong>{entry.offenses}</strong>
@@ -1106,7 +1367,7 @@
       <div class="badge">Tendencias</div>
       <div class="card-title-row">
         <h3 class="card-title">Ofensas</h3>
-        <select bind:value={offenseWindow} on:change={handleOffenseWindowChange} style="max-width: 120px;">
+        <select bind:value={offenseWindow} style="max-width: 120px;">
           {#each windowOptions as option}
             <option value={option.value}>{option.label}</option>
           {/each}
@@ -1118,13 +1379,36 @@
       <div class="badge">Tendencias</div>
       <div class="card-title-row">
         <h3 class="card-title">Bloqueos</h3>
-        <select bind:value={blockWindow} on:change={handleBlockWindowChange} style="max-width: 120px;">
+        <select bind:value={blockWindow} style="max-width: 120px;">
           {#each windowOptions as option}
             <option value={option.value}>{option.label}</option>
           {/each}
         </select>
       </div>
       <ChartCanvas labels={blockLabels} data={blockValues} label="Bloqueos" color="#2dd4bf" />
+    </div>
+  </section>
+
+  <section class="section split">
+    <div class="surface panel">
+      <div class="badge">Hora</div>
+      <h3 class="card-title" style="margin-top: 12px;">Ofensas por hora (24h)</h3>
+      <ChartCanvas
+        labels={offenseHourlyLabels}
+        data={offenseHourlyValues}
+        label="Ofensas por hora"
+        color="#22d3ee"
+      />
+    </div>
+    <div class="surface panel">
+      <div class="badge">Hora</div>
+      <h3 class="card-title" style="margin-top: 12px;">Bloqueos por hora (24h)</h3>
+      <ChartCanvas
+        labels={blockHourlyLabels}
+        data={blockHourlyValues}
+        label="Bloqueos por hora"
+        color="#34d399"
+      />
     </div>
   </section>
 
@@ -1210,12 +1494,12 @@
     </div>
     <div class="surface panel">
       <div class="badge">Geo</div>
-      <h3 class="card-title" style="margin-top: 12px;">Ranking por pais</h3>
+      <h3 class="card-title" style="margin-top: 12px;">Ranking por pais (Total: {countryTotal})</h3>
       <div class="list" style="margin-top: 12px;">
         {#if countryEntries.length === 0}
           <div class="list-item">Sin datos geo.</div>
         {:else}
-          {#each countryEntries as entry}
+          {#each countryEntries.slice(0, 8) as entry}
             <div class="list-item">
               <span>{countryFlag(entry.country_code)} {entry.country}</span>
               <strong>{entry.blocks}</strong>
@@ -1424,6 +1708,116 @@
             {/if}
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <div class="surface panel">
+      <div class="card-head">
+        <div class="badge">Clasificación</div>
+        <button class="ghost" on:click={loadInsights}>Refrescar</button>
+      </div>
+      <h3 class="card-title">Tipos de IP</h3>
+      <div style="margin-top: 12px;">
+        {#if Object.keys(ipTypeCounts).length === 0}
+          <div style="color: var(--muted);">Sin datos de clasificación.</div>
+        {:else}
+          <ChartCanvas
+            labels={Object.keys(ipTypeCounts).map(k => ipTypeLabels[k] || k)}
+            data={Object.values(ipTypeCounts)}
+            label="IPs"
+            type="doughnut"
+            showLegend={true}
+          />
+          <div style="margin-top: 12px;">
+            {#each Object.entries(ipTypeCounts) as [type, count]}
+              <div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border);">
+                <span style="color: {ipTypeColors[type] || '#94a3b8'};">
+                  {ipTypeLabels[type] || type}
+                </span>
+                <span style="color: var(--muted);">{count}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </div>
+
+    <div class="surface panel">
+      <div class="card-head">
+        <div class="badge">Rendimiento</div>
+        <button class="ghost" on:click={loadInsights}>Refrescar</button>
+      </div>
+      <h3 class="card-title">Tiempo de Reacción</h3>
+      <p style="color: var(--muted); font-size: 12px; margin-top: 4px;">Tiempo entre detección de ofensa y creación de bloqueo</p>
+      <div style="margin-top: 12px;">
+        {#if !reactionTimeStats || reactionTimeStats.total_blocks === 0}
+          <div style="color: var(--muted);">Sin datos de bloqueos automáticos.</div>
+        {:else}
+          <div class="reaction-stats">
+            <div class="stat-row">
+              <span class="stat-label">Promedio</span>
+              <span class="stat-value highlight">{reactionTimeStats.avg_seconds?.toFixed(2)}s</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Mediana</span>
+              <span class="stat-value">{reactionTimeStats.median_seconds?.toFixed(2)}s</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Mínimo</span>
+              <span class="stat-value success">{reactionTimeStats.min_seconds?.toFixed(3)}s</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Máximo</span>
+              <span class="stat-value warning">{reactionTimeStats.max_seconds?.toFixed(2)}s</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">P90</span>
+              <span class="stat-value">{reactionTimeStats.p90_seconds?.toFixed(2)}s</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">P99</span>
+              <span class="stat-value">{reactionTimeStats.p99_seconds?.toFixed(2)}s</span>
+            </div>
+          </div>
+          <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);">
+            <div style="font-size: 11px; color: var(--muted); margin-bottom: 8px;">Distribución</div>
+            <div class="distribution-bars">
+              {#if reactionTimeStats.distribution}
+                <div class="dist-item">
+                  <span class="dist-label">&lt;1s</span>
+                  <div class="dist-bar">
+                    <div class="dist-fill success" style="width: {(reactionTimeStats.distribution.sub_1s / reactionTimeStats.blocks_with_offense) * 100}%;"></div>
+                  </div>
+                  <span class="dist-count">{reactionTimeStats.distribution.sub_1s}</span>
+                </div>
+                <div class="dist-item">
+                  <span class="dist-label">1-5s</span>
+                  <div class="dist-bar">
+                    <div class="dist-fill" style="width: {(reactionTimeStats.distribution['1s_to_5s'] / reactionTimeStats.blocks_with_offense) * 100}%;"></div>
+                  </div>
+                  <span class="dist-count">{reactionTimeStats.distribution['1s_to_5s']}</span>
+                </div>
+                <div class="dist-item">
+                  <span class="dist-label">5-10s</span>
+                  <div class="dist-bar">
+                    <div class="dist-fill warning" style="width: {(reactionTimeStats.distribution['5s_to_10s'] / reactionTimeStats.blocks_with_offense) * 100}%;"></div>
+                  </div>
+                  <span class="dist-count">{reactionTimeStats.distribution['5s_to_10s']}</span>
+                </div>
+                <div class="dist-item">
+                  <span class="dist-label">&gt;10s</span>
+                  <div class="dist-bar">
+                    <div class="dist-fill danger" style="width: {(reactionTimeStats.distribution.over_10s / reactionTimeStats.blocks_with_offense) * 100}%;"></div>
+                  </div>
+                  <span class="dist-count">{reactionTimeStats.distribution.over_10s}</span>
+                </div>
+              {/if}
+            </div>
+          </div>
+          <div style="margin-top: 12px; font-size: 11px; color: var(--muted);">
+            Total: {reactionTimeStats.blocks_with_offense} bloqueos analizados
+          </div>
+        {/if}
       </div>
     </div>
   </section>

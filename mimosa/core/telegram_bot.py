@@ -52,6 +52,10 @@ class TelegramBotService:
 
     async def start(self) -> None:
         """Inicia el bot de Telegram."""
+        if self._running:
+            logger.info("Bot de Telegram ya está en ejecución")
+            return
+
         config = self.config_store.get_config()
 
         if not config.enabled:
@@ -97,15 +101,17 @@ class TelegramBotService:
 
     async def stop(self) -> None:
         """Detiene el bot de Telegram."""
-        if self.application and self._running:
-            try:
-                await self.application.updater.stop()
-                await self.application.stop()
-                await self.application.shutdown()
-                self._running = False
-                logger.info("Bot de Telegram detenido")
-            except Exception as e:
-                logger.error(f"Error al detener el bot de Telegram: {e}")
+        if not self.application or not self._running:
+            return
+
+        try:
+            await self.application.updater.stop()
+            await self.application.stop()
+            await self.application.shutdown()
+            self._running = False
+            logger.info("Bot de Telegram detenido")
+        except Exception as e:
+            logger.error(f"Error al detener el bot de Telegram: {e}")
 
     def is_running(self) -> bool:
         """Verifica si el bot está corriendo."""
@@ -211,36 +217,29 @@ También puedes usar los botones del menú para navegar.
         hour_ago = now - timedelta(hours=1)
         day_ago = now - timedelta(days=1)
 
-        total_offenses = len(self.offense_store.list_all())
-        offenses_last_hour = len(
-            [o for o in self.offense_store.list_all() if o.created_at >= hour_ago]
-        )
-        offenses_last_day = len(
-            [o for o in self.offense_store.list_all() if o.created_at >= day_ago]
-        )
+        total_offenses = self.offense_store.count_all()
+        offenses_last_hour = self.offense_store.count_since(hour_ago)
+        offenses_last_day = self.offense_store.count_since(day_ago)
 
-        active_blocks = len(self.block_manager.list_active())
-        all_blocks = len(self.block_manager.list_all())
+        active_blocks = len(self.block_manager.list())
+        all_blocks = self.block_manager.count_all()
 
         total_rules = len(self.rule_store.list())
 
-        stats_text = f"""
-📊 *Estadísticas de Mimosa*
+        stats_text = (
+            "📊 Estadísticas de Mimosa\n\n"
+            "Ofensas:\n"
+            f"• Total: {total_offenses}\n"
+            f"• Última hora: {offenses_last_hour}\n"
+            f"• Último día: {offenses_last_day}\n\n"
+            "Bloqueos:\n"
+            f"• Activos: {active_blocks}\n"
+            f"• Total histórico: {all_blocks}\n\n"
+            "Reglas:\n"
+            f"• Configuradas: {total_rules}"
+        )
 
-*Ofensas:*
-• Total: {total_offenses}
-• Última hora: {offenses_last_hour}
-• Último día: {offenses_last_day}
-
-*Bloqueos:*
-• Activos: {active_blocks}
-• Total histórico: {all_blocks}
-
-*Reglas:*
-• Configuradas: {total_rules}
-        """
-
-        await update.message.reply_text(stats_text, parse_mode="Markdown")
+        await update.message.reply_text(stats_text)
 
     async def _blocks_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Lista los bloqueos activos."""
@@ -249,7 +248,7 @@ También puedes usar los botones del menú para navegar.
         if not await self._is_authorized(update):
             return
 
-        blocks = self.block_manager.list_active()
+        blocks = self.block_manager.list()
 
         if not blocks:
             await update.message.reply_text("No hay bloqueos activos.")
@@ -257,7 +256,7 @@ También puedes usar los botones del menú para navegar.
 
         # Mostrar solo los primeros 10 bloqueos
         blocks_to_show = blocks[:10]
-        blocks_text = "🚫 *Bloqueos activos:*\n\n"
+        blocks_text = "🚫 Bloqueos activos:\n\n"
 
         for block in blocks_to_show:
             expires = (
@@ -265,10 +264,10 @@ También puedes usar los botones del menú para navegar.
                 if block.expires_at
                 else "Permanente"
             )
-            blocks_text += f"• `{block.ip}` - {block.reason}\n  Expira: {expires}\n\n"
+            blocks_text += f"• {block.ip} - {block.reason}\n  Expira: {expires}\n\n"
 
         if len(blocks) > 10:
-            blocks_text += f"\n_Mostrando 10 de {len(blocks)} bloqueos_"
+            blocks_text += f"\nMostrando 10 de {len(blocks)} bloqueos"
 
         keyboard = [
             [
@@ -278,9 +277,7 @@ También puedes usar los botones del menú para navegar.
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(
-            blocks_text, parse_mode="Markdown", reply_markup=reply_markup
-        )
+        await update.message.reply_text(blocks_text, reply_markup=reply_markup)
 
     async def _rules_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Lista las reglas de bloqueo configuradas."""
@@ -295,13 +292,13 @@ También puedes usar los botones del menú para navegar.
             await update.message.reply_text("No hay reglas configuradas.")
             return
 
-        rules_text = "⚙️ *Reglas de bloqueo:*\n\n"
+        rules_text = "⚙️ Reglas de bloqueo:\n\n"
 
         # Construir botones para activar/desactivar cada regla
         keyboard = []
         for i, rule in enumerate(rules[:10], 1):
             status_icon = "✅" if rule.enabled else "❌"
-            rules_text += f"{status_icon} *{i}. {rule.description}*\n"
+            rules_text += f"{status_icon} {i}. {rule.description}\n"
             rules_text += f"Plugin: {rule.plugin}\n"
             rules_text += f"Severidad: {rule.severity}\n"
             if rule.min_last_hour:
@@ -317,7 +314,7 @@ También puedes usar los botones del menú para navegar.
             rules_text += "\n"
 
         if len(rules) > 10:
-            rules_text += f"\n_Mostrando 10 de {len(rules)} reglas_"
+            rules_text += f"\nMostrando 10 de {len(rules)} reglas"
 
         keyboard.append([
             InlineKeyboardButton("🔄 Actualizar", callback_data="rules"),
@@ -325,9 +322,7 @@ También puedes usar los botones del menú para navegar.
         ])
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(
-            rules_text, parse_mode="Markdown", reply_markup=reply_markup
-        )
+        await update.message.reply_text(rules_text, reply_markup=reply_markup)
 
     async def _block_ip_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -422,50 +417,41 @@ También puedes usar los botones del menú para navegar.
         hour_ago = now - timedelta(hours=1)
         day_ago = now - timedelta(days=1)
 
-        total_offenses = len(self.offense_store.list_all())
-        offenses_last_hour = len(
-            [o for o in self.offense_store.list_all() if o.created_at >= hour_ago]
-        )
-        offenses_last_day = len(
-            [o for o in self.offense_store.list_all() if o.created_at >= day_ago]
-        )
+        total_offenses = self.offense_store.count_all()
+        offenses_last_hour = self.offense_store.count_since(hour_ago)
+        offenses_last_day = self.offense_store.count_since(day_ago)
 
-        active_blocks = len(self.block_manager.list_active())
-        all_blocks = len(self.block_manager.list_all())
+        active_blocks = len(self.block_manager.list())
+        all_blocks = self.block_manager.count_all()
         total_rules = len(self.rule_store.list())
 
-        stats_text = f"""
-📊 *Estadísticas de Mimosa*
-
-*Ofensas:*
-• Total: {total_offenses}
-• Última hora: {offenses_last_hour}
-• Último día: {offenses_last_day}
-
-*Bloqueos:*
-• Activos: {active_blocks}
-• Total histórico: {all_blocks}
-
-*Reglas:*
-• Configuradas: {total_rules}
-        """
+        stats_text = (
+            "📊 Estadísticas de Mimosa\n\n"
+            "Ofensas:\n"
+            f"• Total: {total_offenses}\n"
+            f"• Última hora: {offenses_last_hour}\n"
+            f"• Último día: {offenses_last_day}\n\n"
+            "Bloqueos:\n"
+            f"• Activos: {active_blocks}\n"
+            f"• Total histórico: {all_blocks}\n\n"
+            "Reglas:\n"
+            f"• Configuradas: {total_rules}"
+        )
 
         keyboard = [[InlineKeyboardButton("« Menú", callback_data="menu")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.callback_query.edit_message_text(
-            stats_text, parse_mode="Markdown", reply_markup=reply_markup
-        )
+        await update.callback_query.edit_message_text(stats_text, reply_markup=reply_markup)
 
     async def _show_blocks(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Muestra bloqueos activos (desde botón)."""
-        blocks = self.block_manager.list_active()
+        blocks = self.block_manager.list()
 
         if not blocks:
             text = "No hay bloqueos activos."
         else:
             blocks_to_show = blocks[:10]
-            text = "🚫 *Bloqueos activos:*\n\n"
+            text = "🚫 Bloqueos activos:\n\n"
 
             for block in blocks_to_show:
                 expires = (
@@ -473,10 +459,10 @@ También puedes usar los botones del menú para navegar.
                     if block.expires_at
                     else "Permanente"
                 )
-                text += f"• `{block.ip}` - {block.reason}\n  Expira: {expires}\n\n"
+                text += f"• {block.ip} - {block.reason}\n  Expira: {expires}\n\n"
 
             if len(blocks) > 10:
-                text += f"\n_Mostrando 10 de {len(blocks)} bloqueos_"
+                text += f"\nMostrando 10 de {len(blocks)} bloqueos"
 
         keyboard = [
             [
@@ -486,9 +472,7 @@ También puedes usar los botones del menú para navegar.
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.callback_query.edit_message_text(
-            text, parse_mode="Markdown", reply_markup=reply_markup
-        )
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
 
     async def _show_rules(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Muestra reglas (desde botón)."""
@@ -498,13 +482,13 @@ También puedes usar los botones del menú para navegar.
             text = "No hay reglas configuradas."
             keyboard = [[InlineKeyboardButton("« Menú", callback_data="menu")]]
         else:
-            text = "⚙️ *Reglas de bloqueo:*\n\n"
+            text = "⚙️ Reglas de bloqueo:\n\n"
 
             # Construir botones para activar/desactivar cada regla
             keyboard = []
             for i, rule in enumerate(rules[:10], 1):
                 status_icon = "✅" if rule.enabled else "❌"
-                text += f"{status_icon} *{i}. {rule.description}*\n"
+                text += f"{status_icon} {i}. {rule.description}\n"
                 text += f"Plugin: {rule.plugin}\n"
                 text += f"Severidad: {rule.severity}\n"
                 if rule.min_last_hour:
@@ -520,7 +504,7 @@ También puedes usar los botones del menú para navegar.
                 text += "\n"
 
             if len(rules) > 10:
-                text += f"\n_Mostrando 10 de {len(rules)} reglas_"
+                text += f"\nMostrando 10 de {len(rules)} reglas"
 
             keyboard.append([
                 InlineKeyboardButton("🔄 Actualizar", callback_data="rules"),
@@ -529,9 +513,7 @@ También puedes usar los botones del menú para navegar.
 
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.callback_query.edit_message_text(
-            text, parse_mode="Markdown", reply_markup=reply_markup
-        )
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
 
     async def _show_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Muestra ayuda (desde botón)."""

@@ -860,27 +860,58 @@ def create_app(
         return config_dict
 
     @app.put("/api/telegram/config")
-    def update_telegram_config(request: Request, payload: TelegramBotConfigInput) -> Dict[str, str]:
+    async def update_telegram_config(
+        request: Request, payload: TelegramBotConfigInput
+    ) -> Dict[str, str]:
         """Actualiza la configuración del bot de Telegram."""
         _require_admin(request)
         from mimosa.core.domain.telegram import TelegramBotConfig
 
+        previous_config = telegram_config_store.get_config()
+        new_token = payload.bot_token.strip() if payload.bot_token else None
+        if new_token:
+            masked_current = None
+            if previous_config.bot_token and len(previous_config.bot_token) > 10:
+                masked_current = (
+                    previous_config.bot_token[:8] + "..." + previous_config.bot_token[-8:]
+                )
+            if masked_current and new_token == masked_current:
+                new_token = previous_config.bot_token
+
         config = TelegramBotConfig(
             enabled=payload.enabled,
-            bot_token=payload.bot_token,
+            bot_token=new_token,
             welcome_message=payload.welcome_message,
             unauthorized_message=payload.unauthorized_message,
         )
         telegram_config_store.save_config(config)
+        try:
+            await _sync_telegram_bot(force_restart=True)
+        except Exception as exc:
+            telegram_config_store.save_config(previous_config)
+            try:
+                await _sync_telegram_bot(force_restart=True)
+            except Exception:
+                logger.exception("No se pudo restaurar el estado anterior del bot de Telegram")
+            raise HTTPException(status_code=400, detail=str(exc))
         return {"status": "ok", "message": "Configuración actualizada"}
 
     @app.post("/api/telegram/toggle")
-    def toggle_telegram_bot(request: Request) -> Dict[str, object]:
+    async def toggle_telegram_bot(request: Request) -> Dict[str, object]:
         """Activa o desactiva el bot de Telegram (toggle rápido)."""
         _require_admin(request)
         config = telegram_config_store.get_config()
         new_state = not config.enabled
         telegram_config_store.update_setting("enabled", new_state)
+        try:
+            await _sync_telegram_bot()
+        except Exception as exc:
+            telegram_config_store.update_setting("enabled", config.enabled)
+            try:
+                await _sync_telegram_bot()
+            except Exception:
+                logger.exception("No se pudo restaurar el estado anterior del bot de Telegram")
+            raise HTTPException(status_code=400, detail=str(exc))
 
         status_msg = "habilitado" if new_state else "deshabilitado"
         return {
@@ -1734,6 +1765,7 @@ def create_app(
         ordered = sorted(aggregated.values(), key=lambda item: item["offenses"], reverse=True)
         return {
             "countries": ordered[:limit],
+            "total_countries": len(aggregated),
             "total_profiles": len(counts),
             "window": window_label,
         }
@@ -1921,6 +1953,7 @@ def create_app(
         ordered = sorted(aggregated.values(), key=lambda item: item["blocks"], reverse=True)
         return {
             "countries": ordered[:limit],
+            "total_countries": len(aggregated),
             "total_profiles": len(ip_counts),
             "window": window_label,
         }
@@ -2006,6 +2039,31 @@ def create_app(
         if not profile:
             raise HTTPException(status_code=404, detail="IP no encontrada")
         return profile.__dict__
+
+    @app.get("/api/dashboard/ip_types")
+    def dashboard_ip_types() -> Dict[str, int]:
+        """Estadísticas de IPs por tipo (datacenter, residential, etc.)."""
+        return offense_store.count_by_ip_type()
+
+    @app.get("/api/dashboard/reaction_time")
+    def dashboard_reaction_time(window: Optional[str] = None) -> Dict[str, object]:
+        """Estadísticas de tiempo de reacción entre ofensa y bloqueo.
+
+        Args:
+            window: Ventana temporal: '24h', '7d' o None para todo.
+        """
+        return offense_store.get_reaction_time_stats(window=window)
+
+    @app.post("/api/admin/refresh-cloud-ranges")
+    def refresh_cloud_ranges() -> Dict[str, object]:
+        """Actualiza las listas de rangos de cloud providers."""
+        counts = offense_store.refresh_cloud_ranges()
+        return {"status": "updated", "counts": counts}
+
+    @app.get("/api/admin/cloud-stats")
+    def get_cloud_stats() -> Dict[str, int]:
+        """Devuelve estadísticas de los rangos de cloud cargados."""
+        return offense_store.get_cloud_stats()
 
     @app.get("/api/whitelist")
     def list_whitelist() -> List[Dict[str, object]]:
@@ -2380,6 +2438,21 @@ def create_app(
         block_manager=block_manager,
         rule_store=rule_store,
     )
+
+    async def _sync_telegram_bot(force_restart: bool = False) -> None:
+        config = telegram_config_store.get_config()
+        if not config.enabled or not config.bot_token:
+            if telegram_bot.is_running():
+                await telegram_bot.stop()
+            return
+
+        if telegram_bot.is_running():
+            if force_restart:
+                await telegram_bot.stop()
+                await telegram_bot.start()
+            return
+
+        await telegram_bot.start()
 
     @app.on_event("startup")
     async def startup_event():

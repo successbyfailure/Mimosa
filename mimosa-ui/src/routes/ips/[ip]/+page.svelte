@@ -16,6 +16,33 @@
     enriched_at?: string | null;
     offenses: number;
     blocks: number;
+    // Campos de clasificación
+    ip_type?: string | null;
+    ip_type_confidence?: number | null;
+    ip_type_source?: string | null;
+    ip_type_provider?: string | null;
+    isp?: string | null;
+    org?: string | null;
+    asn?: string | null;
+    is_proxy?: boolean;
+    is_mobile?: boolean;
+    is_hosting?: boolean;
+  };
+
+  // Configuración de tipos de IP
+  const ipTypeConfig: Record<string, { label: string; fullLabel: string; color: string; bg: string }> = {
+    datacenter: { label: 'DC', fullLabel: 'Datacenter', color: 'var(--warning)', bg: 'rgba(251, 191, 36, 0.15)' },
+    residential: { label: 'RES', fullLabel: 'Residencial', color: 'var(--success)', bg: 'rgba(74, 222, 128, 0.15)' },
+    governmental: { label: 'GOV', fullLabel: 'Gubernamental', color: 'var(--accent)', bg: 'rgba(56, 189, 248, 0.15)' },
+    educational: { label: 'EDU', fullLabel: 'Educativo', color: 'var(--accent)', bg: 'rgba(56, 189, 248, 0.15)' },
+    corporate: { label: 'CORP', fullLabel: 'Corporativo', color: 'var(--text)', bg: 'rgba(255, 255, 255, 0.1)' },
+    mobile: { label: 'MOB', fullLabel: 'Móvil', color: 'var(--muted)', bg: 'rgba(148, 163, 184, 0.15)' },
+    proxy: { label: 'PROXY', fullLabel: 'Proxy/VPN', color: 'var(--danger)', bg: 'rgba(248, 113, 113, 0.15)' },
+    unknown: { label: '?', fullLabel: 'Desconocido', color: 'var(--muted)', bg: 'rgba(148, 163, 184, 0.1)' }
+  };
+
+  const getTypeConfig = (type?: string | null) => {
+    return ipTypeConfig[type || 'unknown'] || ipTypeConfig.unknown;
   };
 
   type Offense = {
@@ -263,7 +290,41 @@
     {#if loading || !profile}
       <div style="margin-top: 12px;">Cargando perfil...</div>
     {:else}
+      {@const typeConf = getTypeConfig(profile.ip_type)}
       <div class="card-grid" style="margin-top: 16px;">
+        <div class="surface" style="padding: 12px; border: 1px solid var(--border);">
+          <strong>Clasificación</strong>
+          <div style="margin-top: 10px;">
+            <span
+              class="ip-type-badge-large"
+              style="color: {typeConf.color}; background: {typeConf.bg};"
+            >
+              {typeConf.fullLabel}
+            </span>
+          </div>
+          <div style="color: var(--muted); margin-top: 8px; font-size: 12px;">
+            Confianza: {profile.ip_type_confidence ? Math.round(profile.ip_type_confidence * 100) : 0}%
+          </div>
+          <div style="color: var(--muted); font-size: 11px;">
+            Fuente: {profile.ip_type_source || 'N/A'}
+          </div>
+          <div style="margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap;">
+            {#if profile.is_hosting}
+              <span class="mini-badge hosting">Hosting</span>
+            {/if}
+            {#if profile.is_proxy}
+              <span class="mini-badge proxy">Proxy/VPN</span>
+            {/if}
+            {#if profile.is_mobile}
+              <span class="mini-badge mobile">Móvil</span>
+            {/if}
+          </div>
+          <div style="margin-top: 10px; color: var(--muted); font-size: 11px;">
+            <div>ISP: {profile.isp || '-'}</div>
+            <div>Org: {profile.org || '-'}</div>
+            <div>ASN: {profile.asn || '-'}</div>
+          </div>
+        </div>
         <div class="surface" style="padding: 12px; border: 1px solid var(--border);">
           <strong>Geo</strong>
           <div style="color: var(--muted); margin-top: 6px;">
@@ -400,3 +461,39 @@
     </table>
   </div>
 </div>
+
+<style>
+  .ip-type-badge-large {
+    display: inline-block;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .mini-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .mini-badge.hosting {
+    background: rgba(251, 191, 36, 0.18);
+    color: var(--warning);
+  }
+
+  .mini-badge.proxy {
+    background: rgba(248, 113, 113, 0.18);
+    color: var(--danger);
+  }
+
+  .mini-badge.mobile {
+    background: rgba(148, 163, 184, 0.18);
+    color: var(--muted);
+  }
+</style>

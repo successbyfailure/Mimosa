@@ -948,6 +948,18 @@
         </div>
       </div>
 
+      {#if mimosaMessage}
+        <div style="margin-top: 10px; color: var(--success); font-size: 13px;">{mimosaMessage}</div>
+      {/if}
+      {#if mimosaError}
+        <div style="margin-top: 10px; color: var(--danger); font-size: 13px;">{mimosaError}</div>
+      {/if}
+      <div style="margin-top: 14px;">
+        <button class="primary" type="button" on:click={() => saveMimosaNpm(false)}>
+          Guardar MimosaNPM
+        </button>
+      </div>
+
       <div style="margin-top: 16px;">
         <div class="badge">Estadisticas</div>
         {#if mimosaStatsMessage}
@@ -1055,7 +1067,13 @@
                     </td>
                     <td class="cell-nowrap" data-label="Severidad">{event.severity || '-'}</td>
                     <td data-label="Accion">
-                      <button class="ghost" on:click={() => applyEventToRule(event)}>Usar</button>
+                      <button
+                        class="secondary btn-sm"
+                        type="button"
+                        on:click={() => applyEventToRule(event)}
+                      >
+                        Usar
+                      </button>
                     </td>
                   </tr>
                 {/each}
@@ -1063,16 +1081,6 @@
             </tbody>
           </table>
         </div>
-      </div>
-
-      {#if mimosaMessage}
-        <div style="margin-top: 10px; color: var(--success); font-size: 13px;">{mimosaMessage}</div>
-      {/if}
-      {#if mimosaError}
-        <div style="margin-top: 10px; color: var(--danger); font-size: 13px;">{mimosaError}</div>
-      {/if}
-      <div style="margin-top: 14px;">
-        <button class="primary" on:click={() => saveMimosaNpm(false)}>Guardar MimosaNPM</button>
       </div>
     {/if}
   </div>

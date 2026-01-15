@@ -286,7 +286,7 @@
 
   <div class="surface" style="padding: 18px;">
     <div class="badge">Nueva entrada</div>
-    <h3 style="margin-top: 12px;">Agregar CIDR</h3>
+    <h3 style="margin-top: 12px;">Agregar CIDR/hostname</h3>
     <div style="display: grid; gap: 12px; margin-top: 12px;">
       <label>
         <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">CIDR</div>

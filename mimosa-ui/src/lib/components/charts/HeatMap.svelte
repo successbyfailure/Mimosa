@@ -33,6 +33,67 @@
   let lastPulseKey = 0;
   let mimosaMarker: any = null;
   let countriesGeoJson: any = null;
+  const attackDurationMs = 5000;
+
+  const normalizeCountryName = (value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/['’`]/g, '')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\bthe\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const countryNameAliases: Record<string, string[]> = {
+    [normalizeCountryName('United States of America')]: [
+      normalizeCountryName('United States'),
+      normalizeCountryName('USA'),
+      normalizeCountryName('US')
+    ],
+    [normalizeCountryName('Russian Federation')]: [normalizeCountryName('Russia')],
+    [normalizeCountryName('Iran')]: [normalizeCountryName('Iran, Islamic Republic of')],
+    [normalizeCountryName('Viet Nam')]: [normalizeCountryName('Vietnam')],
+    [normalizeCountryName('Republic of Korea')]: [normalizeCountryName('South Korea')],
+    [normalizeCountryName("Democratic People's Republic of Korea")]: [
+      normalizeCountryName('North Korea')
+    ],
+    [normalizeCountryName('United Republic of Tanzania')]: [normalizeCountryName('Tanzania')],
+    [normalizeCountryName("Lao People's Democratic Republic")]: [normalizeCountryName('Laos')],
+    [normalizeCountryName('Czechia')]: [normalizeCountryName('Czech Republic')],
+    [normalizeCountryName('Bolivia')]: [normalizeCountryName('Bolivia (Plurinational State of)')],
+    [normalizeCountryName('Venezuela')]: [normalizeCountryName('Venezuela (Bolivarian Republic of)')],
+    [normalizeCountryName('Syrian Arab Republic')]: [normalizeCountryName('Syria')],
+    [normalizeCountryName('Republic of Moldova')]: [normalizeCountryName('Moldova')],
+    [normalizeCountryName('North Macedonia')]: [
+      normalizeCountryName('The former Yugoslav Republic of Macedonia')
+    ],
+    [normalizeCountryName('Democratic Republic of the Congo')]: [
+      normalizeCountryName('Congo, The Democratic Republic of the')
+    ],
+    [normalizeCountryName('Republic of the Congo')]: [normalizeCountryName('Congo')],
+    [normalizeCountryName("Cote d'Ivoire")]: [normalizeCountryName("Côte d'Ivoire")]
+  };
+
+  const findCountryEntry = (countryName: string): CountryData | null => {
+    if (!countryData.length) {
+      return null;
+    }
+    const normalized = normalizeCountryName(countryName);
+    let entry = countryData.find(
+      (d) => normalizeCountryName(d.country) === normalized
+    );
+    if (entry) {
+      return entry;
+    }
+    const aliases = countryNameAliases[normalized] || [];
+    if (aliases.length) {
+      entry = countryData.find((d) => aliases.includes(normalizeCountryName(d.country)));
+      if (entry) {
+        return entry;
+      }
+    }
+    return null;
+  };
 
   const buildMap = async () => {
     if (!mapEl) {
@@ -51,9 +112,18 @@
       subdomains: 'abcd'
     }).addTo(map);
 
-    countriesLayer = L.layerGroup().addTo(map);
-    layer = L.layerGroup().addTo(map);
-    attackLayer = L.layerGroup().addTo(map);
+    const countriesPane = map.createPane('countries');
+    countriesPane.style.zIndex = '200';
+    const pointsPane = map.createPane('points');
+    pointsPane.style.zIndex = '300';
+    const attacksPane = map.createPane('attacks');
+    attacksPane.style.zIndex = '400';
+    const markersPane = map.createPane('markers');
+    markersPane.style.zIndex = '450';
+
+    countriesLayer = L.layerGroup([], { pane: 'countries' }).addTo(map);
+    layer = L.layerGroup([], { pane: 'points' }).addTo(map);
+    attackLayer = L.layerGroup([], { pane: 'attacks' }).addTo(map);
 
     await loadCountriesGeoJson();
     updateCountriesLayer();
@@ -75,9 +145,7 @@
       return '#1e293b'; // Default dark color
     }
 
-    const data = countryData.find(
-      (d) => d.country.toLowerCase() === countryName.toLowerCase()
-    );
+    const data = findCountryEntry(countryName);
 
     if (!data) {
       return '#1e293b'; // No data - dark gray
@@ -117,21 +185,20 @@
     countriesLayer.clearLayers();
 
     L.geoJSON(countriesGeoJson, {
+      pane: 'countries',
       style: (feature: any) => {
         const countryName = feature.properties.name;
         return {
           fillColor: getCountryColor(countryName),
-          fillOpacity: 0.6,
-          color: '#334155',
-          weight: 1,
-          opacity: 0.5
+          fillOpacity: 0.35,
+          color: '#1f2937',
+          weight: 0.8,
+          opacity: 0.45
         };
       },
       onEachFeature: (feature: any, layer: any) => {
         const countryName = feature.properties.name;
-        const data = countryData.find(
-          (d) => d.country.toLowerCase() === countryName.toLowerCase()
-        );
+        const data = findCountryEntry(countryName);
 
         if (data) {
           const count = data.blocks ?? data.offenses ?? 0;
@@ -154,17 +221,17 @@
       lastPulseKey = pulseKey;
       return;
     }
-    const shouldPulse = pulseKey !== lastPulseKey;
     const bounds: [number, number][] = [];
     for (const point of points) {
       const radius = Math.max(2, Math.min(30, 6 + Math.log(point.count + 1) * 5) * 0.25);
       L.circleMarker([point.lat, point.lon], {
+        pane: 'points',
         radius,
         color: '#ef4444',
         fillColor: '#f87171',
         fillOpacity: 0.45,
         weight: 1,
-        className: shouldPulse ? 'heat-marker heat-pulse' : 'heat-marker'
+        className: 'heat-marker'
       }).addTo(layer);
       bounds.push([point.lat, point.lon]);
     }
@@ -186,6 +253,7 @@
     const latlng: [number, number] = [mimosaLocation.lat, mimosaLocation.lon];
     if (!mimosaMarker) {
       mimosaMarker = L.circleMarker(latlng, {
+        pane: 'markers',
         radius: 6,
         color: '#facc15',
         fillColor: '#fde047',
@@ -206,6 +274,48 @@
     if (!mimosaLocation || !attackOrigins.length) {
       return;
     }
+    const animateProjectile = (origin: { lat: number; lon: number }) => {
+      if (!mimosaLocation || !L || !attackLayer) {
+        return;
+      }
+      const projectile = L.circleMarker([origin.lat, origin.lon], {
+        pane: 'attacks',
+        radius: 2.5,
+        color: '#e2e8f0',
+        fillColor: '#f8fafc',
+        fillOpacity: 0.9,
+        weight: 1,
+        className: 'attack-projectile'
+      }).addTo(attackLayer);
+      const halo = L.circleMarker([origin.lat, origin.lon], {
+        pane: 'attacks',
+        radius: 5,
+        color: '#cbd5f5',
+        fillColor: '#cbd5f5',
+        fillOpacity: 0.04,
+        weight: 1,
+        className: 'attack-projectile-halo'
+      }).addTo(attackLayer);
+      const start = performance.now();
+      const step = (now: number) => {
+        if (!attackLayer || !attackLayer.hasLayer(projectile)) {
+          return;
+        }
+        const progress = Math.min((now - start) / attackDurationMs, 1);
+        const lat = origin.lat + (mimosaLocation!.lat - origin.lat) * progress;
+        const lon = origin.lon + (mimosaLocation!.lon - origin.lon) * progress;
+        projectile.setLatLng([lat, lon]);
+        halo.setLatLng([lat, lon]);
+        if (progress < 1) {
+          requestAnimationFrame(step);
+        } else {
+          attackLayer.removeLayer(projectile);
+          attackLayer.removeLayer(halo);
+        }
+      };
+      requestAnimationFrame(step);
+    };
+
     for (const origin of attackOrigins) {
       const ray = L.polyline(
         [
@@ -213,6 +323,7 @@
           [mimosaLocation.lat, mimosaLocation.lon]
         ],
         {
+          pane: 'attacks',
           color: '#ef4444',
           weight: 2,
           opacity: 0.9,
@@ -221,7 +332,26 @@
       ).addTo(attackLayer);
       window.setTimeout(() => {
         attackLayer.removeLayer(ray);
-      }, 5000);
+      }, attackDurationMs);
+      L.circleMarker([origin.lat, origin.lon], {
+        pane: 'attacks',
+        radius: 5,
+        color: '#fca5a5',
+        fillColor: '#f87171',
+        fillOpacity: 0.25,
+        weight: 1.2,
+        className: 'attack-origin-pulse'
+      }).addTo(attackLayer);
+      L.circleMarker([mimosaLocation.lat, mimosaLocation.lon], {
+        pane: 'attacks',
+        radius: 5,
+        color: '#38bdf8',
+        fillColor: '#0ea5e9',
+        fillOpacity: 0.25,
+        weight: 1.2,
+        className: 'attack-destination-pulse'
+      }).addTo(attackLayer);
+      animateProjectile(origin);
     }
     const latest = attackOrigins[attackOrigins.length - 1];
     if (latest) {
@@ -231,6 +361,7 @@
           [mimosaLocation.lat, mimosaLocation.lon]
         ],
         {
+          pane: 'attacks',
           color: '#94a3b8',
           weight: 3,
           opacity: 0.8,
@@ -239,19 +370,12 @@
       ).addTo(attackLayer);
       latestRay.bringToFront();
       L.circleMarker([latest.lat, latest.lon], {
-        radius: 7,
-        color: '#a855f7',
-        fillColor: '#c084fc',
-        fillOpacity: 0.7,
-        weight: 2,
-        className: 'attack-latest'
-      }).addTo(attackLayer);
-      L.circleMarker([latest.lat, latest.lon], {
-        radius: 12,
-        color: '#cbd5f5',
-        fillColor: '#cbd5f5',
-        fillOpacity: 0.08,
-        weight: 1,
+        pane: 'attacks',
+        radius: 9,
+        color: '#94a3b8',
+        fillColor: '#94a3b8',
+        fillOpacity: 0.03,
+        weight: 0.8,
         className: 'attack-latest-halo'
       }).addTo(attackLayer);
     }
