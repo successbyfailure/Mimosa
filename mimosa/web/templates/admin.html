@@ -326,7 +326,7 @@
         </form>
         <div id="portdetector-message" class="muted" style="margin-top:4px;"></div>
         <div class="muted" style="margin-top:8px;">Configura reglas por lista de puertos con severidades personalizadas.</div>
-        <form id="portdetector-rule-form" class="grid" style="grid-template-columns: 1fr 2fr 1fr auto; gap: 10px; align-items:end; margin-top:10px;">
+        <form id="portdetector-rule-form" class="grid" style="grid-template-columns: 1fr 2fr 2fr 1fr auto; gap: 10px; align-items:end; margin-top:10px;">
           <div>
             <label>Protocolo</label>
             <select name="protocol">
@@ -337,6 +337,10 @@
           <div id="portdetector-port-wrapper">
             <label>Puertos (coma o espacio)</label>
             <input name="ports" placeholder="22, 80, 443" />
+          </div>
+          <div>
+            <label>Descripcion</label>
+            <input name="description" placeholder="Ej: SSH expuesto" />
           </div>
           <div>
             <label>Severidad</label>
@@ -355,12 +359,13 @@
               <tr>
                 <th>Protocolo</th>
                 <th>Detalle</th>
+                <th>Descripcion</th>
                 <th>Severidad</th>
                 <th></th>
               </tr>
             </thead>
             <tbody id="portdetector-rule-table">
-              <tr><td colspan="4" class="muted">Sin reglas.</td></tr>
+              <tr><td colspan="5" class="muted">Sin reglas.</td></tr>
             </tbody>
           </table>
         </div>
@@ -1727,7 +1732,7 @@ function renderPortDetectorRules() {
   if (!tbody) return;
   tbody.innerHTML = '';
   if (!portDetectorRules.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="muted">Sin reglas.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="muted">Sin reglas.</td></tr>';
     return;
   }
   portDetectorRules.forEach((rule, index) => {
@@ -1743,6 +1748,7 @@ function renderPortDetectorRules() {
     row.innerHTML = `
       <td>${rule.protocol || 'tcp'}</td>
       <td>${detail}</td>
+      <td>${rule.description || '-'}</td>
       <td>${rule.severity || 'medio'}</td>
       <td style="text-align:right; display:flex; gap:8px; justify-content:flex-end;">
         <button class="secondary" type="button" onclick="editPortDetectorRule(${index})">Editar</button>
@@ -1763,6 +1769,7 @@ function submitPortDetectorRule(event) {
   const rule = {
     protocol: payload.protocol || 'tcp',
     severity: payload.severity || 'medio',
+    description: payload.description ? payload.description.trim() : '',
     ports,
   };
 
@@ -1794,6 +1801,7 @@ function editPortDetectorRule(index) {
   form.ports.value = (rule.ports && rule.ports.length)
     ? rule.ports.join(', ')
     : '';
+  form.description.value = rule.description || '';
   editingPortRuleIndex = index;
   const msg = document.getElementById('portdetector-rule-message');
   if (msg) msg.textContent = 'Editando regla. Guarda para mantener los cambios.';

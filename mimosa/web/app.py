@@ -145,6 +145,7 @@ class PortDetectorRuleInput(BaseModel):
 
     protocol: Literal["tcp", "udp"] = "tcp"
     severity: str = "medio"
+    description: str | None = None
     port: int | None = None
     ports: List[int] | None = None
     start: int | None = None

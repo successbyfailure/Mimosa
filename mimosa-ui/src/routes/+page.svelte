@@ -831,17 +831,25 @@
     return response.json() as Promise<T>;
   };
 
+  const loadReactionTimeStats = async () => {
+    const windowParam = reactionTimeWindow === 'all' ? '' : `?window=${reactionTimeWindow}`;
+    try {
+      reactionTimeStats = await fetchJson<typeof reactionTimeStats>(`/api/dashboard/reaction_time${windowParam}`);
+    } catch (err) {
+      reactionTimeStats = null;
+    }
+  };
+
   const loadInsights = async () => {
     insightsError = null;
-    const [topResult, expiringResult, reasonsResult, healthResult, typesResult, reactionResult] = await Promise.allSettled([
+    const [topResult, expiringResult, reasonsResult, healthResult, typesResult] = await Promise.allSettled([
       fetchJson<TopIp[]>('/api/dashboard/top_ips?limit=10'),
       fetchJson<ExpiringBlock[]>('/api/dashboard/blocks/expiring?within_minutes=60&limit=10'),
       fetchJson<BlockReason[]>('/api/dashboard/blocks/reasons?limit=10'),
       fetchJson<{ firewalls: FirewallHealth[]; plugins: PluginHealth[] }>(
         '/api/dashboard/health'
       ),
-      fetchJson<Record<string, number>>('/api/dashboard/ip_types'),
-      fetchJson<typeof reactionTimeStats>('/api/dashboard/reaction_time')
+      fetchJson<Record<string, number>>('/api/dashboard/ip_types')
     ]);
 
     if (topResult.status === 'fulfilled') {
@@ -867,9 +875,8 @@
       ipTypeCounts = typesResult.value;
     }
 
-    if (reactionResult.status === 'fulfilled') {
-      reactionTimeStats = reactionResult.value;
-    }
+    // Cargar reaction time por separado para permitir cambio de ventana
+    await loadReactionTimeStats();
   };
 
   const loadMapActivity = async () => {
@@ -1610,7 +1617,13 @@
       </div>
       <h3 class="card-title">Top IPs</h3>
       <div style="margin-top: 12px; overflow-x: auto;">
-        <table class="table table-responsive">
+        <table class="table table-responsive table-insights">
+          <colgroup>
+            <col style="width: 40%;" />
+            <col style="width: 20%;" />
+            <col style="width: 20%;" />
+            <col style="width: 20%;" />
+          </colgroup>
           <thead>
             <tr>
               <th class="cell-nowrap">IP</th>
@@ -1645,7 +1658,14 @@
       </div>
       <h3 class="card-title">Bloqueos por expirar</h3>
       <div style="margin-top: 12px; overflow-x: auto;">
-        <table class="table table-responsive">
+        <table class="table table-responsive table-insights">
+          <colgroup>
+            <col style="width: 18%;" />
+            <col style="width: 12%;" />
+            <col style="width: 14%;" />
+            <col style="width: 36%;" />
+            <col style="width: 20%;" />
+          </colgroup>
           <thead>
             <tr>
               <th>IP</th>
@@ -1686,7 +1706,12 @@
       </div>
       <h3 class="card-title">Motivos frecuentes</h3>
       <div style="margin-top: 12px; overflow-x: auto;">
-        <table class="table table-responsive">
+        <table class="table table-responsive table-insights">
+          <colgroup>
+            <col style="width: 55%;" />
+            <col style="width: 25%;" />
+            <col style="width: 20%;" />
+          </colgroup>
           <thead>
             <tr>
               <th>Motivo</th>
@@ -1745,7 +1770,20 @@
     <div class="surface panel">
       <div class="card-head">
         <div class="badge">Rendimiento</div>
-        <button class="ghost" on:click={loadInsights}>Refrescar</button>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <div class="window-select">
+            {#each [{ v: '24h', l: '24h' }, { v: '7d', l: '7d' }, { v: 'all', l: 'Todo' }] as opt}
+              <button
+                class="window-btn"
+                class:active={reactionTimeWindow === opt.v}
+                on:click={() => { reactionTimeWindow = opt.v; loadReactionTimeStats(); }}
+              >
+                {opt.l}
+              </button>
+            {/each}
+          </div>
+          <button class="ghost" on:click={loadReactionTimeStats}>Refrescar</button>
+        </div>
       </div>
       <h3 class="card-title">Tiempo de Reacción</h3>
       <p style="color: var(--muted); font-size: 12px; margin-top: 4px;">Tiempo entre detección de ofensa y creación de bloqueo</p>

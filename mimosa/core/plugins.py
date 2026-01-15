@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import secrets
 from dataclasses import dataclass, asdict, field
+import os
 from pathlib import Path
 from typing import Dict, List
 
@@ -18,12 +19,23 @@ DEFAULT_PROXYTRAP_POLICIES = [
 COMMON_SERVICE_PORTS = [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 993, 995, 3306, 5432, 6379, 8080]
 
 
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
 @dataclass
 class PortDetectorRule:
     """Regla de escucha asociada a un puerto o rango."""
 
     protocol: str = "tcp"
     severity: str = "medio"
+    description: str | None = None
     port: int | None = None
     ports: List[int] = field(default_factory=list)
     start: int | None = None
@@ -32,9 +44,42 @@ class PortDetectorRule:
 
 def _default_port_rules() -> List[PortDetectorRule]:
     return [
-        PortDetectorRule(protocol="tcp", severity="alto", ports=list(COMMON_SERVICE_PORTS)),
-        PortDetectorRule(protocol="tcp", severity="medio", start=5900, end=5903),
-        PortDetectorRule(protocol="udp", severity="medio", ports=[53, 123]),
+        PortDetectorRule(
+            protocol="tcp",
+            severity="alto",
+            description="RemoteAccess",
+            ports=[2200, 2222, 3389, 5900, 5901, 5902, 5903, 5938, 6080, 7070, 8200, 12975],
+        ),
+        PortDetectorRule(
+            protocol="udp",
+            severity="medio",
+            description="-",
+            ports=[53, 123],
+        ),
+        PortDetectorRule(
+            protocol="tcp",
+            severity="alto",
+            description="databases",
+            ports=[1521, 1433, 3306, 5432, 27017, 6379, 9200, 9042],
+        ),
+        PortDetectorRule(
+            protocol="tcp",
+            severity="alto",
+            description="Infra",
+            ports=[21, 23, 389, 445, 636, 631],
+        ),
+        PortDetectorRule(
+            protocol="tcp",
+            severity="alto",
+            description="HTTP-dev",
+            ports=[8000, 8001, 8080, 8443, 5000, 3000],
+        ),
+        PortDetectorRule(
+            protocol="tcp",
+            severity="alto",
+            description="email",
+            ports=[25, 110, 143, 465, 587, 993, 995],
+        ),
     ]
 
 
@@ -44,7 +89,7 @@ class ProxyTrapConfig:
 
     name: str = "proxytrap"
     enabled: bool = False
-    port: int = 8081
+    port: int = field(default_factory=lambda: _env_int("MIMOSA_PROXYTRAP_PORT", 8081))
     default_severity: str = "alto"
     response_type: str = "404"
     custom_html: str | None = None

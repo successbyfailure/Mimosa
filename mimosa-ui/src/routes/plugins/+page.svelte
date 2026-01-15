@@ -21,6 +21,7 @@
   type PortDetectorRule = {
     protocol: 'tcp' | 'udp';
     severity: string;
+    description?: string | null;
     port?: number | null;
     ports?: number[] | null;
     start?: number | null;
@@ -112,6 +113,8 @@
   let portRulePorts = '';
   let portRuleStart = '';
   let portRuleEnd = '';
+  let portRuleDescription = '';
+  let portEditIndex: number | null = null;
   let portAlias: PortAliasResponse | null = null;
   let portAliasMessage: string | null = null;
 
@@ -267,6 +270,31 @@
     return '-';
   };
 
+  const resetPortRuleForm = () => {
+    portRuleProtocol = 'tcp';
+    portRuleSeverity = 'medio';
+    portRulePorts = '';
+    portRuleStart = '';
+    portRuleEnd = '';
+    portRuleDescription = '';
+    portEditIndex = null;
+  };
+
+  const startEditPortRule = (rule: PortDetectorRule, index: number) => {
+    portEditIndex = index;
+    portRuleProtocol = rule.protocol;
+    portRuleSeverity = rule.severity;
+    portRulePorts = rule.ports?.length ? rule.ports.join(', ') : '';
+    portRuleDescription = rule.description || '';
+    if (!rule.ports?.length && rule.start && rule.end) {
+      portRuleStart = String(rule.start);
+      portRuleEnd = String(rule.end);
+    } else {
+      portRuleStart = '';
+      portRuleEnd = '';
+    }
+  };
+
   const addPortRule = () => {
     if (!portConfig) {
       return;
@@ -286,7 +314,8 @@
 
     const rule: PortDetectorRule = {
       protocol: portRuleProtocol,
-      severity: portRuleSeverity
+      severity: portRuleSeverity,
+      description: portRuleDescription?.trim() || null
     };
     if (ports.length) {
       rule.ports = ports;
@@ -296,10 +325,14 @@
       rule.end = end;
     }
 
-    portConfig.rules = [...(portConfig.rules || []), rule];
-    portRulePorts = '';
-    portRuleStart = '';
-    portRuleEnd = '';
+    if (portEditIndex != null) {
+      const nextRules = [...(portConfig.rules || [])];
+      nextRules[portEditIndex] = rule;
+      portConfig.rules = nextRules;
+    } else {
+      portConfig.rules = [...(portConfig.rules || []), rule];
+    }
+    resetPortRuleForm();
   };
 
   const removePortRule = (index: number) => {
@@ -307,6 +340,9 @@
       return;
     }
     portConfig.rules = portConfig.rules.filter((_, idx) => idx !== index);
+    if (portEditIndex != null) {
+      resetPortRuleForm();
+    }
   };
 
   const savePortDetector = async () => {
@@ -327,7 +363,15 @@
       });
       portMessage = 'Port Detector actualizado';
     } catch (err) {
-      portError = err instanceof Error ? err.message : 'No se pudo guardar Port Detector';
+      if (err instanceof Error) {
+        portError = err.message;
+      } else {
+        try {
+          portError = typeof err === 'string' ? err : JSON.stringify(err);
+        } catch {
+          portError = 'No se pudo guardar Port Detector';
+        }
+      }
     }
   };
 
@@ -677,6 +721,10 @@
             <div class="field-label">Puertos (coma)</div>
             <input bind:value={portRulePorts} placeholder="22, 80, 443" />
           </label>
+          <label>
+            <div class="field-label">Descripcion</div>
+            <input bind:value={portRuleDescription} placeholder="Ej: SSH expuesto" />
+          </label>
           <div class="form-row">
             <label>
               <div class="field-label">Inicio rango</div>
@@ -687,31 +735,43 @@
               <input type="number" min="1" bind:value={portRuleEnd} placeholder="2000" />
             </label>
           </div>
-          <button class="secondary" on:click={addPortRule}>Agregar regla</button>
+          <div class="card-actions">
+            <button class="secondary" on:click={addPortRule}>
+              {portEditIndex != null ? 'Guardar cambios' : 'Agregar regla'}
+            </button>
+            {#if portEditIndex != null}
+              <button class="ghost" on:click={resetPortRuleForm}>Cancelar</button>
+            {/if}
+          </div>
         </div>
         {#if portError}
           <div style="margin-top: 10px; color: var(--danger); font-size: 13px;">{portError}</div>
         {/if}
         <div style="margin-top: 12px; overflow-x: auto;">
           <table class="table table-responsive">
-            <thead>
-              <tr>
-                <th>Protocolo</th>
-                <th>Detalle</th>
-                <th>Severidad</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#if portConfig.rules.length === 0}
-                <tr><td colspan="4">Sin reglas.</td></tr>
-              {:else}
-                {#each portConfig.rules as rule, index}
-                  <tr>
-                    <td data-label="Protocolo">{rule.protocol}</td>
-                    <td data-label="Detalle">{formatPortRule(rule)}</td>
-                    <td data-label="Severidad">{rule.severity}</td>
-                    <td data-label="Accion">
+          <thead>
+            <tr>
+              <th>Protocolo</th>
+              <th>Detalle</th>
+              <th>Descripcion</th>
+              <th>Severidad</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#if portConfig.rules.length === 0}
+              <tr><td colspan="5">Sin reglas.</td></tr>
+            {:else}
+              {#each portConfig.rules as rule, index}
+                <tr>
+                  <td data-label="Protocolo">{rule.protocol}</td>
+                  <td data-label="Detalle">{formatPortRule(rule)}</td>
+                  <td data-label="Descripcion">{rule.description || '-'}</td>
+                  <td data-label="Severidad">{rule.severity}</td>
+                  <td data-label="Accion">
+                    <button class="secondary btn-sm" on:click={() => startEditPortRule(rule, index)}>
+                      Editar
+                      </button>
                       <button class="ghost" on:click={() => removePortRule(index)}>
                         Quitar
                       </button>
