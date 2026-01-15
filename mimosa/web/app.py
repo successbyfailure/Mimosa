@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import sqlite3
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -49,6 +50,7 @@ from mimosa.core.mimosanpm import MimosaNpmAlert, MimosaNpmService
 from mimosa.core.proxytrap import ProxyTrapService
 from mimosa.core.rules import OffenseEvent, OffenseRule, OffenseRuleStore, RuleManager
 from mimosa.core.telegram_config import TelegramConfigStore
+from mimosa.core.homeassistant_config import HomeAssistantConfigStore, HomeAssistantConfig
 from mimosa.core.repositories.telegram_repository import (
     TelegramUserRepository,
     TelegramInteractionRepository,
@@ -265,6 +267,23 @@ class TelegramBotConfigInput(BaseModel):
     unauthorized_message: str = "No estás autorizado para usar este bot"
 
 
+class HomeAssistantConfigInput(BaseModel):
+    """Configuración de la integración con Home Assistant."""
+
+    enabled: bool = False
+    api_token: Optional[str] = None
+    rotate_token: bool = False
+    expose_stats: bool = True
+    expose_signals: bool = True
+    expose_heatmap: bool = False
+    heatmap_source: Literal["offenses", "blocks"] = "offenses"
+    heatmap_window: str = "24h"
+    heatmap_limit: int = Field(default=300, ge=0, le=2000)
+    expose_rules: bool = True
+    expose_firewall_rules: bool = False
+    stats_include_timeline: bool = False
+
+
 class TelegramUserAuthInput(BaseModel):
     """Entrada para autorizar/desautorizar usuarios del bot."""
 
@@ -339,6 +358,7 @@ def create_app(
     plugin_store = PluginConfigStore()
     user_store = UserStore()
     telegram_config_store = TelegramConfigStore(db_path=offense_store.db_path)
+    homeassistant_config_store = HomeAssistantConfigStore(db_path=offense_store.db_path)
     telegram_user_repo = TelegramUserRepository(db_path=offense_store.db_path)
     telegram_interaction_repo = TelegramInteractionRepository(db_path=offense_store.db_path)
     gateway_cache = GatewayCache(ttl_seconds=300)  # TTL de 5 minutos
@@ -372,6 +392,32 @@ def create_app(
             return None
         return request.session.get("user")
 
+    def _mask_secret(secret: Optional[str]) -> Optional[str]:
+        if not secret:
+            return None
+        if len(secret) <= 12:
+            return "*" * len(secret)
+        return f"{secret[:6]}...{secret[-6:]}"
+
+    def _extract_homeassistant_token(request: Request) -> Optional[str]:
+        token = request.headers.get("X-Mimosa-Token") or request.headers.get(
+            "X-Homeassistant-Token"
+        )
+        if not token:
+            auth_header = request.headers.get("Authorization")
+            if auth_header and auth_header.lower().startswith("bearer "):
+                token = auth_header[7:]
+        return token.strip() if token else None
+
+    def _homeassistant_token_valid(request: Request) -> bool:
+        token = _extract_homeassistant_token(request)
+        if not token:
+            return False
+        config = homeassistant_config_store.get_config()
+        if not config.api_token:
+            return False
+        return secrets.compare_digest(token, config.api_token)
+
     def _is_public_api(path: str) -> bool:
         return (
             path.startswith("/api/public")
@@ -379,16 +425,37 @@ def create_app(
             or path == "/api/plugins/mimosanpm/ingest"
         )
 
+    def _is_homeassistant_api(path: str) -> bool:
+        return path.startswith("/api/homeassistant")
+
+    def _is_homeassistant_config_api(path: str) -> bool:
+        return path.startswith("/api/homeassistant/config")
+
     def _require_admin(request: Request) -> None:
         user = _current_user(request)
         if not user or user.get("role") != "admin":
             raise HTTPException(status_code=403, detail="Acceso restringido a administradores")
+
+    def _require_homeassistant_feature(config: HomeAssistantConfig, feature: str) -> None:
+        if not config.enabled:
+            raise HTTPException(
+                status_code=503,
+                detail="Integración con Home Assistant deshabilitada",
+            )
+        if not getattr(config, feature):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Funcionalidad '{feature}' no habilitada",
+            )
 
     class AuthMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
             path = request.url.path
             if (path == "/api" or path.startswith("/api/")) and not _is_public_api(path):
                 if not _current_user(request):
+                    if _is_homeassistant_api(path) and not _is_homeassistant_config_api(path):
+                        if _homeassistant_token_valid(request):
+                            return await call_next(request)
                     return JSONResponse(
                         status_code=401,
                         content={"detail": "Autenticación requerida"},
@@ -455,6 +522,16 @@ def create_app(
             gateway = build_firewall_gateway(config)
             gateway_cache.set(config.id, gateway)
         return config, gateway
+
+    def _resolve_homeassistant_firewall(
+        config_id: Optional[str] = None,
+    ) -> tuple[FirewallConfig, FirewallGateway]:
+        if config_id:
+            return _get_firewall(config_id)
+        enabled_configs = [config for config in config_store.list() if config.enabled]
+        if not enabled_configs:
+            raise HTTPException(status_code=404, detail="No hay firewalls activos configurados")
+        return _get_firewall(enabled_configs[0].id)
 
     def _sync_whitelist_entry(cidr: str, *, remove: bool = False) -> None:
         for config in config_store.list():
@@ -1091,6 +1168,228 @@ def create_app(
                 },
             },
         }
+
+    def _stats_payload_for_homeassistant(config: HomeAssistantConfig) -> Dict[str, Dict[str, object]]:
+        payload = _stats_payload()
+        if not config.stats_include_timeline:
+            payload.get("offenses", {}).pop("timeline", None)
+            payload.get("blocks", {}).pop("timeline", None)
+        return payload
+
+    # ====== Endpoints de Home Assistant ======
+
+    @app.get("/api/homeassistant/config")
+    def get_homeassistant_config(request: Request) -> Dict[str, object]:
+        _require_admin(request)
+        config = homeassistant_config_store.get_config()
+        payload = config.to_dict()
+        payload["api_token"] = _mask_secret(config.api_token)
+        return payload
+
+    @app.put("/api/homeassistant/config")
+    def update_homeassistant_config(
+        request: Request, payload: HomeAssistantConfigInput
+    ) -> Dict[str, object]:
+        _require_admin(request)
+        current = homeassistant_config_store.get_config()
+        api_token = payload.api_token.strip() if payload.api_token else None
+        masked_current = _mask_secret(current.api_token) if current.api_token else None
+        if api_token and masked_current and api_token == masked_current:
+            api_token = current.api_token
+        if payload.rotate_token:
+            api_token = homeassistant_config_store.rotate_token()
+        config = HomeAssistantConfig(
+            enabled=payload.enabled,
+            api_token=api_token or current.api_token,
+            expose_stats=payload.expose_stats,
+            expose_signals=payload.expose_signals,
+            expose_heatmap=payload.expose_heatmap,
+            heatmap_source=payload.heatmap_source,
+            heatmap_window=payload.heatmap_window,
+            heatmap_limit=payload.heatmap_limit,
+            expose_rules=payload.expose_rules,
+            expose_firewall_rules=payload.expose_firewall_rules,
+            stats_include_timeline=payload.stats_include_timeline,
+        )
+        homeassistant_config_store.save_config(config)
+        response: Dict[str, object] = {"status": "ok", "message": "Configuración actualizada"}
+        if payload.rotate_token:
+            response["api_token"] = api_token
+        return response
+
+    @app.get("/api/homeassistant/stats")
+    def homeassistant_stats() -> Dict[str, Dict[str, object]]:
+        config = homeassistant_config_store.get_config()
+        _require_homeassistant_feature(config, "expose_stats")
+        return _stats_payload_for_homeassistant(config)
+
+    @app.get("/api/homeassistant/signals")
+    def homeassistant_signals(client_id: str = "default") -> Dict[str, object]:
+        config = homeassistant_config_store.get_config()
+        _require_homeassistant_feature(config, "expose_signals")
+
+        state = homeassistant_config_store.get_client_state(client_id)
+        stored_offense_id = state.get("last_offense_id") or 0
+        stored_block_id = state.get("last_block_id") or 0
+
+        last_offense = offense_store.latest()
+        last_block = block_manager.latest()
+
+        next_offense_id = stored_offense_id
+        next_block_id = stored_block_id
+
+        offense_new = False
+        offense_new_count = 0
+        if last_offense:
+            if stored_offense_id and last_offense.id < stored_offense_id:
+                stored_offense_id = 0
+            if stored_offense_id <= 0:
+                next_offense_id = last_offense.id
+            else:
+                offense_new_count = offense_store.count_since_id(stored_offense_id)
+                offense_new = offense_new_count > 0
+                if offense_new:
+                    next_offense_id = last_offense.id
+        elif stored_offense_id:
+            next_offense_id = 0
+
+        block_new = False
+        block_new_count = 0
+        if last_block:
+            if stored_block_id and last_block.id < stored_block_id:
+                stored_block_id = 0
+            if stored_block_id <= 0:
+                next_block_id = last_block.id
+            else:
+                block_new_count = block_manager.count_since_id(stored_block_id)
+                block_new = block_new_count > 0
+                if block_new:
+                    next_block_id = last_block.id
+        elif stored_block_id:
+            next_block_id = 0
+
+        if next_offense_id != stored_offense_id or next_block_id != stored_block_id:
+            homeassistant_config_store.update_client_state(
+                client_id,
+                last_offense_id=next_offense_id,
+                last_block_id=next_block_id,
+            )
+
+        return {
+            "client_id": client_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "offense": {
+                "new": offense_new,
+                "new_count": offense_new_count,
+                "last_id": last_offense.id if last_offense else None,
+                "last": _serialize_offense(last_offense) if last_offense else None,
+            },
+            "block": {
+                "new": block_new,
+                "new_count": block_new_count,
+                "last_id": last_block.id if last_block else None,
+                "last": _serialize_block(last_block) if last_block else None,
+            },
+        }
+
+    @app.get("/api/homeassistant/heatmap")
+    def homeassistant_heatmap(
+        window: Optional[str] = None,
+        limit: Optional[int] = None,
+        source: Optional[str] = None,
+    ) -> Dict[str, object]:
+        config = homeassistant_config_store.get_config()
+        _require_homeassistant_feature(config, "expose_heatmap")
+        selected_source = (source or config.heatmap_source or "offenses").lower()
+        if selected_source not in {"offenses", "blocks"}:
+            raise HTTPException(status_code=400, detail="Origen de heatmap inválido")
+        selected_window = window or config.heatmap_window
+        selected_limit = limit if limit is not None else config.heatmap_limit
+        if selected_source == "blocks":
+            return offenses_heatmap(limit=selected_limit, window=selected_window)
+        return public_heatmap(limit=selected_limit, window=selected_window)
+
+    @app.get("/api/homeassistant/rules")
+    def homeassistant_rules() -> Dict[str, object]:
+        config = homeassistant_config_store.get_config()
+        _require_homeassistant_feature(config, "expose_rules")
+        rules = [_serialize_rule(rule) for rule in rule_store.list()]
+        return {"rules": rules, "count": len(rules)}
+
+    @app.get("/api/homeassistant/rules/{rule_id}")
+    def homeassistant_rule(rule_id: int) -> Dict[str, object]:
+        config = homeassistant_config_store.get_config()
+        _require_homeassistant_feature(config, "expose_rules")
+        rule = rule_store.get(rule_id)
+        if not rule:
+            raise HTTPException(status_code=404, detail="Regla no encontrada")
+        return _serialize_rule(rule)
+
+    @app.post("/api/homeassistant/rules/{rule_id}/toggle")
+    def homeassistant_toggle_rule(rule_id: int, enabled: Optional[bool] = None) -> Dict[str, object]:
+        config = homeassistant_config_store.get_config()
+        _require_homeassistant_feature(config, "expose_rules")
+        if enabled is None:
+            new_state = rule_store.toggle(rule_id)
+            if new_state is False:
+                if not rule_store.get(rule_id):
+                    raise HTTPException(status_code=404, detail="Regla no encontrada")
+        else:
+            if not rule_store.set_enabled(rule_id, enabled):
+                raise HTTPException(status_code=404, detail="Regla no encontrada")
+            new_state = enabled
+        return {"id": rule_id, "enabled": new_state}
+
+    @app.get("/api/homeassistant/firewall/rules")
+    def homeassistant_firewall_rules(config_id: Optional[str] = None) -> Dict[str, object]:
+        config = homeassistant_config_store.get_config()
+        _require_homeassistant_feature(config, "expose_firewall_rules")
+        firewall_config, gateway = _resolve_homeassistant_firewall(config_id)
+        try:
+            rules = gateway.list_firewall_rules()
+            return {
+                "config_id": firewall_config.id,
+                "rules": rules,
+                "count": len(rules),
+            }
+        except NotImplementedError:
+            raise HTTPException(
+                status_code=501,
+                detail="Listado de reglas no soportado para este firewall",
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @app.post("/api/homeassistant/firewall/rules/{rule_uuid}/toggle")
+    def homeassistant_toggle_firewall_rule(
+        rule_uuid: str,
+        enabled: bool = True,
+        config_id: Optional[str] = None,
+    ) -> Dict[str, object]:
+        config = homeassistant_config_store.get_config()
+        _require_homeassistant_feature(config, "expose_firewall_rules")
+        firewall_config, gateway = _resolve_homeassistant_firewall(config_id)
+        try:
+            success = gateway.toggle_firewall_rule(rule_uuid, enabled)
+            if not success:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No se pudo cambiar el estado de la regla",
+                )
+            return {
+                "status": "ok",
+                "config_id": firewall_config.id,
+                "rule_uuid": rule_uuid,
+                "enabled": enabled,
+                "message": f"Regla {'habilitada' if enabled else 'deshabilitada'} correctamente",
+            }
+        except NotImplementedError:
+            raise HTTPException(
+                status_code=501,
+                detail="Toggle de reglas no soportado para este firewall",
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
 
     @app.get("/api/stats")
     def stats() -> Dict[str, Dict[str, object]]:

@@ -68,6 +68,32 @@ class OffenseRuleStore:
             for row in rows
         ]
 
+    def get(self, rule_id: int) -> Optional[OffenseRule]:
+        with self._connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id, plugin, event_id, severity, description, min_last_hour, min_total,
+                       min_blocks_total, block_minutes, enabled
+                FROM offense_rules
+                WHERE id = ?;
+                """,
+                (rule_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return OffenseRule(
+            id=row[0],
+            plugin=row[1],
+            event_id=row[2],
+            severity=row[3],
+            description=row[4],
+            min_last_hour=row[5],
+            min_total=row[6],
+            min_blocks_total=row[7],
+            block_minutes=row[8],
+            enabled=bool(row[9]) if len(row) > 9 else True,
+        )
+
     def add(self, rule: OffenseRule) -> OffenseRule:
         with self._connection() as conn:
             cursor = conn.execute(
@@ -135,6 +161,17 @@ class OffenseRuleStore:
                 (int(new_state), rule_id),
             )
             return new_state
+
+    def set_enabled(self, rule_id: int, enabled: bool) -> bool:
+        """Fuerza el estado de una regla. Retorna False si no existe."""
+        with self._connection() as conn:
+            cursor = conn.execute(
+                "UPDATE offense_rules SET enabled = ? WHERE id = ?;",
+                (int(enabled), rule_id),
+            )
+            if cursor.rowcount == 0:
+                return False
+        return True
 
     def delete(self, rule_id: int) -> None:
         with self._connection() as conn:

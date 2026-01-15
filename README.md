@@ -226,6 +226,7 @@ Ver [SECURITY_REVIEW.md](SECURITY_REVIEW.md) para el informe completo de auditor
 - [AGENTS.md](AGENTS.md) - Guía para contribuidores y mantenedores
 - [CHANGELOG.md](CHANGELOG.md) - Historial de cambios
 - [SECURITY_REVIEW.md](SECURITY_REVIEW.md) - Auditoría de seguridad
+- [docs/HOME_ASSISTANT.md](docs/HOME_ASSISTANT.md) - Integración con Home Assistant
 - [scripts/README.md](scripts/README.md) - Documentación de scripts
 - [reference_docs/](reference_docs/) - Documentación de APIs externas
 - [mimosanpm-agent/README.md](mimosanpm-agent/README.md) - Agente MimosaNPM

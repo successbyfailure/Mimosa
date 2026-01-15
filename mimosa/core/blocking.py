@@ -69,6 +69,42 @@ class BlockManager:
     def _connection(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
 
+    def _deserialize_row(self, row: tuple) -> BlockEntry:
+        created_at = datetime.fromisoformat(row[4])
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+
+        expires_at = None
+        if row[5]:
+            expires_at = datetime.fromisoformat(row[5])
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        synced_at = None
+        if row[7]:
+            synced_at = datetime.fromisoformat(row[7])
+            if synced_at.tzinfo is None:
+                synced_at = synced_at.replace(tzinfo=timezone.utc)
+
+        removed_at = None
+        if row[8]:
+            removed_at = datetime.fromisoformat(row[8])
+            if removed_at.tzinfo is None:
+                removed_at = removed_at.replace(tzinfo=timezone.utc)
+
+        return BlockEntry(
+            id=row[0],
+            ip=row[1],
+            reason=row[2],
+            source=row[3],
+            created_at=created_at,
+            expires_at=expires_at,
+            active=bool(row[6]),
+            synced_at=synced_at,
+            removed_at=removed_at,
+            sync_with_firewall=bool(row[9]) if len(row) > 9 else True,
+        )
+
     # Persistencia y configuración -------------------------------------------------
     def _load_state(self) -> None:
         """Recupera el estado de bloqueos desde disco."""
@@ -84,41 +120,7 @@ class BlockManager:
                 """
             ).fetchall()
         for row in rows:
-            # Asegurar que todos los datetimes sean timezone-aware
-            created_at = datetime.fromisoformat(row[4])
-            if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=timezone.utc)
-
-            expires_at = None
-            if row[5]:
-                expires_at = datetime.fromisoformat(row[5])
-                if expires_at.tzinfo is None:
-                    expires_at = expires_at.replace(tzinfo=timezone.utc)
-
-            synced_at = None
-            if row[7]:
-                synced_at = datetime.fromisoformat(row[7])
-                if synced_at.tzinfo is None:
-                    synced_at = synced_at.replace(tzinfo=timezone.utc)
-
-            removed_at = None
-            if row[8]:
-                removed_at = datetime.fromisoformat(row[8])
-                if removed_at.tzinfo is None:
-                    removed_at = removed_at.replace(tzinfo=timezone.utc)
-
-            entry = BlockEntry(
-                id=row[0],
-                ip=row[1],
-                reason=row[2],
-                source=row[3],
-                created_at=created_at,
-                expires_at=expires_at,
-                active=bool(row[6]),
-                synced_at=synced_at,
-                removed_at=removed_at,
-                sync_with_firewall=bool(row[9]) if len(row) > 9 else True,
-            )
+            entry = self._deserialize_row(row)
             self._history.append(entry)
             if entry.active and (not entry.expires_at or entry.expires_at > datetime.now(timezone.utc)):
                 self._blocks[entry.ip] = entry
@@ -271,6 +273,22 @@ class BlockManager:
 
         return sorted(self._history, key=lambda entry: entry.created_at, reverse=True)
 
+    def latest(self) -> Optional[BlockEntry]:
+        """Devuelve el último bloqueo registrado."""
+
+        with self._connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id, ip, reason, source, created_at, expires_at, active, synced_at, removed_at, sync_with_firewall
+                FROM blocks
+                ORDER BY id DESC
+                LIMIT 1;
+                """
+            ).fetchone()
+        if not row:
+            return None
+        return self._deserialize_row(row)
+
     def history_for_ip(self, ip: str) -> List[BlockEntry]:
         return [entry for entry in self._history if entry.ip == ip]
 
@@ -283,6 +301,18 @@ class BlockManager:
         """Número total de bloqueos registrados."""
 
         return len(self._history)
+
+    def count_since_id(self, last_id: int) -> int:
+        """Cuenta bloqueos con id mayor al especificado."""
+
+        if last_id <= 0:
+            return self.count_all()
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM blocks WHERE id > ?;",
+                (last_id,),
+            ).fetchone()
+        return int(row[0]) if row else 0
 
     def count_since(self, since: datetime) -> int:
         """Cuenta bloqueos creados a partir de un instante dado."""

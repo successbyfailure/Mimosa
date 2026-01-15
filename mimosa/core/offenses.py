@@ -165,6 +165,33 @@ class OffenseStore:
 
         return offenses
 
+    def latest(self) -> Optional[OffenseRecord]:
+        """Devuelve la última ofensa registrada."""
+
+        with self._connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id, source_ip, description, severity, host, path, user_agent, context, created_at
+                FROM offenses
+                ORDER BY id DESC
+                LIMIT 1;
+                """
+            ).fetchone()
+        if not row:
+            return None
+        context = json.loads(row[7]) if row[7] else None
+        return OffenseRecord(
+            id=row[0],
+            source_ip=row[1],
+            description=row[2],
+            severity=row[3],
+            host=row[4],
+            path=row[5],
+            user_agent=row[6],
+            context=context,
+            created_at=datetime.fromisoformat(row[8]),
+        )
+
     def list_recent_by_description_prefix(
         self, prefix: str, limit: int = 50
     ) -> List[OffenseRecord]:
@@ -273,6 +300,18 @@ class OffenseStore:
 
         with self._connection() as conn:
             row = conn.execute("SELECT COUNT(*) FROM offenses;").fetchone()
+        return int(row[0]) if row else 0
+
+    def count_since_id(self, last_id: int) -> int:
+        """Cuenta ofensas con id mayor al especificado."""
+
+        if last_id <= 0:
+            return self.count_all()
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM offenses WHERE id > ?;",
+                (last_id,),
+            ).fetchone()
         return int(row[0]) if row else 0
 
     def count_by_ip(self, ip: str) -> int:

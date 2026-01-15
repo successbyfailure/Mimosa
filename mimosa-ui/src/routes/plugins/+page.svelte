@@ -189,7 +189,24 @@
 
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      throw new Error(payload?.detail || 'Error en la solicitud');
+      let detail = payload?.detail;
+      let message = 'Error en la solicitud';
+      if (detail) {
+        if (typeof detail === 'string') {
+          message = detail;
+        } else if (detail?.message && typeof detail.message === 'string') {
+          message = detail.message;
+        } else {
+          try {
+            message = JSON.stringify(detail);
+          } catch {
+            message = String(detail);
+          }
+        }
+      }
+      const error = new Error(message);
+      (error as Error & { payload?: unknown }).payload = payload;
+      throw error;
     }
 
     if (response.status === 204) {
@@ -416,7 +433,19 @@
       portMessage = 'Port Detector actualizado';
     } catch (err) {
       if (err instanceof Error) {
-        portError = err.message;
+        const payload = (err as Error & { payload?: any }).payload;
+        if (payload?.detail?.failed_ports?.length) {
+          const ports = payload.detail.failed_ports
+            .map((entry: { protocol?: string; port?: number; message?: string }) => {
+              const portLabel = `${entry.protocol ?? '?'}:${entry.port ?? '?'}`;
+              const detail = entry.message ? ` (${entry.message})` : '';
+              return `${portLabel}${detail}`;
+            })
+            .join(', ');
+          portError = `${err.message}${ports ? ` (puertos con error: ${ports})` : ''}`;
+        } else {
+          portError = err.message;
+        }
       } else {
         try {
           portError = typeof err === 'string' ? err : JSON.stringify(err);

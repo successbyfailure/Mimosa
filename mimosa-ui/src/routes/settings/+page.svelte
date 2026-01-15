@@ -5,6 +5,7 @@
   import LocationPicker from '$lib/components/maps/LocationPicker.svelte';
   import TelegramBotSettings from '$lib/components/settings/TelegramBotSettings.svelte';
   import FirewallAdminSettings from '$lib/components/settings/FirewallAdminSettings.svelte';
+  import HomeAssistantSettings from '$lib/components/settings/HomeAssistantSettings.svelte';
 
   type BlockingSettings = {
     default_duration_minutes: number;
@@ -24,13 +25,14 @@
   let locationError: string | null = null;
   let savingLocation = false;
 
-  type SettingsTab = 'blocking' | 'location' | 'stats' | 'telegram' | 'firewall';
+  type SettingsTab = 'blocking' | 'location' | 'stats' | 'telegram' | 'firewall' | 'homeassistant';
   const tabs: { value: SettingsTab; label: string }[] = [
     { value: 'blocking', label: 'Bloqueo' },
     { value: 'location', label: 'Ubicacion' },
     { value: 'stats', label: 'Estadisticas' },
     { value: 'telegram', label: 'Telegram' },
-    { value: 'firewall', label: 'Firewall' }
+    { value: 'firewall', label: 'Firewall' },
+    { value: 'homeassistant', label: 'Home Assistant' }
   ];
   let activeTab: SettingsTab = 'blocking';
 
@@ -157,7 +159,8 @@
       value === 'location' ||
       value === 'stats' ||
       value === 'telegram' ||
-      value === 'firewall';
+      value === 'firewall' ||
+      value === 'homeassistant';
   };
 
   const setTab = (tab: SettingsTab) => {
@@ -295,4 +298,6 @@
   <TelegramBotSettings />
 {:else if activeTab === 'firewall'}
   <FirewallAdminSettings />
+{:else if activeTab === 'homeassistant'}
+  <HomeAssistantSettings />
 {/if}
