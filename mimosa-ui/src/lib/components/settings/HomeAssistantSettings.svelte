@@ -116,12 +116,21 @@
             API token
           </div>
           <div style="display: flex; gap: 8px; align-items: center;">
-            <input
-              type={showToken ? 'text' : 'password'}
-              placeholder="Token para Home Assistant"
-              bind:value={config.api_token}
-              style="flex: 1;"
-            />
+            {#if showToken}
+              <input
+                type="text"
+                placeholder="Token para Home Assistant"
+                bind:value={config.api_token}
+                style="flex: 1;"
+              />
+            {:else}
+              <input
+                type="password"
+                placeholder="Token para Home Assistant"
+                bind:value={config.api_token}
+                style="flex: 1;"
+              />
+            {/if}
             <button class="ghost" type="button" on:click={() => (showToken = !showToken)}>
               {showToken ? 'Ocultar' : 'Mostrar'}
             </button>
