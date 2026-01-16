@@ -39,13 +39,14 @@
 
   $: isLogin = $page.url.pathname.startsWith('/login');
   $: isPublicHome = $page.url.pathname === '/';
-  $: if (!isLogin && !isPublicHome && !$authStore.loading && !$authStore.user) {
+  $: isPublicMap = $page.url.pathname.startsWith('/public-map');
+  $: if (!isLogin && !isPublicHome && !isPublicMap && !$authStore.loading && !$authStore.user) {
     const next = encodeURIComponent(`${$page.url.pathname}${$page.url.search}`);
     goto(`/login?next=${next}`);
   }
 </script>
 
-{#if isLogin || (isPublicHome && !$authStore.user)}
+{#if isLogin || (isPublicHome && !$authStore.user) || isPublicMap}
   <slot />
 {:else}
   <div class={`app-shell ${sidebarOpen ? '' : 'collapsed'}`}>
