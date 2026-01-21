@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import select
 import socket
 import threading
@@ -69,7 +70,10 @@ class PortDetectorService:
         self._sockets: List[socket.socket] = []
         self._threads: List[threading.Thread] = []
         self.config = PortDetectorConfig()
-        self._stats_path = Path(stats_path or Path("data/portdetector_stats.json"))
+        self._poll_interval = float(os.getenv("MIMOSA_PORTDETECTOR_POLL_INTERVAL", "0.05"))
+        if stats_path is None:
+            stats_path = Path(offense_store.db_path).with_name("portdetector_stats.json")
+        self._stats_path = Path(stats_path)
         self._stats_path.parent.mkdir(parents=True, exist_ok=True)
         self._port_hits = self._load_stats()
 
@@ -137,7 +141,7 @@ class PortDetectorService:
         udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         udp_sock.bind(("0.0.0.0", port))
-        udp_sock.settimeout(1.0)
+        udp_sock.settimeout(self._poll_interval)
         self._sockets.append(udp_sock)
 
         thread = threading.Thread(
@@ -149,7 +153,7 @@ class PortDetectorService:
     def _tcp_loop(self, server: socket.socket, port: int, severity: str) -> None:
         while not self._stop_event.is_set():
             try:
-                readable, _, _ = select.select([server], [], [], 1.0)
+                readable, _, _ = select.select([server], [], [], self._poll_interval)
             except (ValueError, OSError):  # pragma: no cover - cierre abrupto
                 break
             if server not in readable:
@@ -178,12 +182,18 @@ class PortDetectorService:
     def _register_hit(self, source_ip: str, port: int, protocol: str, severity: str) -> None:
         description = f"portdetector {protocol.upper()}:{port}"
         self._increment_stat(protocol, port)
+        event_id = f"{protocol}:{port}"
         self.offense_store.record(
             source_ip=source_ip,
             description=description,
             severity=severity or self.config.default_severity,
+            plugin="portdetector",
+            event_id=event_id,
+            protocol=protocol,
+            dst_port=port,
             context={
                 "plugin": "portdetector",
+                "event_id": event_id,
                 "protocol": protocol,
                 "port": port,
                 "config": asdict(self.config),

@@ -8,6 +8,9 @@ import os
 from pathlib import Path
 from typing import Dict, List
 
+from mimosa.core.database import DEFAULT_DB_PATH, get_database
+from mimosa.core.storage import ensure_database
+
 
 DEFAULT_PROXYTRAP_POLICIES = [
     {"pattern": "phpmyadmin.*", "severity": "alto"},
@@ -148,11 +151,17 @@ class MimosaNpmIgnoreRule:
 
 
 class PluginConfigStore:
-    """Almacena configuraciones de plugins en un fichero JSON."""
+    """Almacena configuraciones de plugins en la base de datos."""
 
-    def __init__(self, path: Path | str = Path("data/plugins.json")) -> None:
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(
+        self,
+        db_path: Path | str = DEFAULT_DB_PATH,
+        legacy_path: Path | str | None = None,
+    ) -> None:
+        self.db_path = ensure_database(db_path)
+        self._db = get_database(db_path=self.db_path)
+        self._legacy_path = Path(legacy_path or "data/plugins.json")
+        self._legacy_path.parent.mkdir(parents=True, exist_ok=True)
         self._plugins: Dict[str, Dict[str, object]] = {}
         self._load()
         if not self._plugins:
@@ -170,17 +179,47 @@ class PluginConfigStore:
         self._save()
 
     def _load(self) -> None:
-        if not self.path.exists():
-            return
-        with self.path.open("r", encoding="utf-8") as fh:
-            self._plugins = json.load(fh)
-        if "dummy" in self._plugins:
-            self._plugins.pop("dummy", None)
-            self._save()
+        self._plugins = {}
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT name, payload FROM plugin_configs;"
+            ).fetchall()
+        if not rows and self._legacy_path.exists():
+            try:
+                with self._legacy_path.open("r", encoding="utf-8") as fh:
+                    self._plugins = json.load(fh)
+            except (json.JSONDecodeError, OSError):
+                self._plugins = {}
+            if "dummy" in self._plugins:
+                self._plugins.pop("dummy", None)
+            if self._plugins:
+                self._save()
+            with self._db.connect() as conn:
+                rows = conn.execute(
+                    "SELECT name, payload FROM plugin_configs;"
+                ).fetchall()
+        for row in rows:
+            name = row[0]
+            payload = row[1]
+            try:
+                data = json.loads(payload)
+            except (json.JSONDecodeError, TypeError):
+                data = {}
+            if isinstance(data, dict):
+                self._plugins[name] = data
 
     def _save(self) -> None:
-        with self.path.open("w", encoding="utf-8") as fh:
-            json.dump(self._plugins, fh, indent=2)
+        with self._db.connect() as conn:
+            conn.execute("DELETE FROM plugin_configs;")
+            rows = [
+                (name, json.dumps(payload))
+                for name, payload in self._plugins.items()
+            ]
+            if rows:
+                conn.executemany(
+                    "INSERT INTO plugin_configs (name, payload) VALUES (?, ?);",
+                    rows,
+                )
 
     def list(self) -> List[Dict[str, object]]:
         """Devuelve todas las configuraciones conocidas."""

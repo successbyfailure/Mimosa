@@ -154,8 +154,11 @@ class ProxyTrapService:
             severity=severity,
             host=domain,
             path=path,
+            plugin="proxytrap",
+            event_id=domain,
             context={
                 "plugin": "proxytrap",
+                "event_id": domain,
                 "matched_policy": matched or "default",
             },
         )
@@ -223,4 +226,3 @@ class ProxyTrapService:
             self._domain_hits = {}
             if self._stats_path.exists():
                 self._stats_path.unlink()
-

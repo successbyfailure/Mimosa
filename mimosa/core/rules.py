@@ -13,9 +13,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-import sqlite3
 
-from mimosa.core.storage import DEFAULT_DB_PATH, ensure_database
+from mimosa.core.database import DEFAULT_DB_PATH, get_database, insert_returning_id
+from mimosa.core.storage import ensure_database
 
 from mimosa.core.blocking import BlockEntry, BlockManager
 from mimosa.core.offenses import OffenseStore
@@ -37,9 +37,10 @@ class OffenseRuleStore:
 
     def __init__(self, db_path: str | Path = DEFAULT_DB_PATH) -> None:
         self.db_path = ensure_database(db_path)
+        self._db = get_database(db_path=self.db_path)
 
-    def _connection(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path)
+    def _connection(self):
+        return self._db.connect()
 
     def list(self) -> List[OffenseRule]:
         with self._connection() as conn:
@@ -96,7 +97,8 @@ class OffenseRuleStore:
 
     def add(self, rule: OffenseRule) -> OffenseRule:
         with self._connection() as conn:
-            cursor = conn.execute(
+            rule.id = insert_returning_id(
+                conn,
                 """
                 INSERT INTO offense_rules
                     (plugin, event_id, severity, description, min_last_hour, min_total, min_blocks_total, block_minutes, enabled)
@@ -113,8 +115,8 @@ class OffenseRuleStore:
                     rule.block_minutes,
                     int(rule.enabled),
                 ),
+                self._db.backend,
             )
-            rule.id = cursor.lastrowid
         return rule
 
     def update(self, rule_id: int, rule: OffenseRule) -> Optional[OffenseRule]:

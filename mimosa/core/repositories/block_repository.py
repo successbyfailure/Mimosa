@@ -1,13 +1,13 @@
 """Repository para persistencia de bloqueos en SQLite."""
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
 from mimosa.core.domain import BlockEntry
-from mimosa.core.storage import DEFAULT_DB_PATH, ensure_database
+from mimosa.core.database import DEFAULT_DB_PATH, get_database, insert_returning_id
+from mimosa.core.storage import ensure_database
 
 
 class BlockRepository:
@@ -15,14 +15,16 @@ class BlockRepository:
 
     def __init__(self, db_path: Path | str = DEFAULT_DB_PATH) -> None:
         self.db_path = ensure_database(db_path)
+        self._db = get_database(db_path=self.db_path)
 
-    def _connection(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path)
+    def _connection(self):
+        return self._db.connect()
 
     def save(self, block: BlockEntry) -> BlockEntry:
         """Inserta un nuevo bloqueo en la base de datos."""
         with self._connection() as conn:
-            cursor = conn.execute(
+            block.id = insert_returning_id(
+                conn,
                 """
                 INSERT INTO blocks (ip, reason, source, created_at, expires_at, active, sync_with_firewall)
                 VALUES (?, ?, ?, ?, ?, ?, ?);
@@ -36,8 +38,8 @@ class BlockRepository:
                     int(block.active),
                     int(block.sync_with_firewall),
                 ),
+                self._db.backend,
             )
-            block.id = cursor.lastrowid
         return block
 
     def find_by_ip(self, ip: str) -> Optional[BlockEntry]:

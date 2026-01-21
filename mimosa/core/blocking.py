@@ -11,13 +11,18 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
-import sqlite3
 import ipaddress
 import logging
 import threading
 from pathlib import Path
 
-from mimosa.core.storage import DEFAULT_DB_PATH, ensure_database
+from mimosa.core.database import (
+    DEFAULT_DB_PATH,
+    DatabaseError,
+    get_database,
+    insert_returning_id,
+)
+from mimosa.core.storage import ensure_database
 
 # Importar modelo de dominio desde nueva ubicación
 from mimosa.core.domain.block import BlockEntry  # noqa: F401
@@ -54,6 +59,7 @@ class BlockManager:
         whitelist_checker: Callable[[str], bool] | None = None,
     ) -> None:
         self.db_path = ensure_database(db_path)
+        self._db = get_database(db_path=self.db_path)
         self.default_duration_minutes = default_duration_minutes
         self.sync_interval_seconds = sync_interval_seconds
         self._blocks: Dict[str, BlockEntry] = {}
@@ -66,8 +72,73 @@ class BlockManager:
         self._load_state()
         self._load_settings()
 
-    def _connection(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path)
+    def _connection(self):
+        return self._db.connect()
+
+    def _touch_ip_profile(self, conn, ip: str, *, seen_at: datetime) -> None:
+        row = conn.execute(
+            "SELECT ip FROM ip_profiles WHERE ip = ? LIMIT 1;",
+            (ip,),
+        ).fetchone()
+        if row:
+            conn.execute(
+                """
+                UPDATE ip_profiles
+                SET last_seen = ?,
+                    last_block_at = CASE
+                        WHEN last_block_at IS NULL OR last_block_at < ? THEN ?
+                        ELSE last_block_at
+                    END,
+                    blocks_count = COALESCE(blocks_count, 0) + 1
+                WHERE ip = ?;
+                """,
+                (
+                    seen_at.isoformat(),
+                    seen_at.isoformat(),
+                    seen_at.isoformat(),
+                    ip,
+                ),
+            )
+            return
+        conn.execute(
+            """
+            INSERT INTO ip_profiles (
+                ip, geo, whois, reverse_dns, first_seen, last_seen, enriched_at,
+                ip_type, ip_type_confidence, ip_type_source, ip_type_provider,
+                isp, org, asn, is_proxy, is_mobile, is_hosting, offenses_count,
+                blocks_count, last_offense_at, last_block_at, country_code,
+                risk_score, labels, enriched_source
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            (
+                ip,
+                None,
+                None,
+                None,
+                seen_at.isoformat(),
+                seen_at.isoformat(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                0,
+                1,
+                None,
+                seen_at.isoformat(),
+                None,
+                None,
+                None,
+                None,
+            ),
+        )
 
     def _deserialize_row(self, row: tuple) -> BlockEntry:
         created_at = datetime.fromisoformat(row[4])
@@ -92,6 +163,12 @@ class BlockManager:
             if removed_at.tzinfo is None:
                 removed_at = removed_at.replace(tzinfo=timezone.utc)
 
+        acknowledged_at = None
+        if len(row) > 14 and row[14]:
+            acknowledged_at = datetime.fromisoformat(row[14])
+            if acknowledged_at.tzinfo is None:
+                acknowledged_at = acknowledged_at.replace(tzinfo=timezone.utc)
+
         return BlockEntry(
             id=row[0],
             ip=row[1],
@@ -103,6 +180,13 @@ class BlockManager:
             synced_at=synced_at,
             removed_at=removed_at,
             sync_with_firewall=bool(row[9]) if len(row) > 9 else True,
+            trigger_offense_id=row[10] if len(row) > 10 else None,
+            rule_id=row[11] if len(row) > 11 else None,
+            firewall_id=row[12] if len(row) > 12 else None,
+            acknowledged_by=row[13] if len(row) > 13 else None,
+            acknowledged_at=acknowledged_at,
+            reason_code=row[15] if len(row) > 15 else None,
+            expires_at_epoch=row[16] if len(row) > 16 else None,
         )
 
     # Persistencia y configuración -------------------------------------------------
@@ -114,9 +198,10 @@ class BlockManager:
         with self._connection() as conn:
             rows = conn.execute(
                 """
-                SELECT id, ip, reason, source, created_at, expires_at, active, synced_at, removed_at, sync_with_firewall
+                SELECT id, ip, reason, source, created_at, expires_at, active, synced_at, removed_at, sync_with_firewall,
+                       trigger_offense_id, rule_id, firewall_id, acknowledged_by, acknowledged_at, reason_code, expires_at_epoch
                 FROM blocks
-                ORDER BY datetime(created_at) DESC;
+                ORDER BY created_at DESC;
                 """
             ).fetchall()
         for row in rows:
@@ -127,7 +212,10 @@ class BlockManager:
 
     def _load_settings(self) -> None:
         with self._connection() as conn:
-            rows = conn.execute("SELECT key, value FROM settings WHERE key LIKE 'block_%';").fetchall()
+            rows = conn.execute(
+                "SELECT key, value FROM settings WHERE key LIKE ?;",
+                ("block_%",),
+            ).fetchall()
         settings = {row[0]: row[1] for row in rows}
         if "block_default_minutes" in settings:
             self.default_duration_minutes = int(settings["block_default_minutes"])
@@ -163,6 +251,10 @@ class BlockManager:
         *,
         source: str = "manual",
         sync_with_firewall: bool = True,
+        trigger_offense_id: Optional[int] = None,
+        rule_id: Optional[str] = None,
+        firewall_id: Optional[str] = None,
+        reason_code: Optional[str] = None,
     ) -> BlockEntry:
         """Añade un bloqueo en memoria y devuelve la entrada creada."""
 
@@ -176,12 +268,18 @@ class BlockManager:
         now = datetime.now(timezone.utc)
         duration = duration_minutes if duration_minutes is not None else self.default_duration_minutes
         expires_at = (now + timedelta(minutes=duration)) if duration and duration > 0 else None
+        expires_at_epoch = int(expires_at.timestamp()) if expires_at else None
 
         with self._connection() as conn:
-            cursor = conn.execute(
+            self._touch_ip_profile(conn, ip, seen_at=now)
+            entry_id = insert_returning_id(
+                conn,
                 """
-                INSERT INTO blocks (ip, reason, source, created_at, expires_at, active, sync_with_firewall)
-                VALUES (?, ?, ?, ?, ?, 1, ?);
+                INSERT INTO blocks (
+                    ip, reason, source, created_at, expires_at, active, sync_with_firewall,
+                    trigger_offense_id, rule_id, firewall_id, reason_code, expires_at_epoch
+                )
+                VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     ip,
@@ -190,9 +288,14 @@ class BlockManager:
                     now.isoformat(),
                     expires_at.isoformat() if expires_at else None,
                     int(sync_with_firewall),
+                    trigger_offense_id,
+                    rule_id,
+                    firewall_id,
+                    reason_code,
+                    expires_at_epoch,
                 ),
+                self._db.backend,
             )
-            entry_id = cursor.lastrowid
 
         entry = BlockEntry(
             id=entry_id,
@@ -202,6 +305,11 @@ class BlockManager:
             expires_at=expires_at,
             source=source,
             sync_with_firewall=sync_with_firewall,
+            trigger_offense_id=trigger_offense_id,
+            rule_id=rule_id,
+            firewall_id=firewall_id,
+            reason_code=reason_code,
+            expires_at_epoch=expires_at_epoch,
         )
 
         with self._lock:
@@ -279,7 +387,8 @@ class BlockManager:
         with self._connection() as conn:
             row = conn.execute(
                 """
-                SELECT id, ip, reason, source, created_at, expires_at, active, synced_at, removed_at, sync_with_firewall
+                SELECT id, ip, reason, source, created_at, expires_at, active, synced_at, removed_at, sync_with_firewall,
+                       trigger_offense_id, rule_id, firewall_id, acknowledged_by, acknowledged_at, reason_code, expires_at_epoch
                 FROM blocks
                 ORDER BY id DESC
                 LIMIT 1;
@@ -322,6 +431,29 @@ class BlockManager:
             entry for entry in self._history
             if _normalize_datetime(entry.created_at) >= since_normalized
         ])
+
+    def counts_by_ip(
+        self,
+        *,
+        since: Optional[datetime] = None,
+        active_only: bool = False,
+    ) -> Dict[str, int]:
+        query = "SELECT ip, COUNT(*) FROM blocks"
+        params: List[object] = []
+        filters: List[str] = []
+        if active_only:
+            filters.append("active = 1")
+            filters.append("(expires_at IS NULL OR expires_at > ?)")
+            params.append(datetime.now(timezone.utc).isoformat())
+        if since is not None:
+            filters.append("created_at >= ?")
+            params.append(_normalize_datetime(since).isoformat())
+        if filters:
+            query += " WHERE " + " AND ".join(filters)
+        query += " GROUP BY ip;"
+        with self._connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return {row[0]: int(row[1]) for row in rows if row and row[0]}
 
     def recent_activity(self, limit: int = 20) -> List[Dict[str, object]]:
         """Historial combinado de altas y bajas de bloqueos."""
@@ -385,9 +517,12 @@ class BlockManager:
         try:
             with self._connection() as conn:
                 conn.execute("DELETE FROM blocks;")
-        except sqlite3.DatabaseError:
-            Path(self.db_path).unlink(missing_ok=True)
-            ensure_database(self.db_path)
+        except DatabaseError:
+            if self._db.backend == "sqlite":
+                Path(self.db_path).unlink(missing_ok=True)
+                ensure_database(self.db_path)
+            else:
+                raise
         self._last_sync = None
         self._load_state()
 

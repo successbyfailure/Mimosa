@@ -93,6 +93,11 @@ class MimosaNpmService:
             host=host,
             path=path,
             user_agent=alert.user_agent,
+            plugin="mimosanpm",
+            event_id=alert_type,
+            event_type=alert.alert_type,
+            status_code=alert.status_code,
+            tags=alert.alert_tags,
             context=sanitized_context,
         )
         self._process_rules(alert_type, alert.source_ip, severity, description)

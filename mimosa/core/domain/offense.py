@@ -23,7 +23,21 @@ class OffenseRecord:
     host: Optional[str] = None
     path: Optional[str] = None
     user_agent: Optional[str] = None
-    context: Optional[Dict[str, str]] = None
+    context: Optional[Dict[str, object]] = None
+    plugin: Optional[str] = None
+    event_id: Optional[str] = None
+    event_type: Optional[str] = None
+    method: Optional[str] = None
+    status_code: Optional[str] = None
+    protocol: Optional[str] = None
+    src_port: Optional[int] = None
+    dst_ip: Optional[str] = None
+    dst_port: Optional[int] = None
+    firewall_id: Optional[str] = None
+    rule_id: Optional[str] = None
+    tags: Optional[str] = None
+    ingested_at: Optional[datetime] = None
+    created_at_epoch: Optional[int] = None
 
 
 @dataclass
@@ -54,6 +68,12 @@ class IpProfile:
     is_proxy: bool = False
     is_mobile: bool = False
     is_hosting: bool = False
+    last_offense_at: Optional[datetime] = None
+    last_block_at: Optional[datetime] = None
+    country_code: Optional[str] = None
+    risk_score: Optional[float] = None
+    labels: Optional[str] = None
+    enriched_source: Optional[str] = None
 
 
 @dataclass

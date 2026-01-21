@@ -67,7 +67,9 @@ class FirewallApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = TemporaryDirectory()
         storage_dir = Path(self._tmp.name)
-        self.config_store = FirewallConfigStore(path=storage_dir / "firewalls.json")
+        self.config_store = FirewallConfigStore(
+            db_path=storage_dir / "mimosa.db", path=storage_dir / "firewalls.json"
+        )
         self.offense_store = OffenseStore(db_path=storage_dir / "mimosa.db")
         self.gateway_patcher = patch(
             "mimosa.web.app.build_firewall_gateway", lambda cfg: MemoryFirewall()
@@ -193,7 +195,9 @@ class FirewallEnvIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = TemporaryDirectory()
         storage_dir = Path(self._tmp.name)
-        self.config_store = FirewallConfigStore(path=storage_dir / "firewalls.json")
+        self.config_store = FirewallConfigStore(
+            db_path=storage_dir / "mimosa.db", path=storage_dir / "firewalls.json"
+        )
         self.offense_store = OffenseStore(db_path=storage_dir / "mimosa.db")
         self.app = create_app(
             offense_store=self.offense_store,

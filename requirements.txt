@@ -7,3 +7,4 @@ jinja2
 itsdangerous
 python-multipart
 python-telegram-bot>=20.0
+psycopg[binary]>=3.1

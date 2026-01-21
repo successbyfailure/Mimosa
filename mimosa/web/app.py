@@ -7,11 +7,12 @@ import logging
 import os
 import re
 import secrets
-import sqlite3
+import threading
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
+from urllib.parse import urlparse, urlunparse
 
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 import httpx
@@ -25,6 +26,13 @@ logger = logging.getLogger(__name__)
 
 from mimosa.core.api import FirewallGateway
 from mimosa.core.blocking import BlockEntry, BlockManager
+from mimosa.core.database import (
+    DatabaseConfigStore,
+    DatabaseError,
+    get_database,
+    get_postgres_database,
+)
+from mimosa.core.database_migration import migrate_sqlite_to_postgres
 from mimosa.core.offenses import IpProfile, OffenseRecord, OffenseStore
 from mimosa.core.plugins import (
     MimosaNpmConfig,
@@ -77,6 +85,7 @@ def _load_app_version() -> str:
 
 
 MIMOSA_LOCATION_KEY = "mimosa_location"
+DB_MIGRATION_STATUS_KEY = "db_migration_status"
 
 
 class FirewallInput(BaseModel):
@@ -114,6 +123,15 @@ class BlockingSettingsInput(BaseModel):
 
     default_duration_minutes: int = 60
     sync_interval_seconds: int = 300
+
+
+class DatabaseConfigInput(BaseModel):
+    """Configuración para backend de base de datos."""
+
+    backend: Literal["sqlite", "postgres"] = "sqlite"
+    postgres_url: str | None = None
+    postgres_ssl_required: bool = True
+    postgres_allow_self_signed: bool = True
 
 
 class MimosaLocationInput(BaseModel):
@@ -215,12 +233,22 @@ class OffenseInput(BaseModel):
     source_ip: str
     plugin: str = "manual"
     event_id: str = "manual"
+    event_type: Optional[str] = None
     description: str
     severity: str = "medio"
     host: Optional[str] = None
     path: Optional[str] = None
     user_agent: Optional[str] = None
-    context: Optional[Dict[str, str]] = None
+    method: Optional[str] = None
+    status_code: Optional[int | str] = None
+    protocol: Optional[str] = None
+    src_port: Optional[int] = None
+    dst_ip: Optional[str] = None
+    dst_port: Optional[int] = None
+    firewall_id: Optional[str] = None
+    rule_id: Optional[str] = None
+    tags: Optional[List[str] | str] = None
+    context: Optional[Dict[str, object]] = None
 
 
 class RuleInput(BaseModel):
@@ -349,13 +377,15 @@ def create_app(
     ui_root = Path(__file__).parent / "static" / "ui"
 
     offense_store = offense_store or OffenseStore()
+    db = get_database(db_path=offense_store.db_path)
+    db_config_store = DatabaseConfigStore()
     block_manager = block_manager or BlockManager(
         db_path=offense_store.db_path, whitelist_checker=offense_store.is_whitelisted
     )
     block_manager.set_whitelist_checker(offense_store.is_whitelisted)
-    config_store = config_store or FirewallConfigStore()
+    config_store = config_store or FirewallConfigStore(db_path=offense_store.db_path)
     rule_store = rule_store or OffenseRuleStore(db_path=offense_store.db_path)
-    plugin_store = PluginConfigStore()
+    plugin_store = PluginConfigStore(db_path=offense_store.db_path)
     user_store = UserStore()
     telegram_config_store = TelegramConfigStore(db_path=offense_store.db_path)
     homeassistant_config_store = HomeAssistantConfigStore(db_path=offense_store.db_path)
@@ -398,6 +428,18 @@ def create_app(
         if len(secret) <= 12:
             return "*" * len(secret)
         return f"{secret[:6]}...{secret[-6:]}"
+
+    def _mask_database_url(url: Optional[str]) -> Optional[str]:
+        if not url:
+            return None
+        parsed = urlparse(url)
+        if not parsed.username or not parsed.password:
+            return url
+        safe_netloc = parsed.netloc.replace(
+            f"{parsed.username}:{parsed.password}",
+            f"{parsed.username}:***",
+        )
+        return urlunparse(parsed._replace(netloc=safe_netloc))
 
     def _extract_homeassistant_token(request: Request) -> Optional[str]:
         token = request.headers.get("X-Mimosa-Token") or request.headers.get(
@@ -667,9 +709,9 @@ def create_app(
         else:
             created_at = created_at.astimezone(timezone.utc)
         description = offense.description or ""
-        plugin = None
+        plugin = offense.plugin
         if offense.context and isinstance(offense.context, dict):
-            plugin = offense.context.get("plugin")
+            plugin = plugin or offense.context.get("plugin")
 
         description_clean = description
         if plugin and description.startswith(f"{plugin}:"):
@@ -691,14 +733,26 @@ def create_app(
             "description": offense.description,
             "description_clean": description_clean,
             "plugin": plugin,
+            "event_id": offense.event_id,
+            "event_type": offense.event_type,
             "reason_text": reason_fields.get("reason_text"),
             "reason_plugin": reason_fields.get("reason_plugin"),
             "reason_counts": reason_fields.get("reason_counts"),
             "severity": offense.severity,
             "created_at": created_at.isoformat(),
+            "ingested_at": offense.ingested_at.isoformat() if offense.ingested_at else None,
             "host": offense.host,
             "path": offense.path,
             "user_agent": offense.user_agent,
+            "method": offense.method,
+            "status_code": offense.status_code,
+            "protocol": offense.protocol,
+            "src_port": offense.src_port,
+            "dst_ip": offense.dst_ip,
+            "dst_port": offense.dst_port,
+            "firewall_id": offense.firewall_id,
+            "rule_id": offense.rule_id,
+            "tags": offense.tags,
             "context": offense.context,
             "lat": geo.get("lat"),
             "lon": geo.get("lon"),
@@ -722,17 +776,17 @@ def create_app(
 
     def _load_setting(key: str) -> Optional[str]:
         try:
-            with sqlite3.connect(offense_store.db_path) as conn:
+            with db.connect() as conn:
                 row = conn.execute(
                     "SELECT value FROM settings WHERE key = ? LIMIT 1;",
                     (key,),
                 ).fetchone()
-        except sqlite3.DatabaseError:
+        except DatabaseError:
             return None
         return row[0] if row else None
 
     def _save_setting(key: str, value: str) -> None:
-        with sqlite3.connect(offense_store.db_path) as conn:
+        with db.connect() as conn:
             conn.execute(
                 """
                 INSERT INTO settings(key, value)
@@ -741,6 +795,43 @@ def create_app(
                 """,
                 (key, value),
             )
+
+    def _load_migration_state() -> Dict[str, object]:
+        raw = _load_setting(DB_MIGRATION_STATUS_KEY)
+        if not raw:
+            return {"state": "idle"}
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return {"state": "idle"}
+        return payload if isinstance(payload, dict) else {"state": "idle"}
+
+    def _save_migration_state(
+        *,
+        state: str,
+        message: Optional[str] = None,
+        details: Optional[Dict[str, object]] = None,
+        started_at: Optional[str] = None,
+        finished_at: Optional[str] = None,
+    ) -> None:
+        payload: Dict[str, object] = {"state": state}
+        if message:
+            payload["message"] = message
+        if details:
+            payload["details"] = details
+        if started_at:
+            payload["started_at"] = started_at
+        if finished_at:
+            payload["finished_at"] = finished_at
+        _save_setting(DB_MIGRATION_STATUS_KEY, json.dumps(payload))
+
+    def _handle_database_error(exc: Exception) -> None:
+        if db.backend != "sqlite":
+            logger.error("Database error", exc_info=exc)
+            raise HTTPException(status_code=503, detail="Error en la base de datos")
+        offense_store.reset()
+        block_manager.reset()
+        proxytrap_service.reset_stats()
 
     def _get_mimosa_location() -> Optional[Dict[str, float]]:
         raw = _load_setting(MIMOSA_LOCATION_KEY)
@@ -834,9 +925,11 @@ def create_app(
             },
         ]
 
-    proxytrap_service.apply_config(plugin_store.get_proxytrap())
-    portdetector_service.apply_config(plugin_store.get_port_detector())
-    mimosanpm_service.apply_config(plugin_store.get_mimosanpm())
+    disable_plugins = os.getenv("MIMOSA_DISABLE_PLUGINS", "false").lower() in {"1", "true", "yes", "on"}
+    if not disable_plugins:
+        proxytrap_service.apply_config(plugin_store.get_proxytrap())
+        portdetector_service.apply_config(plugin_store.get_port_detector())
+        mimosanpm_service.apply_config(plugin_store.get_mimosanpm())
 
     @app.post("/api/auth/login")
     def login(payload: LoginInput, request: Request) -> Dict[str, Dict[str, str]]:
@@ -1119,7 +1212,7 @@ def create_app(
                 current += step
             return filled
 
-        return {
+        payload = {
             "offenses": {
                 "total": offense_store.count_all(),
                 "last_7d": offense_store.count_since(now - seven_days),
@@ -1168,6 +1261,11 @@ def create_app(
                 },
             },
         }
+        if payload["offenses"]["total"] == 0:
+            payload["offenses"]["timeline"] = {"7d": [], "24h": [], "1h": []}
+        if payload["blocks"]["total"] == 0:
+            payload["blocks"]["timeline"] = {"7d": [], "24h": [], "1h": []}
+        return payload
 
     def _stats_payload_for_homeassistant(config: HomeAssistantConfig) -> Dict[str, Dict[str, object]]:
         payload = _stats_payload()
@@ -1401,10 +1499,8 @@ def create_app(
     def stats() -> Dict[str, Dict[str, object]]:
         try:
             return _stats_payload()
-        except sqlite3.DatabaseError:
-            offense_store.reset()
-            block_manager.reset()
-            proxytrap_service.reset_stats()
+        except DatabaseError as exc:
+            _handle_database_error(exc)
             return _stats_payload()
 
     @app.post("/api/stats/reset")
@@ -1425,11 +1521,14 @@ def create_app(
             while True:
                 try:
                     stats_payload = _stats_payload()
-                except sqlite3.DatabaseError:
-                    offense_store.reset()
-                    block_manager.reset()
-                    proxytrap_service.reset_stats()
-                    stats_payload = _stats_payload()
+                except DatabaseError as exc:
+                    if db.backend == "sqlite":
+                        _handle_database_error(exc)
+                        stats_payload = _stats_payload()
+                    else:
+                        logger.error("Database error in websocket", exc_info=exc)
+                        await websocket.close(code=1011)
+                        return
                 offenses = [_serialize_offense(item) for item in offense_store.list_recent(10)]
                 blocks = block_manager.recent_activity(limit=10)
                 await websocket.send_json(
@@ -1844,6 +1943,110 @@ def create_app(
             raise HTTPException(status_code=400, detail="Coordenadas fuera de rango")
         return _set_mimosa_location(payload.lat, payload.lon)
 
+    @app.get("/api/settings/database")
+    def database_settings(request: Request) -> Dict[str, object]:
+        _require_admin(request)
+        config = db_config_store.load()
+        return {
+            "backend": config.backend,
+            "active_backend": db.backend,
+            "postgres_url": _mask_database_url(config.postgres_url),
+            "postgres_ssl_required": config.postgres_ssl_required,
+            "postgres_allow_self_signed": config.postgres_allow_self_signed,
+            "sqlite_path": config.sqlite_path,
+            "migration": _load_migration_state(),
+            "restart_required": config.backend != db.backend,
+        }
+
+    @app.get("/api/settings/database/url")
+    def database_url(request: Request) -> Dict[str, object]:
+        _require_admin(request)
+        config = db_config_store.load()
+        return {"postgres_url": config.postgres_url}
+
+    @app.put("/api/settings/database")
+    def update_database_settings(
+        request: Request, payload: DatabaseConfigInput
+    ) -> Dict[str, object]:
+        _require_admin(request)
+        config = db_config_store.load()
+        config.backend = payload.backend
+        if payload.postgres_url and "***" in payload.postgres_url and config.postgres_url:
+            pass
+        else:
+            config.postgres_url = payload.postgres_url.strip() if payload.postgres_url else None
+        config.postgres_ssl_required = payload.postgres_ssl_required
+        config.postgres_allow_self_signed = payload.postgres_allow_self_signed
+        db_config_store.save(config)
+        return {
+            "backend": config.backend,
+            "active_backend": db.backend,
+            "postgres_url": _mask_database_url(config.postgres_url),
+            "postgres_ssl_required": config.postgres_ssl_required,
+            "postgres_allow_self_signed": config.postgres_allow_self_signed,
+            "sqlite_path": config.sqlite_path,
+            "migration": _load_migration_state(),
+            "restart_required": config.backend != db.backend,
+        }
+
+    @app.post("/api/settings/database/test")
+    def test_database_connection(
+        request: Request, payload: DatabaseConfigInput
+    ) -> Dict[str, str]:
+        _require_admin(request)
+        url = payload.postgres_url
+        if not url:
+            raise HTTPException(status_code=400, detail="Falta la URL de Postgres")
+        try:
+            test_db = get_postgres_database(
+                url,
+                ssl_required=payload.postgres_ssl_required,
+                allow_self_signed=payload.postgres_allow_self_signed,
+            )
+            with test_db.connect() as conn:
+                conn.execute("SELECT 1;")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"status": "ok"}
+
+    @app.post("/api/settings/database/migrate")
+    def migrate_database(request: Request) -> Dict[str, object]:
+        _require_admin(request)
+        state = _load_migration_state()
+        if state.get("state") == "running":
+            raise HTTPException(status_code=409, detail="Ya hay una migración en curso")
+        config = db_config_store.load()
+        if not config.postgres_url:
+            raise HTTPException(status_code=400, detail="Configura la URL de Postgres primero")
+        started_at = datetime.now(timezone.utc).isoformat()
+        _save_migration_state(state="running", started_at=started_at)
+
+        def _worker() -> None:
+            try:
+                counts = migrate_sqlite_to_postgres(
+                    sqlite_path=Path(config.sqlite_path),
+                    postgres_url=config.postgres_url,
+                    ssl_required=config.postgres_ssl_required,
+                    allow_self_signed=config.postgres_allow_self_signed,
+                )
+                finished_at = datetime.now(timezone.utc).isoformat()
+                _save_migration_state(
+                    state="done",
+                    details={"counts": counts},
+                    finished_at=finished_at,
+                )
+            except Exception as exc:
+                finished_at = datetime.now(timezone.utc).isoformat()
+                _save_migration_state(
+                    state="error",
+                    message=str(exc),
+                    finished_at=finished_at,
+                )
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+        return {"status": "started"}
+
     @app.get("/api/offenses")
     def list_offenses(limit: int = 100) -> List[Dict[str, object]]:
         offenses = offense_store.list_recent(limit)
@@ -1962,7 +2165,29 @@ def create_app(
         elif normalized in {"month", "30d", "mes"}:
             label = "month"
             since = datetime.now(timezone.utc) - timedelta(days=30)
+        if since is None:
+            return offense_store.offense_counts_total_by_ip(), label
         return offense_store.offense_counts_by_ip(since), label
+
+    def _resolve_block_counts_window(window: str) -> tuple[Dict[str, int], str]:
+        normalized = (window or "").lower()
+        label = "total"
+        if normalized in {"current", "actual", "activos"}:
+            label = "current"
+            return block_manager.counts_by_ip(active_only=True), label
+        if normalized in {"24h", "24horas"}:
+            label = "24h"
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            return block_manager.counts_by_ip(since=cutoff), label
+        if normalized in {"week", "7d", "semana"}:
+            label = "week"
+            cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+            return block_manager.counts_by_ip(since=cutoff), label
+        if normalized in {"month", "30d", "mes"}:
+            label = "month"
+            cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+            return block_manager.counts_by_ip(since=cutoff), label
+        return offense_store.block_counts_total_by_ip(), label
 
     def _resolve_public_window(window: str) -> tuple[Optional[datetime], str]:
         normalized = (window or "").lower()
@@ -1985,13 +2210,10 @@ def create_app(
         aggregated: Dict[str, Dict[str, float]] = {}
         profiles_seen = 0
         total_points = 0
-        profile_cache: Dict[str, Optional[IpProfile]] = {}
+        profile_cache = offense_store.get_ip_profiles_by_ips(counts.keys())
 
         for ip, count in counts.items():
             profile = profile_cache.get(ip)
-            if profile is None:
-                profile = offense_store.get_ip_profile(ip)
-                profile_cache[ip] = profile
             if not profile:
                 continue
             point = _parse_geo_point(profile.geo)
@@ -2025,16 +2247,15 @@ def create_app(
         counts, window_label = _resolve_offenses_window(window)
         aggregated: Dict[str, Dict[str, object]] = {}
         name_index: Dict[str, str] = {}
-        profile_cache: Dict[str, Optional[IpProfile]] = {}
+        profile_cache = offense_store.get_ip_profiles_by_ips(counts.keys())
 
         for ip, count in counts.items():
             profile = profile_cache.get(ip)
-            if profile is None:
-                profile = offense_store.get_ip_profile(ip)
-                profile_cache[ip] = profile
             if not profile:
                 continue
             meta = _parse_geo_country(profile.geo)
+            if not meta and profile.country_code:
+                meta = {"country": None, "country_code": profile.country_code}
             if not meta:
                 continue
             country_name = (meta.get("country") or "").strip()
@@ -2157,25 +2378,14 @@ def create_app(
 
     @app.get("/api/offenses/heatmap")
     def offenses_heatmap(limit: int = 300, window: str = "total") -> Dict[str, object]:
-        entries, window_label = _resolve_blocks_window(window)
+        ip_counts, window_label = _resolve_block_counts_window(window)
         aggregated: Dict[str, Dict[str, float]] = {}
-        ip_counts: Dict[str, int] = {}
         profiles_seen = 0
         total_points = 0
-        profile_cache: Dict[str, Optional[IpProfile]] = {}
-
-        if window_label == "current":
-            for entry in entries:
-                ip_counts[entry.ip] = ip_counts.get(entry.ip, 0) + 1
-        else:
-            for entry in entries:
-                ip_counts[entry.ip] = ip_counts.get(entry.ip, 0) + 1
+        profile_cache = offense_store.get_ip_profiles_by_ips(ip_counts.keys())
 
         for ip, count in ip_counts.items():
             profile = profile_cache.get(ip)
-            if profile is None:
-                profile = offense_store.get_ip_profile(ip)
-                profile_cache[ip] = profile
             if not profile:
                 continue
             point = _parse_geo_point(profile.geo)
@@ -2206,23 +2416,18 @@ def create_app(
 
     @app.get("/api/offenses/blocks_by_country")
     def blocks_by_country(limit: int = 10, window: str = "total") -> Dict[str, object]:
-        entries, window_label = _resolve_blocks_window(window)
+        ip_counts, window_label = _resolve_block_counts_window(window)
         aggregated: Dict[str, Dict[str, object]] = {}
         name_index: Dict[str, str] = {}
-        ip_counts: Dict[str, int] = {}
-        profile_cache: Dict[str, Optional[IpProfile]] = {}
-
-        for entry in entries:
-            ip_counts[entry.ip] = ip_counts.get(entry.ip, 0) + 1
+        profile_cache = offense_store.get_ip_profiles_by_ips(ip_counts.keys())
 
         for ip, count in ip_counts.items():
             profile = profile_cache.get(ip)
-            if profile is None:
-                profile = offense_store.get_ip_profile(ip)
-                profile_cache[ip] = profile
             if not profile:
                 continue
             meta = _parse_geo_country(profile.geo)
+            if not meta and profile.country_code:
+                meta = {"country": None, "country_code": profile.country_code}
             if not meta:
                 continue
             country_name = (meta.get("country") or "").strip()
@@ -2265,13 +2470,14 @@ def create_app(
         }
     @app.post("/api/offenses", status_code=201)
     def create_offense(payload: OffenseInput) -> Dict[str, object]:
-        context = payload.context.copy() if payload.context else {}
+        payload_data = payload.model_dump()
+        context = payload_data.pop("context") or {}
         if payload.plugin and not context.get("plugin"):
             context["plugin"] = payload.plugin
         if payload.event_id and not context.get("event_id"):
             context["event_id"] = payload.event_id
         offense = offense_store.record(
-            **payload.model_dump(exclude={"plugin", "event_id", "context"}),
+            **payload_data,
             context=context or None,
         )
         manager = _rule_manager()

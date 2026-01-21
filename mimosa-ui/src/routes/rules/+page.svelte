@@ -66,6 +66,9 @@
   let actionError: string | null = null;
   let actionLoading = false;
 
+  const pluginOptions = ['*', 'proxytrap', 'portdetector', 'mimosanpm', 'manual'];
+  const severityOptions = ['*', 'bajo', 'medio', 'alto', 'critico'];
+
   const requestJson = async <T>(path: string, options?: RequestInit): Promise<T> => {
     const response = await fetch(path, {
       headers: {
@@ -339,7 +342,14 @@
       <div class="split" style="gap: 12px;">
         <label>
           <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Plugin</div>
-          <input bind:value={form.plugin} placeholder="*" />
+          <select bind:value={form.plugin}>
+            {#if form.plugin && !pluginOptions.includes(form.plugin)}
+              <option value={form.plugin}>{form.plugin} (custom)</option>
+            {/if}
+            {#each pluginOptions as option}
+              <option value={option}>{option}</option>
+            {/each}
+          </select>
         </label>
         <label>
           <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Event ID</div>
@@ -349,7 +359,14 @@
       <div class="split" style="gap: 12px;">
         <label>
           <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Severidad</div>
-          <input bind:value={form.severity} placeholder="*" />
+          <select bind:value={form.severity}>
+            {#if form.severity && !severityOptions.includes(form.severity)}
+              <option value={form.severity}>{form.severity} (custom)</option>
+            {/if}
+            {#each severityOptions as option}
+              <option value={option}>{option}</option>
+            {/each}
+          </select>
         </label>
         <label>
           <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Descripcion</div>

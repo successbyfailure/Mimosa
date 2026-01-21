@@ -1,12 +1,14 @@
 """Gestión de configuración y conexiones de firewalls para la UI web."""
 from __future__ import annotations
 
-import json
 import os
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
+
+from mimosa.core.database import DEFAULT_DB_PATH, get_database
+from mimosa.core.storage import ensure_database
 
 from mimosa.core.api import FirewallGateway
 from mimosa.core.sense import BLACKLIST_ALIAS_NAME, PORT_ALIAS_NAMES, TEMPORAL_ALIAS_NAME
@@ -58,11 +60,17 @@ class FirewallConfig:
 
 
 class FirewallConfigStore:
-    """Almacena y recupera configuraciones de firewall en disco."""
+    """Almacena y recupera configuraciones de firewall en la base de datos."""
 
-    def __init__(self, path: Path | str = Path("data/firewalls.json")) -> None:
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(
+        self,
+        db_path: Path | str = DEFAULT_DB_PATH,
+        path: Path | str | None = None,
+    ) -> None:
+        self.db_path = ensure_database(db_path)
+        self._db = get_database(db_path=self.db_path)
+        self._legacy_path = Path(path or "data/firewalls.json")
+        self._legacy_path.parent.mkdir(parents=True, exist_ok=True)
         self._configs: Dict[str, FirewallConfig] = {}
         self._load()
 
@@ -73,42 +81,107 @@ class FirewallConfigStore:
             self._maybe_seed_from_env()
 
     def _load(self) -> None:
-        if not self.path.exists():
-            return
-        with self.path.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        for item in data:
-            sanitized = {
-                key: value
-                for key, value in item.items()
-                if key
-                in {
-                    "id",
-                    "name",
-                    "type",
-                    "base_url",
-                    "api_key",
-                    "api_secret",
-                    "enabled",
-                    "verify_ssl",
-                    "timeout",
-                    "apply_changes",
-                }
-            }
-            config = FirewallConfig(**sanitized)
+        self._configs = {}
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, name, type, base_url, api_key, api_secret,
+                       enabled, verify_ssl, timeout, apply_changes
+                FROM firewalls;
+                """
+            ).fetchall()
+        if not rows and self._legacy_path.exists():
+            try:
+                import json
+
+                with self._legacy_path.open("r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except (json.JSONDecodeError, OSError):
+                data = []
+            if isinstance(data, list):
+                for item in data:
+                    sanitized = {
+                        key: value
+                        for key, value in item.items()
+                        if key
+                        in {
+                            "id",
+                            "name",
+                            "type",
+                            "base_url",
+                            "api_key",
+                            "api_secret",
+                            "enabled",
+                            "verify_ssl",
+                            "timeout",
+                            "apply_changes",
+                        }
+                    }
+                    config = FirewallConfig(**sanitized)
+                    self._persist_config(config)
+            with self._db.connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT id, name, type, base_url, api_key, api_secret,
+                           enabled, verify_ssl, timeout, apply_changes
+                    FROM firewalls;
+                    """
+                ).fetchall()
+        for row in rows:
+            config = FirewallConfig(
+                id=row[0],
+                name=row[1],
+                type=row[2],
+                base_url=row[3],
+                api_key=row[4],
+                api_secret=row[5],
+                enabled=bool(row[6]),
+                verify_ssl=bool(row[7]),
+                timeout=float(row[8]) if row[8] is not None else 5.0,
+                apply_changes=bool(row[9]),
+            )
             self._configs[config.id] = config
 
-    def _save(self) -> None:
-        payload = [asdict(config) for config in self._configs.values()]
-        with self.path.open("w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2)
+    def _persist_config(self, config: FirewallConfig) -> None:
+        with self._db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO firewalls (
+                    id, name, type, base_url, api_key, api_secret,
+                    enabled, verify_ssl, timeout, apply_changes
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    type = excluded.type,
+                    base_url = excluded.base_url,
+                    api_key = excluded.api_key,
+                    api_secret = excluded.api_secret,
+                    enabled = excluded.enabled,
+                    verify_ssl = excluded.verify_ssl,
+                    timeout = excluded.timeout,
+                    apply_changes = excluded.apply_changes;
+                """,
+                (
+                    config.id,
+                    config.name,
+                    config.type,
+                    config.base_url,
+                    config.api_key,
+                    config.api_secret,
+                    int(config.enabled),
+                    int(config.verify_ssl),
+                    float(config.timeout),
+                    int(config.apply_changes),
+                ),
+            )
 
     def list(self) -> List[FirewallConfig]:
         return sorted(self._configs.values(), key=lambda cfg: cfg.name)
 
     def add(self, config: FirewallConfig) -> FirewallConfig:
         self._configs[config.id] = config
-        self._save()
+        self._persist_config(config)
         return config
 
     def get(self, config_id: str) -> Optional[FirewallConfig]:
@@ -117,14 +190,15 @@ class FirewallConfigStore:
     def delete(self, config_id: str) -> None:
         if config_id in self._configs:
             self._configs.pop(config_id)
-            self._save()
+            with self._db.connect() as conn:
+                conn.execute("DELETE FROM firewalls WHERE id = ?;", (config_id,))
 
     def update(self, config_id: str, payload: FirewallConfig) -> FirewallConfig:
         if config_id not in self._configs:
             raise KeyError(config_id)
         payload.id = config_id
         self._configs[config_id] = payload
-        self._save()
+        self._persist_config(payload)
         return payload
 
     def _maybe_seed_from_env(self) -> Optional[FirewallConfig]:

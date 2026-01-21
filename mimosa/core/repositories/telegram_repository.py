@@ -1,13 +1,13 @@
 """Repository para persistencia de datos del bot de Telegram en SQLite."""
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
 from mimosa.core.domain.telegram import TelegramUser, TelegramInteraction
-from mimosa.core.storage import DEFAULT_DB_PATH, ensure_database
+from mimosa.core.database import DEFAULT_DB_PATH, get_database, insert_returning_id
+from mimosa.core.storage import ensure_database
 
 
 class TelegramUserRepository:
@@ -15,14 +15,16 @@ class TelegramUserRepository:
 
     def __init__(self, db_path: Path | str = DEFAULT_DB_PATH) -> None:
         self.db_path = ensure_database(db_path)
+        self._db = get_database(db_path=self.db_path)
 
-    def _connection(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path)
+    def _connection(self):
+        return self._db.connect()
 
     def save(self, user: TelegramUser) -> TelegramUser:
         """Inserta o actualiza un usuario en la base de datos."""
         with self._connection() as conn:
-            cursor = conn.execute(
+            new_id = insert_returning_id(
+                conn,
                 """
                 INSERT INTO telegram_users
                 (telegram_id, username, first_name, last_name, authorized,
@@ -50,9 +52,18 @@ class TelegramUserRepository:
                     user.last_seen.isoformat() if user.last_seen else None,
                     user.interaction_count,
                 ),
+                self._db.backend,
             )
             if user.id == 0:
-                user.id = cursor.lastrowid
+                if new_id:
+                    user.id = new_id
+                else:
+                    row = conn.execute(
+                        "SELECT id FROM telegram_users WHERE telegram_id = ? LIMIT 1;",
+                        (user.telegram_id,),
+                    ).fetchone()
+                    if row:
+                        user.id = int(row[0])
         return user
 
     def find_by_telegram_id(self, telegram_id: int) -> Optional[TelegramUser]:
@@ -203,14 +214,16 @@ class TelegramInteractionRepository:
 
     def __init__(self, db_path: Path | str = DEFAULT_DB_PATH) -> None:
         self.db_path = ensure_database(db_path)
+        self._db = get_database(db_path=self.db_path)
 
-    def _connection(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path)
+    def _connection(self):
+        return self._db.connect()
 
     def save(self, interaction: TelegramInteraction) -> TelegramInteraction:
         """Inserta una nueva interacción en la base de datos."""
         with self._connection() as conn:
-            cursor = conn.execute(
+            interaction.id = insert_returning_id(
+                conn,
                 """
                 INSERT INTO telegram_interactions
                 (telegram_id, username, command, message, authorized, created_at)
@@ -226,8 +239,8 @@ class TelegramInteractionRepository:
                     if interaction.created_at
                     else datetime.now(timezone.utc).isoformat(),
                 ),
+                self._db.backend,
             )
-            interaction.id = cursor.lastrowid
         return interaction
 
     def find_recent(self, limit: int = 100) -> List[TelegramInteraction]:

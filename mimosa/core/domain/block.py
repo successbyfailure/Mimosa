@@ -24,6 +24,13 @@ class BlockEntry:
     synced_at: Optional[datetime] = None
     removed_at: Optional[datetime] = None
     sync_with_firewall: bool = True
+    trigger_offense_id: Optional[int] = None
+    rule_id: Optional[str] = None
+    firewall_id: Optional[str] = None
+    acknowledged_by: Optional[str] = None
+    acknowledged_at: Optional[datetime] = None
+    reason_code: Optional[str] = None
+    expires_at_epoch: Optional[int] = None
 
     def to_dict(self) -> Dict[str, object]:
         """Serializa el bloqueo a diccionario con fechas en formato ISO."""
@@ -42,6 +49,7 @@ class BlockEntry:
         payload["expires_at"] = _iso(self.expires_at)
         payload["synced_at"] = _iso(self.synced_at)
         payload["removed_at"] = _iso(self.removed_at)
+        payload["acknowledged_at"] = _iso(self.acknowledged_at)
         return payload
 
     def is_expired(self, now: datetime) -> bool:

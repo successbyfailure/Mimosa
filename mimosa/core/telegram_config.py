@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 from pathlib import Path
 from typing import Optional
 
 from mimosa.core.domain.telegram import TelegramBotConfig
-from mimosa.core.storage import DEFAULT_DB_PATH, ensure_database
+from mimosa.core.database import DEFAULT_DB_PATH, get_database
+from mimosa.core.storage import ensure_database
 
 
 class TelegramConfigStore:
@@ -18,11 +18,12 @@ class TelegramConfigStore:
 
     def __init__(self, db_path: Path | str = DEFAULT_DB_PATH) -> None:
         self.db_path = ensure_database(db_path)
+        self._db = get_database(db_path=self.db_path)
         # Inicializar configuración desde variables de entorno si no existe
         self._maybe_seed_from_env()
 
-    def _connection(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path)
+    def _connection(self):
+        return self._db.connect()
 
     def get_config(self) -> TelegramBotConfig:
         """Obtiene la configuración actual del bot."""

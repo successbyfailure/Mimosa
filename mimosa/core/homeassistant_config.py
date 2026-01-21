@@ -4,12 +4,12 @@ from __future__ import annotations
 import os
 import re
 import secrets
-import sqlite3
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Dict, Optional
 
-from mimosa.core.storage import DEFAULT_DB_PATH, ensure_database
+from mimosa.core.database import DEFAULT_DB_PATH, get_database
+from mimosa.core.storage import ensure_database
 
 
 def _generate_token() -> str:
@@ -61,10 +61,11 @@ class HomeAssistantConfigStore:
 
     def __init__(self, db_path: Path | str = DEFAULT_DB_PATH) -> None:
         self.db_path = ensure_database(db_path)
+        self._db = get_database(db_path=self.db_path)
         self._maybe_seed_from_env()
 
-    def _connection(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path)
+    def _connection(self):
+        return self._db.connect()
 
     def _has_config(self) -> bool:
         with self._connection() as conn:

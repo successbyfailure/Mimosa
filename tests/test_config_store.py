@@ -29,7 +29,9 @@ class FirewallConfigStoreEnvTests(unittest.TestCase):
         )
 
         with TemporaryDirectory() as tmp:
-            store = FirewallConfigStore(path=Path(tmp) / "firewalls.json")
+            store = FirewallConfigStore(
+                db_path=Path(tmp) / "mimosa.db", path=Path(tmp) / "firewalls.json"
+            )
 
             configs = store.list()
             self.assertEqual(len(configs), 1)
@@ -55,7 +57,9 @@ class FirewallConfigStoreEnvTests(unittest.TestCase):
         )
 
         with TemporaryDirectory() as tmp:
-            store = FirewallConfigStore(path=Path(tmp) / "firewalls.json")
+            store = FirewallConfigStore(
+                db_path=Path(tmp) / "mimosa.db", path=Path(tmp) / "firewalls.json"
+            )
 
             configs = store.list()
             self.assertEqual(len(configs), 1)
@@ -73,11 +77,12 @@ class FirewallConfigStoreEnvTests(unittest.TestCase):
         seed_env = {"INITIAL_FIREWALL_NAME": "seeded-fw"}
 
         with TemporaryDirectory() as tmp:
-            store_path = Path(tmp) / "firewalls.json"
+            db_path = Path(tmp) / "mimosa.db"
+            legacy_path = Path(tmp) / "firewalls.json"
 
             os.environ.pop("INITIAL_FIREWALL_NAME", None)
 
-            existing = FirewallConfigStore(path=store_path)
+            existing = FirewallConfigStore(db_path=db_path, path=legacy_path)
             existing.add(
                 FirewallConfig.new(
                     name="existing-fw",
@@ -92,7 +97,7 @@ class FirewallConfigStoreEnvTests(unittest.TestCase):
             )
 
             os.environ.update(seed_env)
-            reloaded = FirewallConfigStore(path=store_path)
+            reloaded = FirewallConfigStore(db_path=db_path, path=legacy_path)
             configs = reloaded.list()
 
             self.assertEqual(len(configs), 1)
