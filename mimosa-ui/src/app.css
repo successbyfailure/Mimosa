@@ -433,6 +433,13 @@ textarea:focus {
   box-shadow: 0 22px 38px rgba(45, 212, 191, 0.3);
 }
 
+.primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
 .ghost {
   display: inline-flex;
   align-items: center;
@@ -443,6 +450,11 @@ textarea:focus {
   background: rgba(12, 18, 32, 0.65);
   color: var(--text);
   cursor: pointer;
+}
+
+.ghost:hover {
+  border-color: rgba(94, 234, 212, 0.6);
+  background: rgba(45, 212, 191, 0.12);
 }
 
 .secondary {
@@ -456,6 +468,17 @@ textarea:focus {
   color: var(--accent-strong);
   font-weight: 600;
   cursor: pointer;
+}
+
+.secondary:hover {
+  background: rgba(45, 212, 191, 0.2);
+  border-color: rgba(94, 234, 212, 0.6);
+}
+
+.btn-sm {
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 8px;
 }
 
 select {
@@ -802,11 +825,13 @@ select:focus {
 }
 
 .offense-match {
-  background: rgba(251, 191, 36, 0.12);
+  background: rgba(74, 222, 128, 0.12);
+  border-left: 3px solid rgba(74, 222, 128, 0.6);
 }
 
 .offense-no-match {
-  background: rgba(15, 23, 42, 0.35);
+  background: rgba(15, 23, 42, 0.25);
+  border-left: 3px solid rgba(148, 163, 184, 0.2);
 }
 
 .card-head {

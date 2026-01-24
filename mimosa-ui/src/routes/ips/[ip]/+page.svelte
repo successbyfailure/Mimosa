@@ -84,6 +84,7 @@
   let geoLabel = 'Sin datos de geolocalizacion.';
   let geoFlag = '—';
   let geoLocation = '';
+  let offenseWindow: { first: string | null; last: string | null } | null = null;
 
   const requestJson = async <T>(path: string, options?: RequestInit): Promise<T> => {
     const response = await fetch(path, {
@@ -148,10 +149,12 @@
         profile: IpProfile;
         offenses: Offense[];
         blocks: BlockEntry[];
+        offense_window?: { first: string | null; last: string | null };
       }>(`/api/ips/${ip}`);
       profile = data.profile;
       offenses = data.offenses;
       blocks = data.blocks;
+      offenseWindow = data.offense_window || null;
       groupOffenses(offenses);
       groupBlocks(blocks);
       updateGeo(profile.geo);
@@ -235,12 +238,15 @@
     geoLabel = geoLocation || 'Ubicacion registrada';
   };
 
-  const activeDays = (value?: IpProfile | null) => {
+  const activeDays = (
+    value?: IpProfile | null,
+    window?: { first: string | null; last: string | null } | null
+  ) => {
     if (!value) {
       return '-';
     }
-    const start = new Date(value.first_seen).getTime();
-    const end = new Date(value.last_seen).getTime();
+    const start = window?.first ? new Date(window.first).getTime() : new Date(value.first_seen).getTime();
+    const end = window?.last ? new Date(window.last).getTime() : new Date(value.last_seen).getTime();
     if (!Number.isFinite(start) || !Number.isFinite(end)) {
       return '-';
     }
@@ -261,7 +267,7 @@
   <div class="badge">IP</div>
   <h1>
     {geoFlag} IP: {profile?.ip || $page.params.ip} : {profile?.offenses ?? '-'} ofensas / {profile?.blocks ?? '-'}
-    bloqueos en {activeDays(profile)} días.
+    bloqueos en {activeDays(profile, offenseWindow)} días.
   </h1>
   <p>Detalle de actividad y enriquecimiento.</p>
 </section>

@@ -30,6 +30,7 @@ class OffenseRule:
     decidir automáticamente cuándo bloquear una IP.
     """
 
+    name: Optional[str] = None
     plugin: str = "*"
     event_id: str = "*"
     severity: str = "*"

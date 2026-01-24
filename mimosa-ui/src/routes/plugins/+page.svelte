@@ -50,6 +50,7 @@
   type MimosaNpmConfig = {
     enabled: boolean;
     default_severity: string;
+    fallback_severity?: string | null;
     shared_secret?: string | null;
     rules: MimosaNpmRule[];
     ignore_list: MimosaNpmIgnoreRule[];
@@ -166,6 +167,8 @@
     status: '*',
     severity: 'medio'
   };
+  let mimosaRuleEditIndex: number | null = null;
+  let mimosaFallbackSeverity = '';
   let mimosaIgnoreForm: MimosaNpmIgnoreRule = {
     host: '*',
     path: '*',
@@ -246,6 +249,7 @@
           rules: mimosa.config.rules || [],
           ignore_list: mimosa.config.ignore_list || []
         } as MimosaNpmConfig;
+        mimosaFallbackSeverity = mimosaConfig.fallback_severity || '';
       }
     } catch (err) {
       error = err instanceof Error ? err.message : 'No se pudo cargar plugins';
@@ -488,6 +492,7 @@
       const payload = {
         enabled: mimosaConfig.enabled,
         default_severity: mimosaConfig.default_severity,
+        fallback_severity: mimosaFallbackSeverity || null,
         shared_secret: mimosaConfig.shared_secret || null,
         rotate_secret: rotateSecret,
         rules: mimosaConfig.rules || [],
@@ -500,6 +505,7 @@
         method: 'PUT',
         body: JSON.stringify(payload)
       });
+      mimosaFallbackSeverity = mimosaConfig.fallback_severity || '';
       mimosaMessage = rotateSecret ? 'Secreto rotado' : 'MimosaNPM actualizado';
     } catch (err) {
       mimosaError = err instanceof Error ? err.message : 'No se pudo guardar MimosaNPM';
@@ -510,7 +516,31 @@
     if (!mimosaConfig) {
       return;
     }
-    mimosaConfig.rules = [...(mimosaConfig.rules || []), { ...mimosaRuleForm }];
+    if (mimosaRuleEditIndex !== null) {
+      const nextRules = [...(mimosaConfig.rules || [])];
+      nextRules[mimosaRuleEditIndex] = { ...mimosaRuleForm };
+      mimosaConfig.rules = nextRules;
+      mimosaRuleEditIndex = null;
+    } else {
+      mimosaConfig.rules = [...(mimosaConfig.rules || []), { ...mimosaRuleForm }];
+    }
+    mimosaRuleForm = { host: '*', path: '*', status: '*', severity: 'medio' };
+  };
+
+  const editMimosaRule = (index: number) => {
+    if (!mimosaConfig) {
+      return;
+    }
+    const rule = mimosaConfig.rules[index];
+    if (!rule) {
+      return;
+    }
+    mimosaRuleEditIndex = index;
+    mimosaRuleForm = { ...rule };
+  };
+
+  const cancelMimosaRuleEdit = () => {
+    mimosaRuleEditIndex = null;
     mimosaRuleForm = { host: '*', path: '*', status: '*', severity: 'medio' };
   };
 
@@ -519,6 +549,11 @@
       return;
     }
     mimosaConfig.rules = mimosaConfig.rules.filter((_, idx) => idx !== index);
+    if (mimosaRuleEditIndex === index) {
+      cancelMimosaRuleEdit();
+    } else if (mimosaRuleEditIndex !== null && index < mimosaRuleEditIndex) {
+      mimosaRuleEditIndex -= 1;
+    }
   };
 
   const addMimosaIgnore = () => {
@@ -543,6 +578,7 @@
     mimosaConfig.rules = [];
     mimosaConfig.ignore_list = [];
     mimosaConfig.default_severity = 'alto';
+    mimosaFallbackSeverity = '';
     mimosaConfig.alert_fallback = true;
     mimosaConfig.alert_unregistered_domain = true;
     mimosaConfig.alert_suspicious_path = true;
@@ -573,12 +609,49 @@
 
   const applyEventToRule = (event: MimosaEvent) => {
     const statusCode = event.context?.status_code;
+    mimosaRuleEditIndex = null;
     mimosaRuleForm = {
       host: event.host || '*',
       path: event.path || '*',
       status: statusCode ? String(statusCode) : '*',
       severity: event.severity || 'medio'
     };
+  };
+
+  const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  const matchesPattern = (pattern: string, value: string, ignoreCase = false) => {
+    const normalized = (pattern || '*').trim();
+    if (!normalized || normalized === '*') {
+      return true;
+    }
+    const flags = ignoreCase ? 'i' : '';
+    const regex = new RegExp(
+      '^' + escapeRegex(normalized).replace(/\\\*/g, '.*').replace(/\\\?/g, '.') + '$',
+      flags
+    );
+    return regex.test(value || '');
+  };
+
+  const matchesMimosaRule = (rule: MimosaNpmRule, event: MimosaEvent) => {
+    const host = event.host || '';
+    const path = event.path || '/';
+    const statusValue =
+      event.context?.status_code !== undefined && event.context?.status_code !== null
+        ? String(event.context.status_code)
+        : 'n/a';
+    return (
+      matchesPattern(rule.host, host, true) &&
+      matchesPattern(rule.path, path) &&
+      matchesPattern(rule.status, statusValue)
+    );
+  };
+
+  const eventCovered = (event: MimosaEvent) => {
+    if (!mimosaConfig) {
+      return false;
+    }
+    return (mimosaConfig.rules || []).some((rule) => matchesMimosaRule(rule, event));
   };
 
   const formatDate = (value: string) => {
@@ -943,14 +1016,44 @@
         <div class="badge">MimosaNPM</div>
         <h3 class="card-title" style="margin-top: 12px;">Agente para NPM</h3>
       </div>
-      <button class="secondary" on:click={() => { loadPlugins(); loadMimosaEvents(); loadMimosaStats(); }}>
-        Recargar
-      </button>
+      <div class="card-actions">
+        <button
+          class="secondary"
+          on:click={() => {
+            loadPlugins();
+            loadMimosaEvents();
+            loadMimosaStats();
+          }}
+        >
+          Recargar
+        </button>
+        <button
+          class="primary"
+          type="button"
+          disabled={!mimosaConfig}
+          on:click={() => saveMimosaNpm(false)}
+        >
+          Guardar
+        </button>
+      </div>
     </div>
 
     {#if !mimosaConfig}
       <div style="margin-top: 12px;">Cargando configuracion...</div>
-    {:else}
+    {/if}
+    {#if mimosaMessage}
+      <div style="margin-top: 10px; color: var(--success); font-size: 13px;">{mimosaMessage}</div>
+    {/if}
+    {#if mimosaError}
+      <div style="margin-top: 10px; color: var(--danger); font-size: 13px;">{mimosaError}</div>
+    {/if}
+  </div>
+
+  {#if mimosaConfig}
+  <div class="section" style="margin-top: 16px;">
+    <div class="surface panel">
+      <div class="badge">Configuracion</div>
+      <h3 class="card-title" style="margin-top: 12px;">Agente y alertas</h3>
       <div class="form-grid" style="margin-top: 12px;">
         <label class="check-item">
           <input type="checkbox" bind:checked={mimosaConfig.enabled} />
@@ -958,7 +1061,7 @@
         </label>
         <div class="form-row">
           <label>
-            <div class="field-label">Severidad</div>
+            <div class="field-label">Severidad por defecto</div>
             <select bind:value={mimosaConfig.default_severity}>
               <option value="bajo">Bajo</option>
               <option value="medio">Medio</option>
@@ -966,17 +1069,28 @@
             </select>
           </label>
           <label>
+            <div class="field-label">Severidad fallback</div>
+            <select bind:value={mimosaFallbackSeverity}>
+              <option value="">Auto (por defecto)</option>
+              <option value="bajo">Bajo</option>
+              <option value="medio">Medio</option>
+              <option value="alto">Alto</option>
+            </select>
+          </label>
+        </div>
+        <div class="form-row">
+          <label>
             <div class="field-label">Endpoint</div>
             <input readonly value={mimosaEndpoint} />
           </label>
+          <label>
+            <div class="field-label">Secreto</div>
+            <div class="action-row">
+              <input bind:value={mimosaConfig.shared_secret} />
+              <button class="ghost" on:click={() => saveMimosaNpm(true)}>Rotar</button>
+            </div>
+          </label>
         </div>
-        <label>
-          <div class="field-label">Secreto</div>
-          <div class="action-row">
-            <input bind:value={mimosaConfig.shared_secret} />
-            <button class="ghost" on:click={() => saveMimosaNpm(true)}>Rotar</button>
-          </div>
-        </label>
         <div>
           <div class="field-label">Alertas</div>
           <div class="check-grid" style="margin-top: 6px;">
@@ -995,255 +1109,266 @@
           </div>
         </div>
       </div>
+    </div>
 
-      <div style="margin-top: 16px;">
-        <div class="card-head">
+    <div class="surface panel">
+      <div class="card-head">
+        <div>
           <div class="badge">Reglas severidad</div>
-          <button class="ghost" on:click={addMimosaDefaults}>Añadir defaults</button>
+          <h3 class="card-title" style="margin-top: 12px;">Reglas de matching</h3>
         </div>
-        <div class="form-grid" style="margin-top: 10px;">
-          <div class="form-row">
-            <label>
-              <div class="field-label">Host</div>
-              <input bind:value={mimosaRuleForm.host} />
-            </label>
-            <label>
-              <div class="field-label">Path</div>
-              <input bind:value={mimosaRuleForm.path} />
-            </label>
-          </div>
-          <div class="form-row">
-            <label>
-              <div class="field-label">Status</div>
-              <input bind:value={mimosaRuleForm.status} />
-            </label>
-            <label>
-              <div class="field-label">Severidad</div>
-              <select bind:value={mimosaRuleForm.severity}>
-                <option value="bajo">Bajo</option>
-                <option value="medio">Medio</option>
-                <option value="alto">Alto</option>
-              </select>
-            </label>
-          </div>
-          <button class="secondary" on:click={addMimosaRule}>Agregar regla</button>
-        </div>
-        <div style="margin-top: 12px; overflow-x: auto;">
-          <table class="table table-responsive">
-            <thead>
-              <tr>
-                <th class="cell-nowrap">Host</th>
-                <th>Path</th>
-                <th class="cell-nowrap">Status</th>
-                <th class="cell-nowrap">Severidad</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#if mimosaConfig.rules.length === 0}
-                <tr><td colspan="5">Sin reglas.</td></tr>
-              {:else}
-                {#each mimosaConfig.rules as rule, index}
-                  <tr>
-                    <td class="cell-nowrap" data-label="Host">{rule.host}</td>
-                    <td class="cell-truncate" title={rule.path} data-label="Path">{rule.path}</td>
-                    <td class="cell-nowrap" data-label="Status">{rule.status}</td>
-                    <td class="cell-nowrap" data-label="Severidad">{rule.severity}</td>
-                    <td data-label="Accion">
-                      <button class="ghost" on:click={() => removeMimosaRule(index)}>Quitar</button>
-                    </td>
-                  </tr>
-                {/each}
-              {/if}
-            </tbody>
-          </table>
-        </div>
+        <button class="ghost" on:click={addMimosaDefaults}>Añadir defaults</button>
       </div>
-
-      <div style="margin-top: 16px;">
-        <div class="badge">Ignore list</div>
-        <div class="form-grid" style="margin-top: 10px;">
-          <div class="form-row">
-            <label>
-              <div class="field-label">Host</div>
-              <input bind:value={mimosaIgnoreForm.host} />
-            </label>
-            <label>
-              <div class="field-label">Path</div>
-              <input bind:value={mimosaIgnoreForm.path} />
-            </label>
-          </div>
+      <div class="form-grid" style="margin-top: 10px;">
+        <div class="form-row">
+          <label>
+            <div class="field-label">Host</div>
+            <input bind:value={mimosaRuleForm.host} />
+          </label>
+          <label>
+            <div class="field-label">Path</div>
+            <input bind:value={mimosaRuleForm.path} />
+          </label>
+        </div>
+        <div class="form-row">
           <label>
             <div class="field-label">Status</div>
-            <input bind:value={mimosaIgnoreForm.status} />
+            <input bind:value={mimosaRuleForm.status} />
           </label>
-          <button class="secondary" on:click={addMimosaIgnore}>Agregar ignore</button>
+          <label>
+            <div class="field-label">Severidad</div>
+            <select bind:value={mimosaRuleForm.severity}>
+              <option value="bajo">Bajo</option>
+              <option value="medio">Medio</option>
+              <option value="alto">Alto</option>
+            </select>
+          </label>
         </div>
-        <div style="margin-top: 12px; overflow-x: auto;">
-          <table class="table table-responsive">
-            <thead>
-              <tr>
-                <th class="cell-nowrap">Host</th>
-                <th>Path</th>
-                <th class="cell-nowrap">Status</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#if mimosaConfig.ignore_list.length === 0}
-                <tr><td colspan="4">Sin entradas.</td></tr>
-              {:else}
-                {#each mimosaConfig.ignore_list as rule, index}
-                  <tr>
-                    <td class="cell-nowrap" data-label="Host">{rule.host}</td>
-                    <td class="cell-truncate" title={rule.path} data-label="Path">{rule.path}</td>
-                    <td class="cell-nowrap" data-label="Status">{rule.status}</td>
-                    <td data-label="Accion">
-                      <button class="ghost" on:click={() => removeMimosaIgnore(index)}>Quitar</button>
-                    </td>
-                  </tr>
-                {/each}
-              {/if}
-            </tbody>
-          </table>
+        <div class="action-row">
+          <button class="secondary" on:click={addMimosaRule}>
+            {mimosaRuleEditIndex !== null ? 'Guardar regla' : 'Agregar regla'}
+          </button>
+          {#if mimosaRuleEditIndex !== null}
+            <button class="ghost" on:click={cancelMimosaRuleEdit}>Cancelar</button>
+          {/if}
         </div>
       </div>
+      <div style="margin-top: 12px; overflow-x: auto;">
+        <table class="table table-responsive">
+          <thead>
+            <tr>
+              <th class="cell-nowrap">Host</th>
+              <th>Path</th>
+              <th class="cell-nowrap">Status</th>
+              <th class="cell-nowrap">Severidad</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#if mimosaConfig.rules.length === 0}
+              <tr><td colspan="5">Sin reglas.</td></tr>
+            {:else}
+              {#each mimosaConfig.rules as rule, index}
+                <tr>
+                  <td class="cell-nowrap" data-label="Host">{rule.host}</td>
+                  <td class="cell-truncate" title={rule.path} data-label="Path">{rule.path}</td>
+                  <td class="cell-nowrap" data-label="Status">{rule.status}</td>
+                  <td class="cell-nowrap" data-label="Severidad">{rule.severity}</td>
+                  <td data-label="Accion">
+                    <div class="action-row">
+                      <button class="ghost" on:click={() => editMimosaRule(index)}>Editar</button>
+                      <button class="ghost" on:click={() => removeMimosaRule(index)}>Quitar</button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </div>
+    </div>
 
-      {#if mimosaMessage}
-        <div style="margin-top: 10px; color: var(--success); font-size: 13px;">{mimosaMessage}</div>
-      {/if}
-      {#if mimosaError}
-        <div style="margin-top: 10px; color: var(--danger); font-size: 13px;">{mimosaError}</div>
-      {/if}
-      <div style="margin-top: 14px;">
+    <div class="surface panel">
+      <div class="badge">Ignore list</div>
+      <h3 class="card-title" style="margin-top: 12px;">Reglas de ignore</h3>
+      <div class="form-grid" style="margin-top: 10px;">
+        <div class="form-row">
+          <label>
+            <div class="field-label">Host</div>
+            <input bind:value={mimosaIgnoreForm.host} />
+          </label>
+          <label>
+            <div class="field-label">Path</div>
+            <input bind:value={mimosaIgnoreForm.path} />
+          </label>
+        </div>
+        <label>
+          <div class="field-label">Status</div>
+          <input bind:value={mimosaIgnoreForm.status} />
+        </label>
+        <button class="secondary" on:click={addMimosaIgnore}>Agregar ignore</button>
+      </div>
+      <div style="margin-top: 12px; overflow-x: auto;">
+        <table class="table table-responsive">
+          <thead>
+            <tr>
+              <th class="cell-nowrap">Host</th>
+              <th>Path</th>
+              <th class="cell-nowrap">Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#if mimosaConfig.ignore_list.length === 0}
+              <tr><td colspan="4">Sin entradas.</td></tr>
+            {:else}
+              {#each mimosaConfig.ignore_list as rule, index}
+                <tr>
+                  <td class="cell-nowrap" data-label="Host">{rule.host}</td>
+                  <td class="cell-truncate" title={rule.path} data-label="Path">{rule.path}</td>
+                  <td class="cell-nowrap" data-label="Status">{rule.status}</td>
+                  <td data-label="Accion">
+                    <button class="ghost" on:click={() => removeMimosaIgnore(index)}>Quitar</button>
+                  </td>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="surface panel">
+      <div class="card-head">
+        <div>
+          <div class="badge badge-muted">Acciones</div>
+          <h3 class="card-title" style="margin-top: 12px;">Guardar cambios</h3>
+        </div>
         <button class="primary" type="button" on:click={() => saveMimosaNpm(false)}>
           Guardar MimosaNPM
         </button>
       </div>
+    </div>
 
-      <div style="margin-top: 16px;">
-        <div class="badge">Estadisticas</div>
-        {#if mimosaStatsMessage}
-          <div style="margin-top: 8px; color: var(--muted); font-size: 12px;">
-            {mimosaStatsMessage}
+    <div class="surface panel">
+      <div class="badge">Estadisticas</div>
+      {#if mimosaStatsMessage}
+        <div style="margin-top: 8px; color: var(--muted); font-size: 12px;">
+          {mimosaStatsMessage}
+        </div>
+      {/if}
+      <div class="mini-grid" style="margin-top: 12px;">
+        <div class="surface panel-sm">
+          <strong>Por dominio</strong>
+          <div style="margin-top: 10px; max-height: 220px; overflow: auto;">
+            <table class="table table-compact table-responsive">
+              <thead>
+                <tr><th>Dominio</th><th>Hits</th></tr>
+              </thead>
+              <tbody>
+                {#if !mimosaStats || mimosaStats.top_domains.length === 0}
+                  <tr><td colspan="2">Sin datos.</td></tr>
+                {:else}
+                  {#each mimosaStats.top_domains as entry}
+                    <tr>
+                      <td data-label="Dominio">{entry.domain}</td>
+                      <td data-label="Hits">{entry.count}</td>
+                    </tr>
+                  {/each}
+                {/if}
+              </tbody>
+            </table>
           </div>
-        {/if}
-        <div class="mini-grid" style="margin-top: 12px;">
-          <div class="surface panel-sm">
-            <strong>Por dominio</strong>
-            <div style="margin-top: 10px; max-height: 220px; overflow: auto;">
-              <table class="table table-compact table-responsive">
-                <thead>
-                  <tr><th>Dominio</th><th>Hits</th></tr>
-                </thead>
-                <tbody>
-                  {#if !mimosaStats || mimosaStats.top_domains.length === 0}
-                    <tr><td colspan="2">Sin datos.</td></tr>
-                  {:else}
-                    {#each mimosaStats.top_domains as entry}
-                      <tr>
-                        <td data-label="Dominio">{entry.domain}</td>
-                        <td data-label="Hits">{entry.count}</td>
-                      </tr>
-                    {/each}
-                  {/if}
-                </tbody>
-              </table>
-            </div>
+        </div>
+        <div class="surface panel-sm">
+          <strong>Por ruta</strong>
+          <div style="margin-top: 10px; max-height: 220px; overflow: auto;">
+            <table class="table table-compact table-responsive">
+              <thead>
+                <tr><th>Path</th><th>Hits</th></tr>
+              </thead>
+              <tbody>
+                {#if !mimosaStats || mimosaStats.top_paths.length === 0}
+                  <tr><td colspan="2">Sin datos.</td></tr>
+                {:else}
+                  {#each mimosaStats.top_paths as entry}
+                    <tr>
+                      <td data-label="Path">{entry.path}</td>
+                      <td data-label="Hits">{entry.count}</td>
+                    </tr>
+                  {/each}
+                {/if}
+              </tbody>
+            </table>
           </div>
-          <div class="surface panel-sm">
-            <strong>Por ruta</strong>
-            <div style="margin-top: 10px; max-height: 220px; overflow: auto;">
-              <table class="table table-compact table-responsive">
-                <thead>
-                  <tr><th>Path</th><th>Hits</th></tr>
-                </thead>
-                <tbody>
-                  {#if !mimosaStats || mimosaStats.top_paths.length === 0}
-                    <tr><td colspan="2">Sin datos.</td></tr>
-                  {:else}
-                    {#each mimosaStats.top_paths as entry}
-                      <tr>
-                        <td data-label="Path">{entry.path}</td>
-                        <td data-label="Hits">{entry.count}</td>
-                      </tr>
-                    {/each}
-                  {/if}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <div class="surface panel-sm">
-            <strong>Por status</strong>
-            <div style="margin-top: 10px; max-height: 220px; overflow: auto;">
-              <table class="table table-compact table-responsive">
-                <thead>
-                  <tr><th>Status</th><th>Hits</th></tr>
-                </thead>
-                <tbody>
-                  {#if !mimosaStats || mimosaStats.top_status_codes.length === 0}
-                    <tr><td colspan="2">Sin datos.</td></tr>
-                  {:else}
-                    {#each mimosaStats.top_status_codes as entry}
-                      <tr>
-                        <td data-label="Status">{entry.status}</td>
-                        <td data-label="Hits">{entry.count}</td>
-                      </tr>
-                    {/each}
-                  {/if}
-                </tbody>
-              </table>
-            </div>
+        </div>
+        <div class="surface panel-sm">
+          <strong>Por status</strong>
+          <div style="margin-top: 10px; max-height: 220px; overflow: auto;">
+            <table class="table table-compact table-responsive">
+              <thead>
+                <tr><th>Status</th><th>Hits</th></tr>
+              </thead>
+              <tbody>
+                {#if !mimosaStats || mimosaStats.top_status_codes.length === 0}
+                  <tr><td colspan="2">Sin datos.</td></tr>
+                {:else}
+                  {#each mimosaStats.top_status_codes as entry}
+                    <tr>
+                      <td data-label="Status">{entry.status}</td>
+                      <td data-label="Hits">{entry.count}</td>
+                    </tr>
+                  {/each}
+                {/if}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
+    </div>
 
-      <div style="margin-top: 16px;">
-        <div class="badge">Eventos recientes</div>
-        <div style="margin-top: 12px; overflow-x: auto;">
-          <table class="table table-responsive">
-            <thead>
-              <tr>
-                <th class="cell-nowrap">Fecha</th>
-                <th class="cell-nowrap">Host</th>
-                <th>Path</th>
-                <th class="cell-nowrap">Status</th>
-                <th class="cell-nowrap">Severidad</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#if mimosaEvents.length === 0}
-                <tr><td colspan="6">Sin eventos.</td></tr>
-              {:else}
-                {#each mimosaEvents as event}
-                  <tr>
-                    <td class="cell-nowrap" data-label="Fecha">{formatDate(event.created_at)}</td>
-                    <td class="cell-nowrap" data-label="Host">{event.host || '-'}</td>
-                    <td class="cell-truncate" title={event.path || '-'} data-label="Path">
-                      {event.path || '-'}
-                    </td>
-                    <td class="cell-nowrap" data-label="Status">
-                      {event.context?.status_code ?? '-'}
-                    </td>
-                    <td class="cell-nowrap" data-label="Severidad">{event.severity || '-'}</td>
-                    <td data-label="Accion">
-                      <button
-                        class="secondary btn-sm"
-                        type="button"
-                        on:click={() => applyEventToRule(event)}
-                      >
-                        Usar
-                      </button>
-                    </td>
-                  </tr>
-                {/each}
-              {/if}
-            </tbody>
-          </table>
-        </div>
+    <div class="surface panel">
+      <div class="badge">Eventos recientes</div>
+      <div style="margin-top: 12px; overflow-x: auto;">
+        <table class="table table-responsive">
+          <thead>
+            <tr>
+              <th class="cell-nowrap">Fecha</th>
+              <th class="cell-nowrap">Host</th>
+              <th>Path</th>
+              <th class="cell-nowrap">Status</th>
+              <th class="cell-nowrap">Severidad</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#if mimosaEvents.length === 0}
+              <tr><td colspan="6">Sin eventos.</td></tr>
+            {:else}
+              {#each mimosaEvents as event}
+                <tr class={eventCovered(event) ? 'offense-match' : 'offense-no-match'}>
+                  <td class="cell-nowrap" data-label="Fecha">{formatDate(event.created_at)}</td>
+                  <td class="cell-nowrap" data-label="Host">{event.host || '-'}</td>
+                  <td class="cell-truncate" title={event.path || '-'} data-label="Path">
+                    {event.path || '-'}
+                  </td>
+                  <td class="cell-nowrap" data-label="Status">
+                    {event.context?.status_code ?? '-'}
+                  </td>
+                  <td class="cell-nowrap" data-label="Severidad">{event.severity || '-'}</td>
+                  <td data-label="Accion">
+                    <button class="secondary btn-sm" type="button" on:click={() => applyEventToRule(event)}>
+                      Usar
+                    </button>
+                  </td>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
       </div>
-    {/if}
+    </div>
   </div>
+  {/if}
   {/if}
 </div>

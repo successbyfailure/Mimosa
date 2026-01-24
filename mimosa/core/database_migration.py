@@ -285,6 +285,7 @@ def migrate_sqlite_to_postgres(
             table="offense_rules",
             columns=[
                 "id",
+                "name",
                 "plugin",
                 "event_id",
                 "severity",

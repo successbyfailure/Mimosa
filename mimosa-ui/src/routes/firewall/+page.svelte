@@ -7,6 +7,7 @@
     id: string;
     name: string;
     type: string;
+    enabled?: boolean;
   };
 
   type FirewallAliases = {
@@ -68,8 +69,11 @@
   const loadFirewalls = async () => {
     try {
       firewalls = await requestJson<FirewallConfig[]>('/api/firewalls');
-      if (!selectedFirewallId && firewalls.length === 1) {
-        selectedFirewallId = firewalls[0].id;
+      if (!selectedFirewallId) {
+        const active = firewalls.find((fw) => fw.enabled !== false) || firewalls[0];
+        if (active) {
+          selectedFirewallId = active.id;
+        }
       }
     } catch (err) {
       error = err instanceof Error ? err.message : 'No se pudieron cargar firewalls';

@@ -216,6 +216,10 @@
   let blockHourlyValues: number[] = [];
   let ratioLabels: string[] = [];
   let ratioValues: number[] = [];
+  let ipMixLabels: string[] = ['IPs nuevas', 'IPs conocidas'];
+  let ipMixValues: number[] = [];
+  let ipMixWindow: WindowKey | null = null;
+  let ipMixError: string | null = null;
 
   let countryEntries: CountryEntry[] = [];
   let countryTotal = 0;
@@ -434,6 +438,21 @@
       error = err instanceof Error ? err.message : 'Error desconocido';
     } finally {
       loading = false;
+    }
+  };
+
+  const loadIpOffenseMix = async (windowKey: WindowKey) => {
+    ipMixError = null;
+    try {
+      const payload = await fetchJson<{ known: number; new: number; window: string }>(
+        `/api/dashboard/offenses/ip_mix?window=${windowKey}`
+      );
+      ipMixValues = [payload.new ?? 0, payload.known ?? 0];
+      ipMixWindow = windowKey;
+    } catch (err) {
+      ipMixValues = [];
+      ipMixError = err instanceof Error ? err.message : 'No se pudo cargar mix de IPs.';
+      ipMixWindow = windowKey;
     }
   };
 
@@ -1025,6 +1044,10 @@
     updateStatsView(stats, offenseWindow, blockWindow);
   }
 
+  $: if (!isPublic && $authStore.user && offenseWindow !== ipMixWindow) {
+    loadIpOffenseMix(offenseWindow);
+  }
+
   const handleHeatmapChange = (event: Event) => {
     heatmapWindow = (event.target as HTMLSelectElement).value as HeatmapWindow;
     if (heatmapWindow === 'realtime') {
@@ -1416,6 +1439,34 @@
         label="Bloqueos por hora"
         color="#34d399"
       />
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="surface panel">
+      <div class="badge">IPs</div>
+      <div class="card-title-row">
+        <h3 class="card-title">Ofensas por IP conocida vs nueva</h3>
+        <select bind:value={offenseWindow} style="max-width: 120px;">
+          {#each windowOptions as option}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </div>
+      {#if ipMixValues.length === 0}
+        <div style="margin-top: 12px; color: var(--muted);">Sin datos para graficar.</div>
+      {:else}
+        <ChartCanvas
+          labels={ipMixLabels}
+          data={ipMixValues}
+          label="Ofensas"
+          type="doughnut"
+          showLegend={true}
+        />
+      {/if}
+      {#if ipMixError}
+        <div style="margin-top: 8px; color: var(--muted); font-size: 12px;">{ipMixError}</div>
+      {/if}
     </div>
   </section>
 

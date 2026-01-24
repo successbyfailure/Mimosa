@@ -198,6 +198,7 @@ class MimosaNpmConfigInput(BaseModel):
 
     enabled: bool = False
     default_severity: str = "alto"
+    fallback_severity: str | None = None
     rules: List[MimosaNpmRuleInput] = Field(default_factory=list)
     ignore_list: List[MimosaNpmIgnoreRuleInput] = Field(default_factory=list)
     shared_secret: str | None = None
@@ -254,6 +255,7 @@ class OffenseInput(BaseModel):
 class RuleInput(BaseModel):
     """Definición de regla configurable desde la UI."""
 
+    name: str | None = None
     plugin: str = "*"
     event_id: str = "*"
     severity: str = "*"
@@ -763,6 +765,7 @@ def create_app(
     def _serialize_rule(rule: OffenseRule) -> Dict[str, object]:
         return {
             "id": rule.id,
+            "name": rule.name,
             "plugin": rule.plugin,
             "event_id": rule.event_id,
             "severity": rule.severity,
@@ -1651,6 +1654,7 @@ def create_app(
         config = MimosaNpmConfig(
             enabled=payload.enabled,
             default_severity=payload.default_severity,
+            fallback_severity=payload.fallback_severity,
             rules=[MimosaNpmRule(**rule.model_dump()) for rule in payload.rules],
             ignore_list=[
                 MimosaNpmIgnoreRule(**rule.model_dump()) for rule in payload.ignore_list
@@ -2169,6 +2173,16 @@ def create_app(
             return offense_store.offense_counts_total_by_ip(), label
         return offense_store.offense_counts_by_ip(since), label
 
+    def _resolve_known_ip_window(window: str) -> tuple[datetime, str]:
+        normalized = (window or "").lower()
+        if normalized in {"1h", "1hora"}:
+            return datetime.now(timezone.utc) - timedelta(hours=1), "1h"
+        if normalized in {"24h", "24horas"}:
+            return datetime.now(timezone.utc) - timedelta(hours=24), "24h"
+        if normalized in {"week", "7d", "semana"}:
+            return datetime.now(timezone.utc) - timedelta(days=7), "7d"
+        return datetime.now(timezone.utc) - timedelta(hours=24), "24h"
+
     def _resolve_block_counts_window(window: str) -> tuple[Dict[str, int], str]:
         normalized = (window or "").lower()
         label = "total"
@@ -2532,6 +2546,10 @@ def create_app(
         profiles = offense_store.list_ip_profiles(limit)
         return [profile.__dict__ for profile in profiles]
 
+    @app.get("/api/ips/summary")
+    def ips_summary() -> Dict[str, int]:
+        return {"total": offense_store.count_ip_profiles()}
+
     @app.get("/api/ips/{ip}")
     def ip_details(ip: str) -> Dict[str, object]:
         profile = offense_store.get_ip_profile(ip)
@@ -2539,10 +2557,15 @@ def create_app(
             raise HTTPException(status_code=404, detail="IP no encontrada")
         offenses = offense_store.list_by_ip(ip, limit=200)
         blocks = block_manager.history_for_ip(ip)
+        first_offense, last_offense = offense_store.offense_window_by_ip(ip)
         return {
             "profile": profile.__dict__,
             "offenses": [_serialize_offense(offense) for offense in offenses],
             "blocks": [_serialize_block(block) for block in blocks],
+            "offense_window": {
+                "first": first_offense.isoformat() if first_offense else None,
+                "last": last_offense.isoformat() if last_offense else None,
+            },
         }
 
     @app.post("/api/ips/{ip}/refresh")
@@ -2556,6 +2579,13 @@ def create_app(
     def dashboard_ip_types() -> Dict[str, int]:
         """Estadísticas de IPs por tipo (datacenter, residential, etc.)."""
         return offense_store.count_by_ip_type()
+
+    @app.get("/api/dashboard/offenses/ip_mix")
+    def dashboard_offense_ip_mix(window: str = "24h") -> Dict[str, object]:
+        """Recuento de ofensas por IPs nuevas vs conocidas."""
+        since, label = _resolve_known_ip_window(window)
+        counts = offense_store.offense_counts_by_ip_freshness(since)
+        return {"window": label, **counts}
 
     @app.get("/api/dashboard/reaction_time")
     def dashboard_reaction_time(window: Optional[str] = None) -> Dict[str, object]:

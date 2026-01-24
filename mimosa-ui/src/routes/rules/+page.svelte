@@ -5,6 +5,7 @@
 
   type Rule = {
     id: number;
+    name?: string | null;
     plugin: string;
     event_id: string;
     severity: string;
@@ -16,6 +17,7 @@
   };
 
   type RuleForm = {
+    name: string;
     plugin: string;
     event_id: string;
     severity: string;
@@ -51,6 +53,7 @@
   let error: string | null = null;
 
   let form: RuleForm = {
+    name: '',
     plugin: '*',
     event_id: '*',
     severity: '*',
@@ -163,6 +166,7 @@
 
   const resetForm = () => {
     form = {
+      name: '',
       plugin: '*',
       event_id: '*',
       severity: '*',
@@ -178,6 +182,7 @@
   const editRule = (rule: Rule) => {
     editingId = rule.id;
     form = {
+      name: rule.name || '',
       plugin: rule.plugin,
       event_id: rule.event_id,
       severity: rule.severity,
@@ -197,6 +202,7 @@
     actionError = null;
     try {
       const payload = {
+        name: form.name.trim() || null,
         plugin: form.plugin.trim() || '*',
         event_id: form.event_id.trim() || '*',
         severity: form.severity.trim() || '*',
@@ -292,6 +298,7 @@
       <thead>
         <tr>
           <th>ID</th>
+          <th>Nombre</th>
           <th>Plugin</th>
           <th>Event</th>
           <th>Severidad</th>
@@ -304,16 +311,17 @@
       <tbody>
         {#if loading}
           <tr>
-            <td colspan="8">Cargando reglas...</td>
+            <td colspan="9">Cargando reglas...</td>
           </tr>
         {:else if rules.length === 0}
           <tr>
-            <td colspan="8">Sin reglas.</td>
+            <td colspan="9">Sin reglas.</td>
           </tr>
         {:else}
           {#each rules as rule}
             <tr>
               <td data-label="ID">{rule.id}</td>
+              <td data-label="Nombre">{rule.name || '-'}</td>
               <td data-label="Plugin">{rule.plugin}</td>
               <td data-label="Event">{rule.event_id}</td>
               <td data-label="Severidad">{rule.severity}</td>
@@ -339,6 +347,10 @@
     <div class="badge">Nueva regla</div>
     <h3 style="margin-top: 12px;">{editingId ? 'Editar regla' : 'Crear regla'}</h3>
     <div style="display: grid; gap: 12px; margin-top: 12px;">
+      <label>
+        <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Nombre</div>
+        <input bind:value={form.name} placeholder="Escalada por fuerza bruta" />
+      </label>
       <div class="split" style="gap: 12px;">
         <label>
           <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Plugin</div>

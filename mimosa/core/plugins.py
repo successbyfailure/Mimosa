@@ -123,6 +123,7 @@ class MimosaNpmConfig:
     name: str = "mimosanpm"
     enabled: bool = False
     default_severity: str = "alto"
+    fallback_severity: str | None = None
     rules: List["MimosaNpmRule"] = field(default_factory=list)
     ignore_list: List["MimosaNpmIgnoreRule"] = field(default_factory=list)
     shared_secret: str = field(default_factory=_generate_secret)
@@ -296,9 +297,11 @@ class PluginConfigStore:
         ignore_list = []
         for entry in config.get("ignore_list", []) or []:
             ignore_list.append(MimosaNpmIgnoreRule(**entry))
+        fallback_severity = config.get("fallback_severity") or None
         loaded = MimosaNpmConfig(
             enabled=bool(config.get("enabled", False)),
             default_severity=config.get("default_severity", "alto"),
+            fallback_severity=fallback_severity,
             rules=rules,
             ignore_list=ignore_list,
             shared_secret=str(shared_secret),

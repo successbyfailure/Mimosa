@@ -315,6 +315,7 @@ def ensure_database(path: Path | str = DEFAULT_DB_PATH) -> Path:
             """
             CREATE TABLE IF NOT EXISTS offense_rules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
                 plugin TEXT NOT NULL,
                 event_id TEXT NOT NULL DEFAULT '*',
                 severity TEXT NOT NULL,
@@ -331,6 +332,8 @@ def ensure_database(path: Path | str = DEFAULT_DB_PATH) -> Path:
         rule_columns = {
             row[1] for row in conn.execute("PRAGMA table_info(offense_rules);").fetchall()
         }
+        if "name" not in rule_columns:
+            conn.execute("ALTER TABLE offense_rules ADD COLUMN name TEXT;")
         if "enabled" not in rule_columns:
             conn.execute(
                 "ALTER TABLE offense_rules ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;"
@@ -704,6 +707,7 @@ def _ensure_postgres(db) -> None:
             """
             CREATE TABLE IF NOT EXISTS offense_rules (
                 id SERIAL PRIMARY KEY,
+                name TEXT,
                 plugin TEXT NOT NULL,
                 event_id TEXT NOT NULL DEFAULT '*',
                 severity TEXT NOT NULL,
@@ -716,6 +720,8 @@ def _ensure_postgres(db) -> None:
             );
             """
         )
+        if not _postgres_column_exists(conn, "offense_rules", "name"):
+            conn.execute("ALTER TABLE offense_rules ADD COLUMN name TEXT;")
         if not _postgres_column_exists(conn, "offense_rules", "enabled"):
             conn.execute(
                 "ALTER TABLE offense_rules ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;"

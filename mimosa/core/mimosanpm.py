@@ -68,8 +68,12 @@ class MimosaNpmService:
         status_code = alert.status_code if alert.status_code is not None else "n/a"
         if self._is_ignored(host, path, status_code):
             return
+        fallback_override = None
+        if alert.alert_type == "fallback" and self.config.fallback_severity:
+            fallback_override = self.config.fallback_severity
         severity = (
             self._severity_from_rules(host, path, status_code)
+            or fallback_override
             or alert.severity
             or self.config.default_severity
         )

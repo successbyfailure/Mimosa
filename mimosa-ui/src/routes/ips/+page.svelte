@@ -48,6 +48,7 @@
   let limit = 100;
   let query = '';
   let filterType = '';
+  let totalProfiles: number | null = null;
   let sortKey: 'ip' | 'reverse_dns' | 'offenses' | 'blocks' | 'last_seen' | 'ip_type' = 'last_seen';
   let sortDir: 'asc' | 'desc' = 'desc';
   let sortedProfiles: IpProfile[] = [];
@@ -87,6 +88,16 @@
       error = err instanceof Error ? err.message : 'Error inesperado';
     } finally {
       loading = false;
+      loadSummary();
+    }
+  };
+
+  const loadSummary = async () => {
+    try {
+      const payload = await requestJson<{ total: number }>('/api/ips/summary');
+      totalProfiles = payload.total;
+    } catch (err) {
+      totalProfiles = null;
     }
   };
 
@@ -200,7 +211,7 @@
 
 <section class="page-header">
   <div class="badge">IPs</div>
-  <h1>Perfiles de IP</h1>
+  <h1>IPs conocidas: {totalProfiles ?? '-'}</h1>
   <p>Enriquecimiento, historico de ofensas y bloqueos.</p>
 </section>
 

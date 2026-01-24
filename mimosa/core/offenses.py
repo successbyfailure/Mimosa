@@ -628,6 +628,26 @@ class OffenseStore:
             rows = conn.execute(query, params).fetchall()
         return {row[0]: int(row[1]) for row in rows if row and row[0]}
 
+    def offense_counts_by_ip_freshness(self, since: datetime) -> Dict[str, int]:
+        """Devuelve recuentos de ofensas por IPs nuevas vs conocidas."""
+
+        since_value = since.isoformat()
+        with self._connection() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(CASE WHEN p.first_seen IS NULL OR p.first_seen >= ? THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN p.first_seen IS NOT NULL AND p.first_seen < ? THEN 1 ELSE 0 END), 0)
+                FROM offenses o
+                LEFT JOIN ip_profiles p ON p.ip = o.source_ip
+                WHERE o.created_at >= ?;
+                """,
+                (since_value, since_value, since_value),
+            ).fetchone()
+        if not row:
+            return {"new": 0, "known": 0}
+        return {"new": int(row[0] or 0), "known": int(row[1] or 0)}
+
     def timeline(self, window: timedelta, *, bucket: str = "hour") -> List[Dict[str, str | int]]:
         """Devuelve recuentos agregados por intervalo para un periodo."""
 
@@ -839,6 +859,29 @@ class OffenseStore:
             ).fetchall()
 
         return [self._row_to_profile(row) for row in rows]
+
+    def count_ip_profiles(self) -> int:
+        """Devuelve el total de IPs registradas en el perfil."""
+
+        with self._connection() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM ip_profiles;").fetchone()
+        return int(row[0]) if row else 0
+
+    def offense_window_by_ip(self, ip: str) -> tuple[Optional[datetime], Optional[datetime]]:
+        """Devuelve la primera y última ofensa registradas para una IP."""
+
+        with self._connection() as conn:
+            row = conn.execute(
+                """
+                SELECT MIN(created_at), MAX(created_at)
+                FROM offenses
+                WHERE source_ip = ?;
+                """,
+                (ip,),
+            ).fetchone()
+        if not row:
+            return None, None
+        return self._parse_iso_datetime(row[0]), self._parse_iso_datetime(row[1])
 
     def get_ip_profile(self, ip: str) -> Optional[IpProfile]:
         """Recupera los metadatos de una IP concreta."""

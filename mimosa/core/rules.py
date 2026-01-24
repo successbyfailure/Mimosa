@@ -46,7 +46,7 @@ class OffenseRuleStore:
         with self._connection() as conn:
             rows = conn.execute(
                 """
-                SELECT id, plugin, event_id, severity, description, min_last_hour, min_total,
+                SELECT id, name, plugin, event_id, severity, description, min_last_hour, min_total,
                        min_blocks_total, block_minutes, enabled
                 FROM offense_rules
                 ORDER BY id ASC;
@@ -56,15 +56,16 @@ class OffenseRuleStore:
         return [
             OffenseRule(
                 id=row[0],
-                plugin=row[1],
-                event_id=row[2],
-                severity=row[3],
-                description=row[4],
-                min_last_hour=row[5],
-                min_total=row[6],
-                min_blocks_total=row[7],
-                block_minutes=row[8],
-                enabled=bool(row[9]) if len(row) > 9 else True,
+                name=row[1],
+                plugin=row[2],
+                event_id=row[3],
+                severity=row[4],
+                description=row[5],
+                min_last_hour=row[6],
+                min_total=row[7],
+                min_blocks_total=row[8],
+                block_minutes=row[9],
+                enabled=bool(row[10]) if len(row) > 10 else True,
             )
             for row in rows
         ]
@@ -73,7 +74,7 @@ class OffenseRuleStore:
         with self._connection() as conn:
             row = conn.execute(
                 """
-                SELECT id, plugin, event_id, severity, description, min_last_hour, min_total,
+                SELECT id, name, plugin, event_id, severity, description, min_last_hour, min_total,
                        min_blocks_total, block_minutes, enabled
                 FROM offense_rules
                 WHERE id = ?;
@@ -84,15 +85,16 @@ class OffenseRuleStore:
             return None
         return OffenseRule(
             id=row[0],
-            plugin=row[1],
-            event_id=row[2],
-            severity=row[3],
-            description=row[4],
-            min_last_hour=row[5],
-            min_total=row[6],
-            min_blocks_total=row[7],
-            block_minutes=row[8],
-            enabled=bool(row[9]) if len(row) > 9 else True,
+            name=row[1],
+            plugin=row[2],
+            event_id=row[3],
+            severity=row[4],
+            description=row[5],
+            min_last_hour=row[6],
+            min_total=row[7],
+            min_blocks_total=row[8],
+            block_minutes=row[9],
+            enabled=bool(row[10]) if len(row) > 10 else True,
         )
 
     def add(self, rule: OffenseRule) -> OffenseRule:
@@ -101,10 +103,12 @@ class OffenseRuleStore:
                 conn,
                 """
                 INSERT INTO offense_rules
-                    (plugin, event_id, severity, description, min_last_hour, min_total, min_blocks_total, block_minutes, enabled)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    (name, plugin, event_id, severity, description, min_last_hour, min_total,
+                     min_blocks_total, block_minutes, enabled)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
+                    rule.name,
                     rule.plugin,
                     rule.event_id,
                     rule.severity,
@@ -124,11 +128,12 @@ class OffenseRuleStore:
             cursor = conn.execute(
                 """
                 UPDATE offense_rules
-                SET plugin = ?, event_id = ?, severity = ?, description = ?,
+                SET name = ?, plugin = ?, event_id = ?, severity = ?, description = ?,
                     min_last_hour = ?, min_total = ?, min_blocks_total = ?, block_minutes = ?, enabled = ?
                 WHERE id = ?;
                 """,
                 (
+                    rule.name,
                     rule.plugin,
                     rule.event_id,
                     rule.severity,

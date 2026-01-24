@@ -40,26 +40,14 @@
     id: string;
     name: string;
     type: string;
-  };
-
-  type FirewallBlocksPayload = {
-    alias: string;
-    items: string[];
-    database: BlockEntry[];
-    sync?: {
-      added: string[];
-      removed: string[];
-    };
+    enabled?: boolean;
   };
 
   type BlockForm = {
     ip: string;
     reason: string;
     duration_minutes: number;
-    sync_with_firewall: boolean;
   };
-
-  const syncPreferenceKey = 'mimosa_sync_with_firewall';
 
   let blocks: BlockEntry[] = [];
   let history: BlockHistoryEntry[] = [];
@@ -69,17 +57,11 @@
   let loading = false;
   let error: string | null = null;
   let historyLoading = false;
-  let aliasLoading = false;
-  let globalSync = true;
-  let firewallAliasName = '';
-  let firewallAliasEntries: string[] = [];
-  let firewallSyncInfo: FirewallBlocksPayload['sync'] | null = null;
 
   let form: BlockForm = {
     ip: '',
     reason: '',
-    duration_minutes: 60,
-    sync_with_firewall: true
+    duration_minutes: 60
   };
 
   let actionMessage: string | null = null;
@@ -109,7 +91,6 @@
   };
 
   const ipHref = (ip: string) => `/ips/${encodeURIComponent(ip)}`;
-  const isIpTarget = (value: string) => !value.includes('/');
 
   const loadBlocks = async () => {
     loading = true;
@@ -139,35 +120,14 @@
   const loadFirewalls = async () => {
     try {
       firewalls = await requestJson<FirewallConfig[]>('/api/firewalls');
-      if (!selectedFirewallId && firewalls.length === 1) {
-        selectedFirewallId = firewalls[0].id;
+      if (!selectedFirewallId) {
+        const active = firewalls.find((fw) => fw.enabled !== false) || firewalls[0];
+        if (active) {
+          selectedFirewallId = active.id;
+        }
       }
-      await loadFirewallBlocks();
     } catch (err) {
       actionError = err instanceof Error ? err.message : 'No se pudieron cargar firewalls';
-    }
-  };
-
-  const loadFirewallBlocks = async () => {
-    const firewallId = activeFirewallId();
-    if (!firewallId) {
-      firewallAliasName = '';
-      firewallAliasEntries = [];
-      firewallSyncInfo = null;
-      return;
-    }
-    aliasLoading = true;
-    try {
-      const payload = await requestJson<FirewallBlocksPayload>(
-        `/api/firewalls/${firewallId}/blocks`
-      );
-      firewallAliasName = payload.alias;
-      firewallAliasEntries = payload.items || [];
-      firewallSyncInfo = payload.sync || null;
-    } catch (err) {
-      actionError = err instanceof Error ? err.message : 'No se pudo cargar alias del firewall';
-    } finally {
-      aliasLoading = false;
     }
   };
 
@@ -194,7 +154,7 @@
         ip: form.ip.trim(),
         reason: form.reason.trim() || null,
         duration_minutes: Number(form.duration_minutes) || null,
-        sync_with_firewall: form.sync_with_firewall
+        sync_with_firewall: false
       };
       if (!payload.ip) {
         throw new Error('IP obligatoria');
@@ -207,7 +167,6 @@
       form.ip = '';
       form.reason = '';
       await loadBlocks();
-      await loadFirewallBlocks();
     } catch (err) {
       actionError = err instanceof Error ? err.message : 'No se pudo crear el bloqueo';
     } finally {
@@ -232,7 +191,6 @@
       });
       actionMessage = 'Bloqueo eliminado';
       await loadBlocks();
-      await loadFirewallBlocks();
     } catch (err) {
       actionError = err instanceof Error ? err.message : 'No se pudo eliminar';
     } finally {
@@ -251,26 +209,8 @@
     return date.toLocaleString();
   };
 
-  const loadSyncPreference = () => {
-    if (typeof localStorage === 'undefined') {
-      return;
-    }
-    const stored = localStorage.getItem(syncPreferenceKey);
-    if (stored !== null) {
-      globalSync = stored === 'true';
-      form.sync_with_firewall = globalSync;
-    }
-  };
-
-  const updateGlobalSync = () => {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(syncPreferenceKey, String(globalSync));
-    }
-    form.sync_with_firewall = globalSync;
-  };
-
   const handleFirewallChange = () => {
-    loadFirewallBlocks();
+    // mantener seleccion sin sincronizar entradas al firewall
   };
 
   $: if (!$authStore.loading && !$authStore.user) {
@@ -278,7 +218,6 @@
   }
 
   onMount(() => {
-    loadSyncPreference();
     loadBlocks();
     loadFirewalls();
     loadHistory();
@@ -288,7 +227,7 @@
 <section class="page-header">
   <div class="badge">Blocks</div>
   <h1>Bloqueos activos</h1>
-  <p>Gestiona bloqueos temporales y sincronizacion con firewalls.</p>
+  <p>Gestiona bloqueos temporales y el historico asociado.</p>
 </section>
 
 {#if error}
@@ -304,10 +243,6 @@
       <label class="check-item">
         <input type="checkbox" bind:checked={includeExpired} />
         <span>Incluir expirados</span>
-      </label>
-      <label class="check-item">
-        <input type="checkbox" bind:checked={globalSync} on:change={updateGlobalSync} />
-        <span>Enviar bloqueos al firewall</span>
       </label>
       <select bind:value={selectedFirewallId} on:change={handleFirewallChange}>
         <option value="">Seleccionar firewall</option>
@@ -402,10 +337,6 @@
         </div>
         <input type="number" min="1" step="1" bind:value={form.duration_minutes} />
       </label>
-      <label style="display: flex; align-items: center; gap: 8px;">
-        <input type="checkbox" bind:checked={form.sync_with_firewall} />
-        <span>Sincronizar con firewall</span>
-      </label>
     </div>
     {#if actionMessage}
       <div style="margin-top: 10px; color: var(--success); font-size: 13px;">
@@ -422,47 +353,6 @@
         {actionLoading ? 'Guardando...' : 'Crear bloqueo'}
       </button>
     </div>
-  </div>
-
-  <div class="surface" style="padding: 18px;">
-    <div class="badge">Alias</div>
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-      <h3 style="margin-top: 12px;">Entradas en {firewallAliasName || 'alias'}</h3>
-      <button class="ghost" on:click={loadFirewallBlocks}>Actualizar</button>
-    </div>
-    {#if aliasLoading}
-      <div style="margin-top: 12px;">Cargando alias...</div>
-    {:else if firewallAliasEntries.length === 0}
-      <div style="margin-top: 12px;">Sin entradas o sin firewall seleccionado.</div>
-    {:else}
-      <div style="margin-top: 12px; overflow-x: auto;">
-        <table class="table table-responsive">
-          <thead>
-            <tr>
-              <th>IP</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each firewallAliasEntries as entry}
-              <tr>
-                <td data-label="IP">
-                  {#if isIpTarget(entry)}
-                    <a class="ip-link" href={ipHref(entry)}>{entry}</a>
-                  {:else}
-                    {entry}
-                  {/if}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-      {#if firewallSyncInfo}
-        <div style="margin-top: 10px; color: var(--muted); font-size: 12px;">
-          Sync: +{firewallSyncInfo.added.length} / -{firewallSyncInfo.removed.length}
-        </div>
-      {/if}
-    {/if}
   </div>
 
   <div class="surface" style="padding: 18px;">
