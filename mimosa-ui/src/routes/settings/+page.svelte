@@ -25,6 +25,9 @@
   let locationMessage: string | null = null;
   let locationError: string | null = null;
   let savingLocation = false;
+  let showToast = false;
+  let toastMessage = '';
+  let toastType: 'success' | 'error' = 'success';
 
   type SettingsTab =
     | 'blocking'
@@ -79,6 +82,15 @@
     }
   };
 
+  const showToastNotification = (msg: string, type: 'success' | 'error' = 'success') => {
+    toastMessage = msg;
+    toastType = type;
+    showToast = true;
+    setTimeout(() => {
+      showToast = false;
+    }, 3000);
+  };
+
   const saveSettings = async () => {
     if (!settings) {
       return;
@@ -96,8 +108,10 @@
         body: JSON.stringify(payload)
       });
       message = 'Configuracion guardada';
+      showToastNotification('✓ Configuración guardada exitosamente', 'success');
     } catch (err) {
       error = err instanceof Error ? err.message : 'No se pudo guardar';
+      showToastNotification('✗ Error al guardar configuración', 'error');
     } finally {
       saving = false;
     }
@@ -151,8 +165,10 @@
         body: JSON.stringify(payload)
       });
       locationMessage = 'Ubicacion guardada';
+      showToastNotification('✓ Ubicación guardada exitosamente', 'success');
     } catch (err) {
       locationError = err instanceof Error ? err.message : 'No se pudo guardar ubicacion';
+      showToastNotification('✗ Error al guardar ubicación', 'error');
     } finally {
       savingLocation = false;
     }
@@ -312,4 +328,10 @@
   <FirewallAdminSettings />
 {:else if activeTab === 'homeassistant'}
   <HomeAssistantSettings />
+{/if}
+
+{#if showToast}
+  <div class="toast {toastType}">
+    {toastMessage}
+  </div>
 {/if}

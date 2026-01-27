@@ -39,6 +39,32 @@
       fill: type === 'line'
     };
 
+    // Plugin para mostrar el total en el centro del donut
+    const centerTextPlugin = {
+      id: 'centerText',
+      beforeDraw: (chart: any) => {
+        if (type !== 'doughnut') {
+          return;
+        }
+        const ctx = chart.ctx;
+        const width = chart.width;
+        const height = chart.height;
+        const total = data.reduce((sum, val) => sum + val, 0);
+
+        ctx.save();
+        ctx.font = 'bold 32px Space Grotesk, sans-serif';
+        ctx.fillStyle = '#f8fafc';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(total.toString(), width / 2, height / 2 - 10);
+
+        ctx.font = '12px Space Grotesk, sans-serif';
+        ctx.fillStyle = '#92a4bf';
+        ctx.fillText('Total', width / 2, height / 2 + 18);
+        ctx.restore();
+      }
+    };
+
     const options: Record<string, unknown> = {
       responsive: true,
       maintainAspectRatio: false,
@@ -80,7 +106,8 @@
         labels,
         datasets: [dataset]
       },
-      options
+      options,
+      plugins: type === 'doughnut' ? [centerTextPlugin] : []
     });
   };
 

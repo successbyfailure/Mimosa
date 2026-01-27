@@ -67,6 +67,8 @@
   let actionMessage: string | null = null;
   let actionError: string | null = null;
   let actionLoading = false;
+  let blockToDelete: BlockEntry | null = null;
+  let showDeleteConfirm = false;
 
   const requestJson = async <T>(path: string, options?: RequestInit): Promise<T> => {
     const response = await fetch(path, {
@@ -174,10 +176,16 @@
     }
   };
 
-  const removeBlock = async (block: BlockEntry) => {
-    if (!confirm(`Eliminar bloqueo para ${block.ip}?`)) {
+  const requestRemoveBlock = (block: BlockEntry) => {
+    blockToDelete = block;
+    showDeleteConfirm = true;
+  };
+
+  const confirmRemoveBlock = async () => {
+    if (!blockToDelete) {
       return;
     }
+    showDeleteConfirm = false;
     actionLoading = true;
     actionMessage = null;
     actionError = null;
@@ -186,7 +194,7 @@
       if (!firewallId) {
         throw new Error('Selecciona un firewall');
       }
-      await requestJson(`/api/firewalls/${firewallId}/blocks/${block.ip}`, {
+      await requestJson(`/api/firewalls/${firewallId}/blocks/${blockToDelete.ip}`, {
         method: 'DELETE'
       });
       actionMessage = 'Bloqueo eliminado';
@@ -195,7 +203,13 @@
       actionError = err instanceof Error ? err.message : 'No se pudo eliminar';
     } finally {
       actionLoading = false;
+      blockToDelete = null;
     }
+  };
+
+  const cancelRemoveBlock = () => {
+    showDeleteConfirm = false;
+    blockToDelete = null;
   };
 
   const formatDate = (value?: string | null) => {
@@ -300,7 +314,7 @@
                 <td data-label="Creado">{formatDate(block.created_at)}</td>
                 <td data-label="Expira">{formatDate(block.expires_at)}</td>
                 <td data-label="Accion">
-                  <button class="ghost" on:click={() => removeBlock(block)}>Eliminar</button>
+                  <button class="ghost" on:click={() => requestRemoveBlock(block)}>Eliminar</button>
                 </td>
               </tr>
             {/each}
@@ -395,3 +409,23 @@
     </div>
   </div>
 </div>
+
+{#if showDeleteConfirm && blockToDelete}
+  <div class="modal-overlay" on:click={cancelRemoveBlock}>
+    <div class="modal-confirm" on:click|stopPropagation>
+      <h3>¿Eliminar bloqueo?</h3>
+      <p>
+        Se eliminará el bloqueo para la IP <strong>{blockToDelete.ip}</strong>.
+        Esta acción no se puede deshacer.
+      </p>
+      <div class="modal-actions">
+        <button class="ghost" on:click={cancelRemoveBlock}>
+          Cancelar
+        </button>
+        <button class="primary danger" on:click={confirmRemoveBlock}>
+          Eliminar
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}

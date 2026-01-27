@@ -303,8 +303,10 @@
           <th>Event</th>
           <th>Severidad</th>
           <th>Descripcion</th>
-          <th>Umbrales</th>
-          <th>Bloqueo</th>
+          <th title="Número de ofensas requeridas (última hora / total / bloques previos)">
+            Umbrales (1h/Total/Bloques)
+          </th>
+          <th title="Duración del bloqueo en minutos">Bloqueo (min)</th>
           <th></th>
         </tr>
       </thead>

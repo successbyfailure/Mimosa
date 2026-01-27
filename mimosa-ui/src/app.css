@@ -59,6 +59,11 @@ a.ip-link {
 
 a.ip-link:hover {
   color: var(--accent);
+  background: rgba(45, 212, 191, 0.1);
+  padding: 4px 8px;
+  margin: -4px -8px;
+  border-radius: 6px;
+  text-decoration-color: rgba(94, 234, 212, 0.8);
 }
 
 button,
@@ -533,6 +538,11 @@ select:focus {
   border-bottom-color: rgba(148, 163, 184, 0.2);
 }
 
+.table th[title] {
+  cursor: help;
+  position: relative;
+}
+
 .table tbody tr:nth-child(odd) {
   background: rgba(15, 23, 42, 0.35);
 }
@@ -555,9 +565,20 @@ select:focus {
 }
 
 .table .cell-truncate {
-  max-width: 360px;
+  max-width: 400px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.table .cell-truncate:hover {
+  overflow: visible;
+  white-space: normal;
+  word-break: break-word;
+  background: rgba(45, 212, 191, 0.05);
+  position: relative;
+  z-index: 10;
 }
 
 .table-compact th,
@@ -795,9 +816,11 @@ select:focus {
 }
 
 .dashboard-tab.active {
-  border-color: rgba(45, 212, 191, 0.5);
-  background: rgba(45, 212, 191, 0.12);
+  border-color: rgba(45, 212, 191, 0.6);
+  background: rgba(45, 212, 191, 0.15);
   color: var(--accent-strong);
+  box-shadow: 0 0 12px rgba(45, 212, 191, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  font-weight: 700;
 }
 
 .plugin-tabs {
@@ -1177,4 +1200,149 @@ select:focus {
 .window-btn.active {
   color: var(--accent);
   background: rgba(45, 212, 191, 0.15);
+}
+
+/* Severity badges */
+.badge.severity-alto,
+.badge.severity-critico {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.badge.severity-medio {
+  background: rgba(251, 191, 36, 0.2);
+  color: #fcd34d;
+  border: 1px solid rgba(251, 191, 36, 0.4);
+}
+
+.badge.severity-bajo {
+  background: rgba(74, 222, 128, 0.2);
+  color: #a7f3d0;
+  border: 1px solid rgba(74, 222, 128, 0.4);
+}
+
+/* Status badges */
+.badge.online,
+.badge.activo {
+  background: rgba(74, 222, 128, 0.15);
+  color: #86efac;
+  border: 1px solid rgba(74, 222, 128, 0.3);
+}
+
+.badge.offline,
+.badge.inactivo {
+  background: rgba(148, 163, 184, 0.15);
+  color: #cbd5e1;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+/* Toast notifications */
+.toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  padding: 14px 18px;
+  border-radius: var(--radius-md);
+  background: rgba(11, 18, 32, 0.98);
+  border: 1px solid var(--border);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.4);
+  font-size: 14px;
+  font-weight: 600;
+  z-index: 9999;
+  animation: toastSlideIn 0.3s ease;
+  backdrop-filter: blur(8px);
+}
+
+.toast.success {
+  border-color: rgba(74, 222, 128, 0.4);
+  background: rgba(11, 18, 32, 0.98);
+  color: var(--success);
+}
+
+.toast.error {
+  border-color: rgba(248, 113, 113, 0.4);
+  background: rgba(11, 18, 32, 0.98);
+  color: var(--danger);
+}
+
+@keyframes toastSlideIn {
+  from {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: grid;
+  place-items: center;
+  z-index: 10000;
+  animation: modalFadeIn 0.2s ease;
+}
+
+.modal-confirm {
+  background: linear-gradient(145deg, var(--bg-panel-strong), rgba(11, 18, 32, 0.98));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  max-width: 420px;
+  width: 90%;
+  box-shadow: 0 32px 64px rgba(0, 0, 0, 0.5);
+  animation: modalSlideUp 0.2s ease;
+}
+
+.modal-confirm h3 {
+  margin: 0 0 12px 0;
+  color: var(--text-strong);
+  font-size: 20px;
+}
+
+.modal-confirm p {
+  margin: 0 0 20px 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.primary.danger {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  box-shadow: 0 18px 30px rgba(239, 68, 68, 0.25);
+}
+
+.primary.danger:hover {
+  box-shadow: 0 22px 38px rgba(239, 68, 68, 0.3);
+}
+
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modalSlideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }

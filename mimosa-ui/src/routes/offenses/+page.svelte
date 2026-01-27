@@ -100,18 +100,21 @@
     return date.toLocaleString();
   };
 
-  const severityColor = (severity?: string | null) => {
+  const severityClass = (severity?: string | null) => {
     const normalized = (severity || '').toLowerCase();
-    if (['alto', 'high', 'critico'].includes(normalized)) {
-      return 'var(--danger)';
+    if (['alto', 'high'].includes(normalized)) {
+      return 'badge severity-alto';
+    }
+    if (['critico', 'critical'].includes(normalized)) {
+      return 'badge severity-critico';
     }
     if (['medio', 'medium'].includes(normalized)) {
-      return 'var(--warning)';
+      return 'badge severity-medio';
     }
     if (['bajo', 'low'].includes(normalized)) {
-      return 'var(--success)';
+      return 'badge severity-bajo';
     }
-    return 'var(--muted)';
+    return 'badge';
   };
 
   const statusLabel = (status?: string) => {
@@ -204,8 +207,8 @@
                   <a class="ip-link" href={ipHref(offense.source_ip)}>{offense.source_ip}</a>
                 </td>
                 <td data-label="Severidad">
-                  <span class="tag" style="color: {severityColor(offense.severity)};">
-                    {offense.severity || 'n/a'}
+                  <span class="{severityClass(offense.severity)}">
+                    {offense.severity?.toUpperCase() || 'N/A'}
                   </span>
                 </td>
                 <td class="cell-nowrap" data-label="Estado">
