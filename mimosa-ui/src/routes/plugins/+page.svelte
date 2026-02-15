@@ -135,6 +135,21 @@
     }
   ];
 
+  const defaultMimosaNpmRules: MimosaNpmRule[] = [
+    { host: '*', path: '/xmlrpc.php*', status: '*', severity: 'alto' },
+    { host: '*', path: '/wp-content/plugins/hellopress/wp_filemanager.php*', status: '*', severity: 'alto' },
+    { host: '*', path: '/.git/*', status: '*', severity: 'alto' },
+    { host: '*', path: '/cgi-bin/*', status: '*', severity: 'alto' },
+    { host: '*', path: '/admin/function.php*', status: '*', severity: 'alto' },
+    { host: '*', path: '/ioxi-o.php*', status: '*', severity: 'alto' },
+    { host: '*', path: '/vx.php*', status: '*', severity: 'alto' },
+    { host: '*', path: '/as.php*', status: '*', severity: 'alto' },
+    { host: '*', path: '/class-t.api.php*', status: '*', severity: 'alto' },
+    { host: '*', path: '/wp-admin/*', status: '*', severity: 'medio' },
+    { host: '*', path: '/wp-login.php*', status: '*', severity: 'medio' },
+    { host: 'desconocido', path: '*', status: '*', severity: 'alto' }
+  ];
+
   let loading = false;
   let error: string | null = null;
 
@@ -575,7 +590,7 @@
     if (!mimosaConfig) {
       return;
     }
-    mimosaConfig.rules = [];
+    mimosaConfig.rules = defaultMimosaNpmRules.map((rule) => ({ ...rule }));
     mimosaConfig.ignore_list = [];
     mimosaConfig.default_severity = 'alto';
     mimosaFallbackSeverity = '';
@@ -1117,7 +1132,7 @@
           <div class="badge">Reglas severidad</div>
           <h3 class="card-title" style="margin-top: 12px;">Reglas de matching</h3>
         </div>
-        <button class="ghost" on:click={addMimosaDefaults}>Añadir defaults</button>
+        <button class="ghost" on:click={addMimosaDefaults}>Cargar defaults recomendados</button>
       </div>
       <div class="form-grid" style="margin-top: 10px;">
         <div class="form-row">
