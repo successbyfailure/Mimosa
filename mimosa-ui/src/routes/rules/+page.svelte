@@ -5,6 +5,7 @@
 
   type Rule = {
     id: number;
+    priority?: number;
     name?: string | null;
     plugin: string;
     event_id: string;
@@ -257,6 +258,57 @@
     }
   };
 
+  const moveRule = async (ruleId: number, direction: -1 | 1) => {
+    const currentIndex = rules.findIndex((rule) => rule.id === ruleId);
+    if (currentIndex < 0) {
+      return;
+    }
+    const targetIndex = currentIndex + direction;
+    if (targetIndex < 0 || targetIndex >= rules.length) {
+      return;
+    }
+
+    const next = [...rules];
+    [next[currentIndex], next[targetIndex]] = [next[targetIndex], next[currentIndex]];
+
+    actionLoading = true;
+    actionMessage = null;
+    actionError = null;
+    try {
+      const orderedIds = next.map((rule) => rule.id);
+      await requestJson('/api/rules/reorder', {
+        method: 'POST',
+        body: JSON.stringify({ rule_ids: orderedIds })
+      });
+      actionMessage = 'Orden de reglas actualizado';
+      await loadRules();
+    } catch (err) {
+      actionError = err instanceof Error ? err.message : 'No se pudo reordenar';
+    } finally {
+      actionLoading = false;
+    }
+  };
+
+  const createDefaultRuleset = async () => {
+    actionLoading = true;
+    actionMessage = null;
+    actionError = null;
+    try {
+      const result = await requestJson<{
+        created?: Array<{ name?: string | null }>;
+        skipped?: string[];
+      }>('/api/rules/defaults', { method: 'POST' });
+      const createdCount = result.created?.length || 0;
+      const skippedCount = result.skipped?.length || 0;
+      actionMessage = `Set por defecto aplicado. Creadas: ${createdCount}. Omitidas: ${skippedCount}.`;
+      await loadRules();
+    } catch (err) {
+      actionError = err instanceof Error ? err.message : 'No se pudo crear el set por defecto';
+    } finally {
+      actionLoading = false;
+    }
+  };
+
   $: if (!$authStore.loading && !$authStore.user) {
     goto('/login');
   }
@@ -276,6 +328,9 @@
   <div class="badge">Rules</div>
   <h1>Reglas de escalado</h1>
   <p>Configura los umbrales para bloqueos automaticos.</p>
+  <p style="margin-top: 8px; color: var(--muted);">
+    Se ejecuta la primera regla que cuadre segun el orden ascendente mostrado.
+  </p>
 </section>
 
 {#if error}
@@ -292,12 +347,18 @@
         <div class="badge">Reglas</div>
         <h3 style="margin-top: 12px;">Listado actual</h3>
       </div>
-      <button class="ghost" on:click={loadRules}>Recargar</button>
+      <div style="display: flex; gap: 8px;">
+        <button class="ghost" on:click={createDefaultRuleset} disabled={actionLoading}>
+          Crear set por defecto
+        </button>
+        <button class="ghost" on:click={loadRules}>Recargar</button>
+      </div>
     </div>
     <table class="table table-responsive" style="margin-top: 16px;">
       <thead>
         <tr>
           <th>ID</th>
+          <th>Orden</th>
           <th>Nombre</th>
           <th>Plugin</th>
           <th>Event</th>
@@ -313,16 +374,17 @@
       <tbody>
         {#if loading}
           <tr>
-            <td colspan="9">Cargando reglas...</td>
+            <td colspan="10">Cargando reglas...</td>
           </tr>
         {:else if rules.length === 0}
           <tr>
-            <td colspan="9">Sin reglas.</td>
+            <td colspan="10">Sin reglas.</td>
           </tr>
         {:else}
-          {#each rules as rule}
+          {#each rules as rule, index}
             <tr>
               <td data-label="ID">{rule.id}</td>
+              <td data-label="Orden">{rule.priority || index + 1}</td>
               <td data-label="Nombre">{rule.name || '-'}</td>
               <td data-label="Plugin">{rule.plugin}</td>
               <td data-label="Event">{rule.event_id}</td>
@@ -334,6 +396,20 @@
               <td data-label="Bloqueo">{rule.block_minutes ?? '-'}</td>
               <td data-label="Accion">
                 <div style="display: flex; gap: 8px;">
+                  <button
+                    class="ghost"
+                    on:click={() => moveRule(rule.id, -1)}
+                    disabled={actionLoading || index === 0}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    class="ghost"
+                    on:click={() => moveRule(rule.id, 1)}
+                    disabled={actionLoading || index === rules.length - 1}
+                  >
+                    ↓
+                  </button>
                   <button class="ghost" on:click={() => editRule(rule)}>Editar</button>
                   <button class="ghost" on:click={() => deleteRule(rule)}>Borrar</button>
                 </div>

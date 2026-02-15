@@ -47,9 +47,9 @@ class OffenseRuleStore:
             rows = conn.execute(
                 """
                 SELECT id, name, plugin, event_id, severity, description, min_last_hour, min_total,
-                       min_blocks_total, block_minutes, enabled
+                       min_blocks_total, block_minutes, enabled, priority
                 FROM offense_rules
-                ORDER BY id ASC;
+                ORDER BY priority ASC, id ASC;
                 """
             ).fetchall()
 
@@ -66,6 +66,7 @@ class OffenseRuleStore:
                 min_blocks_total=row[8],
                 block_minutes=row[9],
                 enabled=bool(row[10]) if len(row) > 10 else True,
+                priority=int(row[11]) if len(row) > 11 and row[11] is not None else 0,
             )
             for row in rows
         ]
@@ -75,7 +76,7 @@ class OffenseRuleStore:
             row = conn.execute(
                 """
                 SELECT id, name, plugin, event_id, severity, description, min_last_hour, min_total,
-                       min_blocks_total, block_minutes, enabled
+                       min_blocks_total, block_minutes, enabled, priority
                 FROM offense_rules
                 WHERE id = ?;
                 """,
@@ -95,17 +96,22 @@ class OffenseRuleStore:
             min_blocks_total=row[8],
             block_minutes=row[9],
             enabled=bool(row[10]) if len(row) > 10 else True,
+            priority=int(row[11]) if len(row) > 11 and row[11] is not None else 0,
         )
 
     def add(self, rule: OffenseRule) -> OffenseRule:
         with self._connection() as conn:
+            max_priority = conn.execute(
+                "SELECT COALESCE(MAX(priority), 0) FROM offense_rules;"
+            ).fetchone()[0]
+            next_priority = int(max_priority or 0) + 1
             rule.id = insert_returning_id(
                 conn,
                 """
                 INSERT INTO offense_rules
                     (name, plugin, event_id, severity, description, min_last_hour, min_total,
-                     min_blocks_total, block_minutes, enabled)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                     min_blocks_total, block_minutes, enabled, priority)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     rule.name,
@@ -118,9 +124,11 @@ class OffenseRuleStore:
                     rule.min_blocks_total,
                     rule.block_minutes,
                     int(rule.enabled),
+                    next_priority,
                 ),
                 self._db.backend,
             )
+            rule.priority = next_priority
         return rule
 
     def update(self, rule_id: int, rule: OffenseRule) -> Optional[OffenseRule]:
@@ -183,6 +191,20 @@ class OffenseRuleStore:
     def delete(self, rule_id: int) -> None:
         with self._connection() as conn:
             conn.execute("DELETE FROM offense_rules WHERE id = ?;", (rule_id,))
+
+    def reorder(self, ordered_rule_ids: List[int]) -> List[OffenseRule]:
+        current = self.list()
+        current_ids = [rule.id for rule in current if rule.id is not None]
+        if sorted(current_ids) != sorted(ordered_rule_ids):
+            raise ValueError("La lista de reglas no coincide con las reglas existentes")
+
+        with self._connection() as conn:
+            for index, rule_id in enumerate(ordered_rule_ids, start=1):
+                conn.execute(
+                    "UPDATE offense_rules SET priority = ? WHERE id = ?;",
+                    (index, rule_id),
+                )
+        return self.list()
 
 
 class RuleManager:

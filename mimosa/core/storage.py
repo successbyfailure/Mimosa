@@ -324,7 +324,8 @@ def ensure_database(path: Path | str = DEFAULT_DB_PATH) -> Path:
                 min_total INTEGER NOT NULL DEFAULT 0,
                 min_blocks_total INTEGER NOT NULL DEFAULT 0,
                 block_minutes INTEGER,
-                enabled INTEGER NOT NULL DEFAULT 1
+                enabled INTEGER NOT NULL DEFAULT 1,
+                priority INTEGER NOT NULL DEFAULT 0
             );
             """
         )
@@ -337,6 +338,13 @@ def ensure_database(path: Path | str = DEFAULT_DB_PATH) -> Path:
         if "enabled" not in rule_columns:
             conn.execute(
                 "ALTER TABLE offense_rules ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;"
+            )
+        if "priority" not in rule_columns:
+            conn.execute(
+                "ALTER TABLE offense_rules ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;"
+            )
+            conn.execute(
+                "UPDATE offense_rules SET priority = id WHERE COALESCE(priority, 0) = 0;"
             )
         # Tablas para el bot de Telegram
         conn.execute(
@@ -716,7 +724,8 @@ def _ensure_postgres(db) -> None:
                 min_total INTEGER NOT NULL DEFAULT 0,
                 min_blocks_total INTEGER NOT NULL DEFAULT 0,
                 block_minutes INTEGER,
-                enabled INTEGER NOT NULL DEFAULT 1
+                enabled INTEGER NOT NULL DEFAULT 1,
+                priority INTEGER NOT NULL DEFAULT 0
             );
             """
         )
@@ -725,6 +734,13 @@ def _ensure_postgres(db) -> None:
         if not _postgres_column_exists(conn, "offense_rules", "enabled"):
             conn.execute(
                 "ALTER TABLE offense_rules ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;"
+            )
+        if not _postgres_column_exists(conn, "offense_rules", "priority"):
+            conn.execute(
+                "ALTER TABLE offense_rules ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;"
+            )
+            conn.execute(
+                "UPDATE offense_rules SET priority = id WHERE COALESCE(priority, 0) = 0;"
             )
         conn.execute(
             """

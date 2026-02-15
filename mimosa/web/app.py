@@ -266,6 +266,12 @@ class RuleInput(BaseModel):
     block_minutes: int | None = None
 
 
+class RuleReorderInput(BaseModel):
+    """Payload para reordenar reglas por prioridad ascendente."""
+
+    rule_ids: List[int] = Field(default_factory=list)
+
+
 class WhitelistInput(BaseModel):
     """Entrada para la lista blanca."""
 
@@ -765,6 +771,7 @@ def create_app(
     def _serialize_rule(rule: OffenseRule) -> Dict[str, object]:
         return {
             "id": rule.id,
+            "priority": rule.priority,
             "name": rule.name,
             "plugin": rule.plugin,
             "event_id": rule.event_id,
@@ -2541,6 +2548,88 @@ def create_app(
             if not any(r.id == rule_id for r in rules):
                 raise HTTPException(status_code=404, detail="Regla no encontrada")
         return {"id": rule_id, "enabled": new_state}
+
+    @app.post("/api/rules/reorder")
+    def reorder_rules(payload: RuleReorderInput) -> List[Dict[str, object]]:
+        if not payload.rule_ids:
+            raise HTTPException(status_code=400, detail="Debes indicar el orden de reglas")
+        try:
+            ordered = rule_store.reorder(payload.rule_ids)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return [_serialize_rule(rule) for rule in ordered]
+
+    @app.post("/api/rules/defaults")
+    def create_default_ruleset() -> Dict[str, object]:
+        templates = [
+            OffenseRule(
+                name="Alto",
+                plugin="*",
+                event_id="*",
+                severity="alto",
+                description="*",
+                min_last_hour=0,
+                min_total=0,
+                min_blocks_total=0,
+                block_minutes=None,
+                enabled=True,
+            ),
+            OffenseRule(
+                name="Medio",
+                plugin="*",
+                event_id="*",
+                severity="medio",
+                description="*",
+                min_last_hour=0,
+                min_total=2,
+                min_blocks_total=0,
+                block_minutes=None,
+                enabled=True,
+            ),
+            OffenseRule(
+                name="Sospechosos habituales",
+                plugin="*",
+                event_id="*",
+                severity="*",
+                description="*",
+                min_last_hour=0,
+                min_total=0,
+                min_blocks_total=4,
+                block_minutes=2880,
+                enabled=True,
+            ),
+        ]
+
+        existing = rule_store.list()
+        created: List[Dict[str, object]] = []
+        skipped: List[str] = []
+
+        for template in templates:
+            duplicate = next(
+                (
+                    rule
+                    for rule in existing
+                    if (rule.name or "") == (template.name or "")
+                    and rule.plugin == template.plugin
+                    and rule.event_id == template.event_id
+                    and rule.severity == template.severity
+                    and rule.description == template.description
+                    and rule.min_last_hour == template.min_last_hour
+                    and rule.min_total == template.min_total
+                    and rule.min_blocks_total == template.min_blocks_total
+                    and rule.block_minutes == template.block_minutes
+                ),
+                None,
+            )
+            if duplicate:
+                skipped.append(template.name or "regla")
+                continue
+
+            saved = rule_store.add(template)
+            created.append(_serialize_rule(saved))
+            existing.append(saved)
+
+        return {"created": created, "skipped": skipped, "total_rules": len(rule_store.list())}
 
     @app.get("/api/ips")
     def list_ips(limit: int = 100) -> List[Dict[str, object]]:
