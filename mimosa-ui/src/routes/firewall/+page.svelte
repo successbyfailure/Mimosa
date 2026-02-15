@@ -38,6 +38,7 @@
   let aliases: FirewallAliases | null = null;
   let rules: FirewallRule[] = [];
   let loading = false;
+  let installingRules = false;
   let error: string | null = null;
   let message: string | null = null;
 
@@ -150,6 +151,28 @@
       await loadRules();
     } catch (err) {
       message = err instanceof Error ? err.message : 'No se pudo eliminar la regla';
+    }
+  };
+
+  const setupFirewallRules = async () => {
+    if (!selectedFirewallId) {
+      message = 'Selecciona un firewall';
+      return;
+    }
+
+    installingRules = true;
+    message = null;
+    try {
+      const payload = await requestJson<{ message?: string }>(
+        `/api/firewalls/${selectedFirewallId}/setup`,
+        { method: 'POST' }
+      );
+      message = payload.message || 'Reglas instaladas/actualizadas correctamente';
+      await Promise.all([loadAliases(), loadRules()]);
+    } catch (err) {
+      message = err instanceof Error ? err.message : 'No se pudieron instalar/actualizar reglas';
+    } finally {
+      installingRules = false;
     }
   };
 
@@ -330,6 +353,14 @@
   <div class="surface" style="padding: 18px;">
     <div class="badge">Reglas</div>
     <h3 style="margin-top: 12px;">Reglas de Mimosa</h3>
+    <div style="margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap;">
+      <button class="ghost" on:click={setupFirewallRules} disabled={installingRules || !selectedFirewallId}>
+        {installingRules ? 'Aplicando...' : 'Instalar/actualizar reglas'}
+      </button>
+      <button class="ghost" on:click={loadRules} disabled={loading || !selectedFirewallId}>
+        Refrescar reglas
+      </button>
+    </div>
     {#if message}
       <div style="color: var(--warning); font-size: 12px; margin-top: 6px;">{message}</div>
     {/if}
