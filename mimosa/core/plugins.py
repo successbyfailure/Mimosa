@@ -211,16 +211,27 @@ class PluginConfigStore:
 
     def _save(self) -> None:
         with self._db.connect() as conn:
-            conn.execute("DELETE FROM plugin_configs;")
             rows = [
                 (name, json.dumps(payload))
                 for name, payload in self._plugins.items()
             ]
             if rows:
                 conn.executemany(
-                    "INSERT INTO plugin_configs (name, payload) VALUES (?, ?);",
+                    """
+                    INSERT INTO plugin_configs (name, payload)
+                    VALUES (?, ?)
+                    ON CONFLICT(name) DO UPDATE SET payload = excluded.payload;
+                    """,
                     rows,
                 )
+                names = [name for name, _ in rows]
+                placeholders = ", ".join(["?"] * len(names))
+                conn.execute(
+                    f"DELETE FROM plugin_configs WHERE name NOT IN ({placeholders});",
+                    names,
+                )
+            else:
+                conn.execute("DELETE FROM plugin_configs;")
 
     def list(self) -> List[Dict[str, object]]:
         """Devuelve todas las configuraciones conocidas."""
@@ -311,9 +322,11 @@ class PluginConfigStore:
             ),
             alert_suspicious_path=bool(config.get("alert_suspicious_path", True)),
         )
-        # Normaliza y persiste secretos faltantes.
-        self._plugins[loaded.name] = asdict(loaded)
-        self._save()
+        normalized = asdict(loaded)
+        # Normaliza y persiste solo si hubo cambios reales.
+        if self._plugins.get(loaded.name) != normalized:
+            self._plugins[loaded.name] = normalized
+            self._save()
         return loaded
 
     def update_mimosanpm(self, payload: MimosaNpmConfig) -> MimosaNpmConfig:

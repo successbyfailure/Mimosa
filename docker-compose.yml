@@ -11,6 +11,11 @@ services:
     volumes:
       - ./data:/app/data
       - ./.env:/app/.env
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   #watchtower:

@@ -41,6 +41,11 @@ def _normalize_datetime(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def _should_rebuild_sqlite(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "database disk image is malformed" in message or "file is not a database" in message
+
+
 class BlockManager:
     """Registra y maneja bloqueos de direcciones IP.
 
@@ -76,11 +81,71 @@ class BlockManager:
         return self._db.connect()
 
     def _touch_ip_profile(self, conn, ip: str, *, seen_at: datetime) -> None:
-        row = conn.execute(
-            "SELECT ip FROM ip_profiles WHERE ip = ? LIMIT 1;",
-            (ip,),
-        ).fetchone()
-        if row:
+        seen_at_iso = seen_at.isoformat()
+        updated = conn.execute(
+            """
+            UPDATE ip_profiles
+            SET last_seen = ?,
+                last_block_at = CASE
+                    WHEN last_block_at IS NULL OR last_block_at < ? THEN ?
+                    ELSE last_block_at
+                END,
+                blocks_count = COALESCE(blocks_count, 0) + 1
+            WHERE ip = ?;
+            """,
+            (
+                seen_at_iso,
+                seen_at_iso,
+                seen_at_iso,
+                ip,
+            ),
+        ).rowcount
+        if updated:
+            return
+        try:
+            conn.execute(
+                """
+                INSERT INTO ip_profiles (
+                    ip, geo, whois, reverse_dns, first_seen, last_seen, enriched_at,
+                    ip_type, ip_type_confidence, ip_type_source, ip_type_provider,
+                    isp, org, asn, is_proxy, is_mobile, is_hosting, offenses_count,
+                    blocks_count, last_offense_at, last_block_at, country_code,
+                    risk_score, labels, enriched_source
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                (
+                    ip,
+                    None,
+                    None,
+                    None,
+                    seen_at_iso,
+                    seen_at_iso,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    None,
+                    seen_at_iso,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+            )
+        except DatabaseError as exc:
+            error_text = str(exc).lower()
+            if "unique" not in error_text and "duplicate key" not in error_text:
+                raise
             conn.execute(
                 """
                 UPDATE ip_profiles
@@ -93,52 +158,12 @@ class BlockManager:
                 WHERE ip = ?;
                 """,
                 (
-                    seen_at.isoformat(),
-                    seen_at.isoformat(),
-                    seen_at.isoformat(),
+                    seen_at_iso,
+                    seen_at_iso,
+                    seen_at_iso,
                     ip,
                 ),
             )
-            return
-        conn.execute(
-            """
-            INSERT INTO ip_profiles (
-                ip, geo, whois, reverse_dns, first_seen, last_seen, enriched_at,
-                ip_type, ip_type_confidence, ip_type_source, ip_type_provider,
-                isp, org, asn, is_proxy, is_mobile, is_hosting, offenses_count,
-                blocks_count, last_offense_at, last_block_at, country_code,
-                risk_score, labels, enriched_source
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-            """,
-            (
-                ip,
-                None,
-                None,
-                None,
-                seen_at.isoformat(),
-                seen_at.isoformat(),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                0,
-                0,
-                0,
-                0,
-                1,
-                None,
-                seen_at.isoformat(),
-                None,
-                None,
-                None,
-                None,
-            ),
-        )
 
     def _deserialize_row(self, row: tuple) -> BlockEntry:
         created_at = datetime.fromisoformat(row[4])
@@ -517,12 +542,14 @@ class BlockManager:
         try:
             with self._connection() as conn:
                 conn.execute("DELETE FROM blocks;")
-        except DatabaseError:
-            if self._db.backend == "sqlite":
+        except DatabaseError as exc:
+            if self._db.backend == "sqlite" and _should_rebuild_sqlite(exc):
                 Path(self.db_path).unlink(missing_ok=True)
                 ensure_database(self.db_path)
-            else:
-                raise
+                self._last_sync = None
+                self._load_state()
+                return
+            raise
         self._last_sync = None
         self._load_state()
 
