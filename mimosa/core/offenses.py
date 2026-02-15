@@ -47,6 +47,13 @@ from mimosa.core.ip_classification import IpClassifier
 __all__ = ["OffenseRecord", "IpProfile", "WhitelistEntry", "OffenseStore"]
 
 
+def _should_rebuild_sqlite(exc: Exception) -> bool:
+    """Determina si merece reconstruir SQLite por posible corrupción real."""
+
+    message = str(exc).lower()
+    return "database disk image is malformed" in message or "file is not a database" in message
+
+
 class OffenseStore:
     """Almacena y recupera ofensas desde SQLite."""
 
@@ -152,11 +159,81 @@ class OffenseStore:
         seen_at: datetime,
         increment_offenses: int = 0,
     ) -> None:
-        row = conn.execute(
-            "SELECT last_offense_at FROM ip_profiles WHERE ip = ? LIMIT 1;",
-            (ip,),
-        ).fetchone()
-        if row:
+        seen_at_iso = seen_at.isoformat()
+        if increment_offenses > 0:
+            updated = conn.execute(
+                """
+                UPDATE ip_profiles
+                SET last_seen = ?,
+                    last_offense_at = CASE
+                        WHEN last_offense_at IS NULL OR last_offense_at < ? THEN ?
+                        ELSE last_offense_at
+                    END,
+                    offenses_count = COALESCE(offenses_count, 0) + ?
+                WHERE ip = ?;
+                """,
+                (
+                    seen_at_iso,
+                    seen_at_iso,
+                    seen_at_iso,
+                    increment_offenses,
+                    ip,
+                ),
+            ).rowcount
+        else:
+            updated = conn.execute(
+                "UPDATE ip_profiles SET last_seen = ? WHERE ip = ?;",
+                (seen_at_iso, ip),
+            ).rowcount
+        if updated:
+            return
+
+        metadata = self._enrich_ip(ip)
+        try:
+            conn.execute(
+                """
+                INSERT INTO ip_profiles (
+                    ip, geo, whois, reverse_dns, first_seen, last_seen, enriched_at,
+                    ip_type, ip_type_confidence, ip_type_source, ip_type_provider,
+                    isp, org, asn, is_proxy, is_mobile, is_hosting, offenses_count,
+                    blocks_count, last_offense_at, last_block_at, country_code,
+                    risk_score, labels, enriched_source
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                (
+                    ip,
+                    metadata.get("geo"),
+                    metadata.get("whois"),
+                    metadata.get("reverse_dns"),
+                    seen_at_iso,
+                    seen_at_iso,
+                    seen_at_iso,
+                    metadata.get("ip_type"),
+                    metadata.get("ip_type_confidence"),
+                    metadata.get("ip_type_source"),
+                    metadata.get("ip_type_provider"),
+                    metadata.get("isp"),
+                    metadata.get("org"),
+                    metadata.get("asn"),
+                    1 if metadata.get("is_proxy") else 0,
+                    1 if metadata.get("is_mobile") else 0,
+                    1 if metadata.get("is_hosting") else 0,
+                    increment_offenses,
+                    0,
+                    seen_at_iso if increment_offenses > 0 else None,
+                    None,
+                    metadata.get("country_code"),
+                    metadata.get("risk_score"),
+                    metadata.get("labels"),
+                    metadata.get("enriched_source"),
+                ),
+            )
+        except DatabaseError as exc:
+            # Carrera esperable bajo alta concurrencia: otro hilo insertó antes.
+            error_text = str(exc).lower()
+            if "unique" not in error_text and "duplicate key" not in error_text:
+                raise
             if increment_offenses > 0:
                 conn.execute(
                     """
@@ -170,9 +247,9 @@ class OffenseStore:
                     WHERE ip = ?;
                     """,
                     (
-                        seen_at.isoformat(),
-                        seen_at.isoformat(),
-                        seen_at.isoformat(),
+                        seen_at_iso,
+                        seen_at_iso,
+                        seen_at_iso,
                         increment_offenses,
                         ip,
                     ),
@@ -180,50 +257,8 @@ class OffenseStore:
             else:
                 conn.execute(
                     "UPDATE ip_profiles SET last_seen = ? WHERE ip = ?;",
-                    (seen_at.isoformat(), ip),
+                    (seen_at_iso, ip),
                 )
-            return
-
-        metadata = self._enrich_ip(ip)
-        conn.execute(
-            """
-            INSERT INTO ip_profiles (
-                ip, geo, whois, reverse_dns, first_seen, last_seen, enriched_at,
-                ip_type, ip_type_confidence, ip_type_source, ip_type_provider,
-                isp, org, asn, is_proxy, is_mobile, is_hosting, offenses_count,
-                blocks_count, last_offense_at, last_block_at, country_code,
-                risk_score, labels, enriched_source
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-            """,
-            (
-                ip,
-                metadata.get("geo"),
-                metadata.get("whois"),
-                metadata.get("reverse_dns"),
-                seen_at.isoformat(),
-                seen_at.isoformat(),
-                seen_at.isoformat(),
-                metadata.get("ip_type"),
-                metadata.get("ip_type_confidence"),
-                metadata.get("ip_type_source"),
-                metadata.get("ip_type_provider"),
-                metadata.get("isp"),
-                metadata.get("org"),
-                metadata.get("asn"),
-                1 if metadata.get("is_proxy") else 0,
-                1 if metadata.get("is_mobile") else 0,
-                1 if metadata.get("is_hosting") else 0,
-                increment_offenses,
-                0,
-                seen_at.isoformat() if increment_offenses > 0 else None,
-                None,
-                metadata.get("country_code"),
-                metadata.get("risk_score"),
-                metadata.get("labels"),
-                metadata.get("enriched_source"),
-            ),
-        )
 
     def _row_to_offense(self, row: tuple) -> OffenseRecord:
         context = json.loads(row[7]) if row[7] else None
@@ -1240,8 +1275,8 @@ class OffenseStore:
             with self._connection() as conn:
                 conn.execute("DELETE FROM offenses;")
                 conn.execute("DELETE FROM ip_profiles;")
-        except DatabaseError:
-            if self._db.backend == "sqlite":
+        except DatabaseError as exc:
+            if self._db.backend == "sqlite" and _should_rebuild_sqlite(exc):
                 db_path.unlink(missing_ok=True)
                 ensure_database(db_path)
                 return

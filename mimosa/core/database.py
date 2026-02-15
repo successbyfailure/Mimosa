@@ -222,7 +222,24 @@ class Database:
                 raise RuntimeError("postgres_url no configurada")
             raw = psycopg.connect(self.postgres_url)
             return DatabaseConnection(raw, self.backend)
-        raw = sqlite3.connect(self.sqlite_path)
+        timeout_raw = os.getenv("MIMOSA_SQLITE_TIMEOUT_SECONDS", "15")
+        try:
+            timeout = max(float(timeout_raw), 1.0)
+        except ValueError:
+            timeout = 15.0
+        raw = sqlite3.connect(self.sqlite_path, timeout=timeout)
+        busy_timeout_ms = int(timeout * 1000)
+        try:
+            raw.execute(f"PRAGMA busy_timeout = {busy_timeout_ms};")
+        except sqlite3.DatabaseError:
+            pass
+        # WAL reduce la contención de lectura/escritura en cargas concurrentes.
+        try:
+            raw.execute("PRAGMA journal_mode = WAL;")
+            raw.execute("PRAGMA synchronous = NORMAL;")
+        except sqlite3.DatabaseError:
+            # Si el fichero está en solo lectura, mantenemos modo por defecto.
+            pass
         return DatabaseConnection(raw, self.backend)
 
 

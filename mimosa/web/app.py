@@ -828,13 +828,19 @@ def create_app(
             payload["finished_at"] = finished_at
         _save_setting(DB_MIGRATION_STATUS_KEY, json.dumps(payload))
 
+    def _database_error_detail(exc: Exception) -> str:
+        message = str(exc).lower()
+        if "database is locked" in message:
+            return "Base de datos ocupada temporalmente; reintenta en unos segundos"
+        if "readonly" in message:
+            return "Base de datos en solo lectura; revisa permisos del directorio data/"
+        if "no such table" in message:
+            return "Esquema de base de datos incompleto; reinicia el servicio"
+        return "Error en la base de datos"
+
     def _handle_database_error(exc: Exception) -> None:
-        if db.backend != "sqlite":
-            logger.error("Database error", exc_info=exc)
-            raise HTTPException(status_code=503, detail="Error en la base de datos")
-        offense_store.reset()
-        block_manager.reset()
-        proxytrap_service.reset_stats()
+        logger.error("Database error", exc_info=exc)
+        raise HTTPException(status_code=503, detail=_database_error_detail(exc))
 
     def _get_mimosa_location() -> Optional[Dict[str, float]]:
         raw = _load_setting(MIMOSA_LOCATION_KEY)
@@ -1504,7 +1510,6 @@ def create_app(
             return _stats_payload()
         except DatabaseError as exc:
             _handle_database_error(exc)
-            return _stats_payload()
 
     @app.post("/api/stats/reset")
     def reset_stats() -> Dict[str, Dict[str, object]]:
@@ -1525,13 +1530,9 @@ def create_app(
                 try:
                     stats_payload = _stats_payload()
                 except DatabaseError as exc:
-                    if db.backend == "sqlite":
-                        _handle_database_error(exc)
-                        stats_payload = _stats_payload()
-                    else:
-                        logger.error("Database error in websocket", exc_info=exc)
-                        await websocket.close(code=1011)
-                        return
+                    logger.error("Database error in websocket", exc_info=exc)
+                    await websocket.close(code=1013)
+                    return
                 offenses = [_serialize_offense(item) for item in offense_store.list_recent(10)]
                 blocks = block_manager.recent_activity(limit=10)
                 await websocket.send_json(
