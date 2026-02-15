@@ -843,7 +843,7 @@ class OPNsenseClient(_BaseSenseClient):
             "quick": "1",
             "interface": interface,
             "direction": "in",
-            "ipprotocol": "inet",
+            "ipprotocol": "inet46",
             "protocol": "any",
             "source_net": alias_name,
             "destination_net": "any",
@@ -877,8 +877,6 @@ class OPNsenseClient(_BaseSenseClient):
         sequence: int,
     ) -> None:
         direction = self._extract_selected_key(current_rule.get("direction")) or "in"
-        ipprotocol = self._extract_selected_key(current_rule.get("ipprotocol")) or "inet"
-        protocol = self._extract_selected_key(current_rule.get("protocol")) or "any"
         interface_value = (
             self._extract_selected_key(current_rule.get("interface")) or interface
         )
@@ -889,8 +887,8 @@ class OPNsenseClient(_BaseSenseClient):
             "quick": self._extract_rule_scalar(current_rule.get("quick")) or "1",
             "interface": interface_value,
             "direction": direction,
-            "ipprotocol": ipprotocol,
-            "protocol": protocol,
+            "ipprotocol": "inet46",
+            "protocol": "any",
             "source_net": alias_name,
             "destination_net": self._extract_rule_scalar(current_rule.get("destination_net")) or "any",
             "description": description,
@@ -961,6 +959,10 @@ class OPNsenseClient(_BaseSenseClient):
                 self._extract_selected_value(rule_data.get("interface")) or ""
             )
             current_source = self._extract_rule_scalar(rule_data.get("source_net")) or ""
+            current_ipprotocol = (
+                self._extract_selected_key(rule_data.get("ipprotocol")) or ""
+            )
+            current_protocol = self._extract_selected_key(rule_data.get("protocol")) or ""
             current_sequence_raw = self._extract_rule_scalar(rule_data.get("sequence"))
             try:
                 current_sequence = int(current_sequence_raw) if current_sequence_raw else None
@@ -971,6 +973,8 @@ class OPNsenseClient(_BaseSenseClient):
                 current_action.lower() != spec["action"]
                 or current_interface.lower() != interface.lower()
                 or current_source != alias_name
+                or current_ipprotocol.lower() != "inet46"
+                or current_protocol.lower() != "any"
                 or current_sequence != spec["sequence"]
             )
 

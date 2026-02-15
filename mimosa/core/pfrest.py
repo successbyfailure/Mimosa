@@ -328,6 +328,8 @@ class PFSenseRestClient(FirewallGateway):
     def _ensure_firewall_rules_exist(self, interface: str = "wan") -> Dict[str, Dict[str, bool]]:
         created = {"whitelist": False, "temporal": False, "blacklist": False}
         updated = {"whitelist": False, "temporal": False, "blacklist": False}
+        desired_ipprotocol = "inet46"
+        desired_protocol = "any"
 
         existing = self.list_firewall_rules()
         by_description = {rule["description"]: rule for rule in existing if rule.get("description")}
@@ -343,8 +345,8 @@ class PFSenseRestClient(FirewallGateway):
                 payload = {
                     "type": action,
                     "interface": [interface],
-                    "ipprotocol": "inet",
-                    "protocol": "tcp/udp",
+                    "ipprotocol": desired_ipprotocol,
+                    "protocol": desired_protocol,
                     "source": alias_name,
                     "destination": "any",
                     "descr": description,
@@ -361,6 +363,8 @@ class PFSenseRestClient(FirewallGateway):
                 str(current.get("action", "")).lower() != str(action).lower()
                 or str(current.get("source_net", "")) != alias_name
                 or str(current.get("interface", "")).lower() != str(interface).lower()
+                or str(current.get("ipprotocol", "")).lower() != desired_ipprotocol
+                or str(current.get("protocol", "")).lower() != desired_protocol
             )
             if not needs_update:
                 continue
@@ -373,8 +377,8 @@ class PFSenseRestClient(FirewallGateway):
                 "id": rule_id,
                 "type": action,
                 "interface": [interface],
-                "ipprotocol": "inet",
-                "protocol": "tcp/udp",
+                "ipprotocol": desired_ipprotocol,
+                "protocol": desired_protocol,
                 "source": alias_name,
                 "destination": "any",
                 "descr": description,
@@ -659,6 +663,8 @@ class PFSenseRestClient(FirewallGateway):
                     "action": str(action).lower(),
                     "interface": interface_value,
                     "source_net": source,
+                    "ipprotocol": str(entry.get("ipprotocol") or "").lower(),
+                    "protocol": str(entry.get("protocol") or "").lower(),
                     "type": rule_type,
                 }
             )
