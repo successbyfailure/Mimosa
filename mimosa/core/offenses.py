@@ -895,6 +895,54 @@ class OffenseStore:
 
         return [self._row_to_profile(row) for row in rows]
 
+    def search_ip_profiles(self, query: str, limit: int = 100) -> List[IpProfile]:
+        """Busca perfiles IP por IP, DNS inverso, geo o metadatos básicos."""
+
+        needle = (query or "").strip().lower()
+        if not needle:
+            return self.list_ip_profiles(limit)
+
+        like = f"%{needle}%"
+        startswith = f"{needle}%"
+        with self._connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT {self._IP_PROFILE_FIELDS}
+                FROM ip_profiles
+                WHERE lower(ip) LIKE ?
+                   OR lower(COALESCE(reverse_dns, '')) LIKE ?
+                   OR lower(COALESCE(geo, '')) LIKE ?
+                   OR lower(COALESCE(ip_type, '')) LIKE ?
+                   OR lower(COALESCE(isp, '')) LIKE ?
+                   OR lower(COALESCE(org, '')) LIKE ?
+                   OR lower(COALESCE(asn, '')) LIKE ?
+                   OR lower(COALESCE(country_code, '')) LIKE ?
+                ORDER BY
+                    CASE
+                        WHEN lower(ip) = ? THEN 0
+                        WHEN lower(ip) LIKE ? THEN 1
+                        ELSE 2
+                    END,
+                    last_seen DESC
+                LIMIT ?;
+                """,
+                (
+                    like,
+                    like,
+                    like,
+                    like,
+                    like,
+                    like,
+                    like,
+                    like,
+                    needle,
+                    startswith,
+                    limit,
+                ),
+            ).fetchall()
+
+        return [self._row_to_profile(row) for row in rows]
+
     def count_ip_profiles(self) -> int:
         """Devuelve el total de IPs registradas en el perfil."""
 

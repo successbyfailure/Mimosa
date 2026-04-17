@@ -7,12 +7,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
+import logging
 from typing import Callable, Iterable
 
 from mimosa.core.blocking import BlockManager
 from mimosa.core.offenses import OffenseStore
 from mimosa.core.plugins import MimosaNpmConfig, MimosaNpmIgnoreRule, MimosaNpmRule
 from mimosa.core.rules import OffenseEvent, OffenseRule, OffenseRuleStore, RuleManager
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -109,21 +112,28 @@ class MimosaNpmService:
     def _process_rules(
         self, event_id: str, source_ip: str | None, severity: str, description: str
     ) -> None:
-        manager = RuleManager(
-            self.offense_store,
-            self.block_manager,
-            self._gateway_factory(),
-            rules=self.rule_store.list() or [OffenseRule()],
-        )
-        manager.process_offense(
-            OffenseEvent(
-                source_ip=source_ip or "desconocido",
-                plugin="mimosanpm",
-                event_id=event_id,
-                severity=severity,
-                description=description,
+        try:
+            manager = RuleManager(
+                self.offense_store,
+                self.block_manager,
+                self._gateway_factory(),
+                rules=self.rule_store.list() or [OffenseRule()],
             )
-        )
+            manager.process_offense(
+                OffenseEvent(
+                    source_ip=source_ip or "desconocido",
+                    plugin="mimosanpm",
+                    event_id=event_id,
+                    severity=severity,
+                    description=description,
+                )
+            )
+        except Exception:
+            logger.exception(
+                "Error procesando reglas de mimosanpm para %s (%s)",
+                source_ip or "desconocido",
+                event_id,
+            )
 
     def _is_alert_enabled(self, alert: MimosaNpmAlert) -> bool:
         alert_type = (alert.alert_type or "").lower()

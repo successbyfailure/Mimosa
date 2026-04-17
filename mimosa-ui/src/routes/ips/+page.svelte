@@ -52,6 +52,8 @@
   let sortKey: 'ip' | 'reverse_dns' | 'offenses' | 'blocks' | 'last_seen' | 'ip_type' = 'last_seen';
   let sortDir: 'asc' | 'desc' = 'desc';
   let sortedProfiles: IpProfile[] = [];
+  let mounted = false;
+  let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
   let actionMessage: string | null = null;
   let actionError: string | null = null;
@@ -83,7 +85,12 @@
     loading = true;
     error = null;
     try {
-      profiles = await requestJson<IpProfile[]>(`/api/ips?limit=${limit}`);
+      const params = new URLSearchParams({ limit: String(limit) });
+      const trimmedQuery = query.trim();
+      if (trimmedQuery) {
+        params.set('query', trimmedQuery);
+      }
+      profiles = await requestJson<IpProfile[]>(`/api/ips?${params.toString()}`);
     } catch (err) {
       error = err instanceof Error ? err.message : 'Error inesperado';
     } finally {
@@ -200,12 +207,28 @@
     sortedProfiles = sortedProfiles.reverse();
   }
 
+  $: if (mounted) {
+    if (searchTimeout) {
+      clearTimeout(searchTimeout);
+    }
+    searchTimeout = setTimeout(() => {
+      loadProfiles();
+    }, query.trim() ? 250 : 0);
+  }
+
   $: if (!$authStore.loading && !$authStore.user) {
     goto('/login');
   }
 
   onMount(() => {
+    mounted = true;
     loadProfiles();
+    return () => {
+      mounted = false;
+      if (searchTimeout) {
+        clearTimeout(searchTimeout);
+      }
+    };
   });
 </script>
 

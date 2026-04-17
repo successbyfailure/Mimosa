@@ -80,3 +80,30 @@ def test_rebuild_guard_accepts_corruption_signatures() -> None:
     assert offenses_should_rebuild(bad_file)
     assert blocking_should_rebuild(malformed)
     assert blocking_should_rebuild(bad_file)
+
+
+def test_search_ip_profiles_matches_ip_and_metadata(tmp_path) -> None:
+    store = OffenseStore(db_path=tmp_path / "mimosa.db")
+    store._enrich_ip = lambda _ip: {}
+
+    store.record(source_ip="203.0.113.10", description="first")
+    store.record(source_ip="198.51.100.20", description="second")
+
+    with store._connection() as conn:
+        conn.execute(
+            """
+            UPDATE ip_profiles
+            SET reverse_dns = ?, org = ?, ip_type = ?
+            WHERE ip = ?;
+            """,
+            ("scanner.example.net", "Example Hosting", "datacenter", "198.51.100.20"),
+        )
+
+    by_ip = store.search_ip_profiles("203.0.113.10")
+    assert [entry.ip for entry in by_ip] == ["203.0.113.10"]
+
+    by_metadata = store.search_ip_profiles("scanner.example")
+    assert [entry.ip for entry in by_metadata] == ["198.51.100.20"]
+
+    by_org = store.search_ip_profiles("example hosting")
+    assert [entry.ip for entry in by_org] == ["198.51.100.20"]

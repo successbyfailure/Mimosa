@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import select
 import socket
@@ -14,6 +15,8 @@ from mimosa.core.blocking import BlockManager
 from mimosa.core.offenses import OffenseStore
 from mimosa.core.plugins import PortDetectorConfig, PortDetectorRule
 from mimosa.core.rules import OffenseEvent, OffenseRule, OffenseRuleStore, RuleManager
+
+logger = logging.getLogger(__name__)
 
 
 def collect_ports_by_protocol(rules: Iterable[PortDetectorRule]) -> Dict[str, List[int]]:
@@ -202,21 +205,29 @@ class PortDetectorService:
         self._process_rules(source_ip, port, protocol, severity)
 
     def _process_rules(self, source_ip: str, port: int, protocol: str, severity: str) -> None:
-        manager = RuleManager(
-            self.offense_store,
-            self.block_manager,
-            self._gateway_factory(),
-            rules=self.rule_store.list() or [OffenseRule()],
-        )
-        manager.process_offense(
-            OffenseEvent(
-                source_ip=source_ip,
-                plugin="portdetector",
-                event_id=f"{protocol}:{port}",
-                severity=severity,
-                description=f"portdetector {protocol}:{port}",
+        try:
+            manager = RuleManager(
+                self.offense_store,
+                self.block_manager,
+                self._gateway_factory(),
+                rules=self.rule_store.list() or [OffenseRule()],
             )
-        )
+            manager.process_offense(
+                OffenseEvent(
+                    source_ip=source_ip,
+                    plugin="portdetector",
+                    event_id=f"{protocol}:{port}",
+                    severity=severity,
+                    description=f"portdetector {protocol}:{port}",
+                )
+            )
+        except Exception:
+            logger.exception(
+                "Error procesando reglas de portdetector para %s %s:%s",
+                source_ip,
+                protocol,
+                port,
+            )
 
     # ------------------------------ utilidades ------------------------------
     def _expand_rules(

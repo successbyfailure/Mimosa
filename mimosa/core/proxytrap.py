@@ -7,6 +7,7 @@ configurables para decidir bloqueos.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from dataclasses import asdict
 from fnmatch import fnmatch
@@ -18,6 +19,8 @@ from mimosa.core.offenses import OffenseStore
 from mimosa.core.rules import OffenseEvent, OffenseRule, OffenseRuleStore, RuleManager
 from mimosa.core.blocking import BlockManager
 from mimosa.core.plugins import ProxyTrapConfig
+
+logger = logging.getLogger(__name__)
 
 
 class ProxyTrapService:
@@ -166,21 +169,28 @@ class ProxyTrapService:
         self._process_rules(domain, source_ip, severity)
 
     def _process_rules(self, domain: str, source_ip: str, severity: str) -> None:
-        manager = RuleManager(
-            self.offense_store,
-            self.block_manager,
-            self._gateway_factory(),
-            rules=self.rule_store.list() or [OffenseRule()],
-        )
-        manager.process_offense(
-            OffenseEvent(
-                source_ip=source_ip,
-                plugin="proxytrap",
-                event_id=domain,
-                severity=severity,
-                description=f"proxytrap: {domain}",
+        try:
+            manager = RuleManager(
+                self.offense_store,
+                self.block_manager,
+                self._gateway_factory(),
+                rules=self.rule_store.list() or [OffenseRule()],
             )
-        )
+            manager.process_offense(
+                OffenseEvent(
+                    source_ip=source_ip,
+                    plugin="proxytrap",
+                    event_id=domain,
+                    severity=severity,
+                    description=f"proxytrap: {domain}",
+                )
+            )
+        except Exception:
+            logger.exception(
+                "Error procesando reglas de proxytrap para %s (%s)",
+                source_ip,
+                domain,
+            )
 
     def _resolve_severity(self, domain: str) -> Tuple[str, Optional[str]]:
         normalized = domain.lower()

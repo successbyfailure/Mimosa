@@ -83,3 +83,42 @@ def test_portdetector_records_udp_offense() -> None:
         offenses = offense_store.list_recent(5)
         assert any(off.description == f"portdetector UDP:{port}" for off in offenses)
         service.stop()
+
+
+class _FailingFirewall(MemoryFirewall):
+    def block_ip(self, ip: str, reason: str, duration_minutes: int | None = None) -> None:  # noqa: ARG002
+        raise TimeoutError("firewall timeout")
+
+
+def test_portdetector_thread_survives_firewall_errors() -> None:
+    with TemporaryDirectory() as tmp:
+        offense_store = OffenseStore(db_path=f"{tmp}/mimosa.db")
+        block_manager = BlockManager(db_path=offense_store.db_path)
+        rule_store = OffenseRuleStore(db_path=offense_store.db_path)
+        service = PortDetectorService(
+            offense_store,
+            block_manager,
+            rule_store,
+            gateway_factory=lambda: _FailingFirewall(),
+        )
+
+        port = _free_port()
+        config = PortDetectorConfig(
+            enabled=True,
+            default_severity="alto",
+            rules=[PortDetectorRule(protocol="tcp", port=port, severity="alto")],
+        )
+        try:
+            service.apply_config(config)
+        except PortBindingError as exc:
+            pytest.skip(f"Cannot bind TCP sockets: {exc}")
+
+        for _ in range(2):
+            with socket.create_connection(("127.0.0.1", port), timeout=2):
+                pass
+            time.sleep(0.1)
+
+        offenses = offense_store.list_recent(10)
+        hits = [off for off in offenses if off.description == f"portdetector TCP:{port}"]
+        assert len(hits) >= 2
+        service.stop()
