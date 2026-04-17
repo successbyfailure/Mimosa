@@ -242,7 +242,7 @@ class RuleManager:
         last_hour = now - timedelta(hours=1)
         last_hour_count = self.offense_store.count_by_ip_since(event.source_ip, last_hour)
         total_count = self.offense_store.count_by_ip(event.source_ip)
-        block_count = self.block_manager.count_for_ip(event.source_ip)
+        block_count = self.block_manager.count_for_ip_month(event.source_ip)
 
         for rule in self.rules:
             # Saltar reglas deshabilitadas

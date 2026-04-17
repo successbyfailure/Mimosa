@@ -162,6 +162,17 @@ def ensure_database(path: Path | str = DEFAULT_DB_PATH) -> Path:
         if "blocks_count" not in ip_columns:
             conn.execute("ALTER TABLE ip_profiles ADD COLUMN blocks_count INTEGER DEFAULT 0;")
             backfill_block_counts = True
+        if "blocks_count_month" not in ip_columns:
+            conn.execute("ALTER TABLE ip_profiles ADD COLUMN blocks_count_month INTEGER DEFAULT 0;")
+            conn.execute("""
+                UPDATE ip_profiles
+                SET blocks_count_month = (
+                    SELECT COUNT(*)
+                    FROM blocks b
+                    WHERE b.ip = ip_profiles.ip
+                      AND b.created_at >= datetime('now', '-30 days')
+                );
+            """)
         if "last_offense_at" not in ip_columns:
             conn.execute("ALTER TABLE ip_profiles ADD COLUMN last_offense_at TEXT;")
             backfill_offense_counts = True
@@ -564,6 +575,17 @@ def _ensure_postgres(db) -> None:
         if not _postgres_column_exists(conn, "ip_profiles", "blocks_count"):
             conn.execute("ALTER TABLE ip_profiles ADD COLUMN blocks_count INTEGER DEFAULT 0;")
             backfill_block_counts = True
+        if not _postgres_column_exists(conn, "ip_profiles", "blocks_count_month"):
+            conn.execute("ALTER TABLE ip_profiles ADD COLUMN blocks_count_month INTEGER DEFAULT 0;")
+            conn.execute("""
+                UPDATE ip_profiles
+                SET blocks_count_month = (
+                    SELECT COUNT(*)
+                    FROM blocks b
+                    WHERE b.ip = ip_profiles.ip
+                      AND b.created_at >= NOW() - INTERVAL '30 days'
+                );
+            """)
         if not _postgres_column_exists(conn, "ip_profiles", "last_offense_at"):
             conn.execute("ALTER TABLE ip_profiles ADD COLUMN last_offense_at TEXT;")
             backfill_offense_counts = True

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -14,9 +15,9 @@ from pathlib import Path
 from typing import Dict, List, Literal, Optional
 from urllib.parse import urlparse, urlunparse
 
-from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Form, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 import httpx
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -123,6 +124,7 @@ class BlockingSettingsInput(BaseModel):
 
     default_duration_minutes: int = 60
     sync_interval_seconds: int = 300
+    ip_forget_days: Optional[int] = None
 
 
 class DatabaseConfigInput(BaseModel):
@@ -553,6 +555,40 @@ def create_app(
             gateway = None
         block_manager.purge_expired(firewall_gateway=gateway)
 
+    def _run_block_maintenance() -> None:
+        gateway: FirewallGateway | None = None
+        try:
+            gateway = _select_gateway()
+        except RuntimeError:
+            gateway = None
+
+        block_manager.purge_expired(firewall_gateway=gateway)
+        if block_manager.ip_forget_days > 0:
+            block_manager.forget_inactive_ips(block_manager.ip_forget_days)
+        if not gateway:
+            return
+
+        try:
+            block_manager.sync_with_firewall(gateway)
+        except httpx.HTTPError as exc:
+            logger.warning("No se pudo sincronizar bloques con el firewall: %s", exc)
+
+    async def _block_maintenance_loop() -> None:
+        interval_raw = os.getenv("MIMOSA_BLOCK_MAINTENANCE_INTERVAL_SECONDS", "60")
+        try:
+            interval = max(int(interval_raw), 15)
+        except ValueError:
+            interval = 60
+
+        while True:
+            try:
+                await asyncio.to_thread(_run_block_maintenance)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Error en el mantenimiento periódico de bloques")
+            await asyncio.sleep(interval)
+
     def _rule_manager() -> RuleManager:
         return RuleManager(
             offense_store,
@@ -968,6 +1004,180 @@ def create_app(
     @app.get("/api/public/version")
     def public_version() -> Dict[str, str]:
         return {"version": app_version}
+
+    def _unblock_form_html(
+        *, client_ip: str = "", is_blocked: bool = False, message: str = "", error: str = "", form_action: str = "/api/public/unblock"
+    ) -> str:
+        message_block = f'<p class="ok">{message}</p>' if message else ""
+        error_block = f'<p class="err">{error}</p>' if error else ""
+        if client_ip and not message and not error:
+            status_text = (
+                f'<p class="blocked">Tu IP <strong>{client_ip}</strong> está actualmente <strong>bloqueada</strong>.</p>'
+                if is_blocked
+                else f'<p class="clear">Tu IP <strong>{client_ip}</strong> no está bloqueada actualmente.</p>'
+            )
+        else:
+            status_text = ""
+        return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mimosa – Desbloqueo de IP</title>
+  <style>
+    *, *::before, *::after {{ box-sizing: border-box; }}
+    body {{
+      font-family: system-ui, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+    }}
+    .card {{
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 2rem 2.5rem;
+      width: min(420px, 92vw);
+      box-shadow: 0 8px 32px #0008;
+    }}
+    h1 {{ font-size: 1.2rem; margin: 0 0 0.25rem; color: #f1f5f9; }}
+    p.sub {{ font-size: 0.85rem; color: #94a3b8; margin: 0 0 1.2rem; }}
+    .blocked {{
+      background: #450a0a;
+      border: 1px solid #7f1d1d;
+      border-radius: 6px;
+      padding: 0.6rem 0.75rem;
+      font-size: 0.85rem;
+      color: #fca5a5;
+      margin: 0 0 1.2rem;
+    }}
+    .clear {{
+      background: #052e16;
+      border: 1px solid #14532d;
+      border-radius: 6px;
+      padding: 0.6rem 0.75rem;
+      font-size: 0.85rem;
+      color: #86efac;
+      margin: 0 0 1.2rem;
+    }}
+    label {{ display: block; font-size: 0.8rem; color: #94a3b8; margin-bottom: 0.3rem; }}
+    input[type=password] {{
+      width: 100%;
+      padding: 0.55rem 0.75rem;
+      background: #0f172a;
+      border: 1px solid #475569;
+      border-radius: 6px;
+      color: #f1f5f9;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }}
+    input[type=password]:focus {{ border-color: #6366f1; }}
+    button {{
+      margin-top: 1.1rem;
+      width: 100%;
+      padding: 0.6rem;
+      background: #6366f1;
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }}
+    button:hover {{ background: #4f46e5; }}
+    .ok {{ color: #4ade80; font-size: 0.9rem; margin: 1rem 0 0; }}
+    .err {{ color: #f87171; font-size: 0.9rem; margin: 1rem 0 0; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Desbloqueo de IP</h1>
+    <p class="sub">Introduce la contraseña para desbloquear tu dirección IP.</p>
+    {status_text}
+    <form method="post" action="{form_action}">
+      <label for="password">Contraseña</label>
+      <input type="password" id="password" name="password" autofocus required>
+      <button type="submit">Desbloquear</button>
+    </form>
+    {message_block}{error_block}
+  </div>
+</body>
+</html>"""
+
+    def _extract_real_ip(request: Request) -> str:
+        """Extrae la IP real del cliente respetando cabeceras de proxy."""
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            return forwarded_for.split(",")[0].strip()
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip:
+            return real_ip.strip()
+        return request.client.host if request.client else "desconocido"
+
+    @app.get("/api/public/unblock", response_class=HTMLResponse)
+    def unblock_form(request: Request) -> HTMLResponse:
+        unblock_secret = os.environ.get("MIMOSA_UNBLOCK_SECRET", "")
+        if not unblock_secret:
+            return HTMLResponse(
+                _unblock_form_html(error="El desbloqueo por contraseña no está habilitado."),
+                status_code=503,
+            )
+        client_ip = _extract_real_ip(request)
+        active_block = block_manager.get_active_block(client_ip)
+        return HTMLResponse(
+            _unblock_form_html(client_ip=client_ip, is_blocked=active_block is not None)
+        )
+
+    @app.post("/api/public/unblock", response_class=HTMLResponse)
+    def unblock_self(request: Request, password: str = Form(...)) -> HTMLResponse:
+        unblock_secret = os.environ.get("MIMOSA_UNBLOCK_SECRET", "")
+        if not unblock_secret:
+            return HTMLResponse(
+                _unblock_form_html(error="El desbloqueo por contraseña no está habilitado."),
+                status_code=503,
+            )
+
+        if not secrets.compare_digest(password, unblock_secret):
+            client_ip = _extract_real_ip(request)
+            logger.warning(f"Intento de desbloqueo fallido desde {client_ip}")
+            return HTMLResponse(
+                _unblock_form_html(error="Contraseña incorrecta."),
+                status_code=401,
+            )
+
+        client_ip = _extract_real_ip(request)
+
+        # Desbloquear en la BD / caché del block_manager
+        block_manager.remove(client_ip)
+        block_manager.reset_monthly_blocks(client_ip)
+
+        # Desbloquear en todos los firewalls activos
+        firewall_errors: List[str] = []
+        for fw_config in config_store.list():
+            if not fw_config.enabled:
+                continue
+            try:
+                gw = gateway_cache.get(fw_config.id) or build_firewall_gateway(fw_config)
+                gw.unblock_ip(client_ip)
+            except Exception as exc:
+                firewall_errors.append(str(exc))
+                logger.error(f"Error desbloqueando {client_ip} en firewall {fw_config.id}: {exc}")
+
+        if firewall_errors:
+            logger.warning(
+                f"IP {client_ip} desbloqueada de la BD pero con errores en firewall(s)"
+            )
+        else:
+            logger.info(f"IP {client_ip} desbloqueada mediante contraseña")
+
+        return HTMLResponse(
+            _unblock_form_html(message=f"La IP {client_ip} ha sido desbloqueada correctamente.")
+        )
 
     @app.get("/api/users")
     def list_users(request: Request) -> List[Dict[str, str]]:
@@ -1939,6 +2149,7 @@ def create_app(
         block_manager.update_settings(
             default_duration_minutes=payload.default_duration_minutes,
             sync_interval_seconds=payload.sync_interval_seconds,
+            ip_forget_days=payload.ip_forget_days,
         )
         return block_manager.settings()
 
@@ -2632,8 +2843,11 @@ def create_app(
         return {"created": created, "skipped": skipped, "total_rules": len(rule_store.list())}
 
     @app.get("/api/ips")
-    def list_ips(limit: int = 100) -> List[Dict[str, object]]:
-        profiles = offense_store.list_ip_profiles(limit)
+    def list_ips(limit: int = 100, query: str | None = None) -> List[Dict[str, object]]:
+        if query and query.strip():
+            profiles = offense_store.search_ip_profiles(query, limit)
+        else:
+            profiles = offense_store.list_ip_profiles(limit)
         return [profile.__dict__ for profile in profiles]
 
     @app.get("/api/ips/summary")
@@ -2737,9 +2951,14 @@ def create_app(
         return Response(status_code=204)
 
     @app.get("/api/blocks")
-    def list_database_blocks(include_expired: bool = False) -> List[Dict[str, object]]:
+    def list_database_blocks(
+        include_expired: bool = False, limit: int | None = None
+    ) -> List[Dict[str, object]]:
         _cleanup_expired_blocks()
-        return [_serialize_block(block) for block in block_manager.list(include_expired=include_expired)]
+        blocks = block_manager.list(include_expired=include_expired)
+        if limit is not None and limit > 0:
+            blocks = blocks[:limit]
+        return [_serialize_block(block) for block in blocks]
 
     @app.get("/api/blocks/history")
     def block_history(limit: int = 20) -> List[Dict[str, object]]:
@@ -3086,9 +3305,81 @@ def create_app(
 
         await telegram_bot.start()
 
+    def _start_unblock_server() -> None:
+        """Arranca el servidor de desbloqueo en su propio puerto si está configurado."""
+        import uvicorn
+
+        unblock_port_str = os.environ.get("MIMOSA_UNBLOCK_PORT", "")
+        unblock_secret = os.environ.get("MIMOSA_UNBLOCK_SECRET", "")
+        if not unblock_port_str or not unblock_secret:
+            return
+        try:
+            unblock_port = int(unblock_port_str)
+        except ValueError:
+            logger.error("MIMOSA_UNBLOCK_PORT no es un número válido: %s", unblock_port_str)
+            return
+
+        unblock_app = FastAPI(title="Mimosa Unblock")
+
+        def _ub_extract_ip(request: Request) -> str:
+            forwarded_for = request.headers.get("X-Forwarded-For")
+            if forwarded_for:
+                return forwarded_for.split(",")[0].strip()
+            real_ip = request.headers.get("X-Real-IP")
+            if real_ip:
+                return real_ip.strip()
+            return request.client.host if request.client else "desconocido"
+
+        @unblock_app.get("/", response_class=HTMLResponse)
+        def ub_form(request: Request) -> HTMLResponse:
+            client_ip = _ub_extract_ip(request)
+            active_block = block_manager.get_active_block(client_ip)
+            return HTMLResponse(
+                _unblock_form_html(client_ip=client_ip, is_blocked=active_block is not None, form_action="/")
+            )
+
+        @unblock_app.post("/", response_class=HTMLResponse)
+        def ub_submit(request: Request, password: str = Form(...)) -> HTMLResponse:
+            secret = os.environ.get("MIMOSA_UNBLOCK_SECRET", "")
+            if not secrets.compare_digest(password, secret):
+                client_ip = _ub_extract_ip(request)
+                logger.warning("Intento de desbloqueo fallido desde %s", client_ip)
+                return HTMLResponse(_unblock_form_html(error="Contraseña incorrecta.", form_action="/"), status_code=401)
+
+            client_ip = _ub_extract_ip(request)
+            block_manager.remove(client_ip)
+            block_manager.reset_monthly_blocks(client_ip)
+            firewall_errors: List[str] = []
+            for fw_config in config_store.list():
+                if not fw_config.enabled:
+                    continue
+                try:
+                    gw = gateway_cache.get(fw_config.id) or build_firewall_gateway(fw_config)
+                    gw.unblock_ip(client_ip)
+                except Exception as exc:
+                    firewall_errors.append(str(exc))
+                    logger.error("Error desbloqueando %s en firewall %s: %s", client_ip, fw_config.id, exc)
+
+            if not firewall_errors:
+                logger.info("IP %s desbloqueada mediante contraseña (puerto dedicado)", client_ip)
+            return HTMLResponse(
+                _unblock_form_html(message=f"La IP {client_ip} ha sido desbloqueada correctamente.", form_action="/")
+            )
+
+        def _run() -> None:
+            config = uvicorn.Config(unblock_app, host="0.0.0.0", port=unblock_port, log_level="warning")
+            server = uvicorn.Server(config)
+            server.run()
+
+        t = threading.Thread(target=_run, name="unblock-server", daemon=True)
+        t.start()
+        logger.info("Servidor de desbloqueo arrancado en puerto %d", unblock_port)
+
     @app.on_event("startup")
     async def startup_event():
         """Inicia los servicios en segundo plano."""
+        app.state.block_maintenance_task = asyncio.create_task(_block_maintenance_loop())
+        _start_unblock_server()
         try:
             await telegram_bot.start()
         except Exception as e:
@@ -3097,6 +3388,11 @@ def create_app(
     @app.on_event("shutdown")
     async def shutdown_event():
         """Detiene los servicios en segundo plano."""
+        task = getattr(app.state, "block_maintenance_task", None)
+        if task:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         try:
             await telegram_bot.stop()
         except Exception as e:

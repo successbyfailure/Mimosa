@@ -67,6 +67,7 @@ class BlockManager:
         self._db = get_database(db_path=self.db_path)
         self.default_duration_minutes = default_duration_minutes
         self.sync_interval_seconds = sync_interval_seconds
+        self.ip_forget_days: int = 180
         self._blocks: Dict[str, BlockEntry] = {}
         self._history: List[BlockEntry] = []
         self._last_sync: Optional[datetime] = None
@@ -90,7 +91,8 @@ class BlockManager:
                     WHEN last_block_at IS NULL OR last_block_at < ? THEN ?
                     ELSE last_block_at
                 END,
-                blocks_count = COALESCE(blocks_count, 0) + 1
+                blocks_count = COALESCE(blocks_count, 0) + 1,
+                blocks_count_month = COALESCE(blocks_count_month, 0) + 1
             WHERE ip = ?;
             """,
             (
@@ -109,10 +111,10 @@ class BlockManager:
                     ip, geo, whois, reverse_dns, first_seen, last_seen, enriched_at,
                     ip_type, ip_type_confidence, ip_type_source, ip_type_provider,
                     isp, org, asn, is_proxy, is_mobile, is_hosting, offenses_count,
-                    blocks_count, last_offense_at, last_block_at, country_code,
+                    blocks_count, blocks_count_month, last_offense_at, last_block_at, country_code,
                     risk_score, labels, enriched_source
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     ip,
@@ -134,6 +136,7 @@ class BlockManager:
                     0,
                     0,
                     1,
+                    1,
                     None,
                     seen_at_iso,
                     None,
@@ -154,7 +157,8 @@ class BlockManager:
                         WHEN last_block_at IS NULL OR last_block_at < ? THEN ?
                         ELSE last_block_at
                     END,
-                    blocks_count = COALESCE(blocks_count, 0) + 1
+                    blocks_count = COALESCE(blocks_count, 0) + 1,
+                    blocks_count_month = COALESCE(blocks_count_month, 0) + 1
                 WHERE ip = ?;
                 """,
                 (
@@ -238,7 +242,7 @@ class BlockManager:
     def _load_settings(self) -> None:
         with self._connection() as conn:
             rows = conn.execute(
-                "SELECT key, value FROM settings WHERE key LIKE ?;",
+                "SELECT key, value FROM settings WHERE key LIKE ? OR key = 'ip_forget_days';",
                 ("block_%",),
             ).fetchall()
         settings = {row[0]: row[1] for row in rows}
@@ -246,6 +250,8 @@ class BlockManager:
             self.default_duration_minutes = int(settings["block_default_minutes"])
         if "block_sync_interval_seconds" in settings:
             self.sync_interval_seconds = int(settings["block_sync_interval_seconds"])
+        if "ip_forget_days" in settings:
+            self.ip_forget_days = int(settings["ip_forget_days"])
         # Persist defaults if table is empty
         if not settings:
             self._persist_settings()
@@ -265,6 +271,13 @@ class BlockManager:
                 ON CONFLICT(key) DO UPDATE SET value=excluded.value;
                 """,
                 (str(self.sync_interval_seconds),),
+            )
+            conn.execute(
+                """
+                INSERT INTO settings(key, value) VALUES('ip_forget_days', ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value;
+                """,
+                (str(self.ip_forget_days),),
             )
 
     # Operaciones principales ------------------------------------------------------
@@ -430,6 +443,51 @@ class BlockManager:
         """Número total de bloqueos registrados para una IP."""
 
         return len(self.history_for_ip(ip))
+
+    def count_for_ip_month(self, ip: str) -> int:
+        """Número de bloqueos del último mes para una IP."""
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        return len([e for e in self._history if e.ip == ip and _normalize_datetime(e.created_at) >= cutoff])
+
+    def reset_monthly_blocks(self, ip: str) -> None:
+        """Pone a cero el contador mensual de bloqueos para una IP (usado al desbloquear manualmente)."""
+        with self._connection() as conn:
+            conn.execute(
+                "UPDATE ip_profiles SET blocks_count_month = 0 WHERE ip = ?;",
+                (ip,),
+            )
+
+    def forget_inactive_ips(self, inactive_days: int) -> List[str]:
+        """Elimina completamente las IPs que no han ofendido en `inactive_days` días.
+
+        Borra el perfil, el historial de ofensas y el historial de bloqueos.
+        Returns list of forgotten IPs.
+        """
+        if inactive_days <= 0:
+            return []
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=inactive_days)).isoformat()
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT ip FROM ip_profiles
+                WHERE last_offense_at IS NULL OR last_offense_at < ?
+                """,
+                (cutoff,),
+            ).fetchall()
+            ips = [row[0] for row in rows if row[0]]
+            if ips:
+                placeholders = ",".join("?" * len(ips))
+                conn.execute(f"DELETE FROM blocks WHERE ip IN ({placeholders});", ips)
+                conn.execute(f"DELETE FROM offenses WHERE source_ip IN ({placeholders});", ips)
+                conn.execute(f"DELETE FROM ip_profiles WHERE ip IN ({placeholders});", ips)
+
+        if ips:
+            with self._lock:
+                for ip in ips:
+                    self._blocks.pop(ip, None)
+                self._history = [e for e in self._history if e.ip not in set(ips)]
+            logger.info("Eliminadas %d IPs inactivas (sin ofensas en %d días)", len(ips), inactive_days)
+        return ips
 
     def count_all(self) -> int:
         """Número total de bloqueos registrados."""
@@ -601,6 +659,7 @@ class BlockManager:
         return {
             "default_duration_minutes": self.default_duration_minutes,
             "sync_interval_seconds": self.sync_interval_seconds,
+            "ip_forget_days": self.ip_forget_days,
         }
 
     def set_whitelist_checker(self, checker: Callable[[str], bool]) -> None:
@@ -619,11 +678,13 @@ class BlockManager:
             logger.error(f"Error verificando whitelist para {ip}: {exc}")
             return False
 
-    def update_settings(self, *, default_duration_minutes: Optional[int] = None, sync_interval_seconds: Optional[int] = None) -> None:
+    def update_settings(self, *, default_duration_minutes: Optional[int] = None, sync_interval_seconds: Optional[int] = None, ip_forget_days: Optional[int] = None) -> None:
         if default_duration_minutes is not None:
             self.default_duration_minutes = default_duration_minutes
         if sync_interval_seconds is not None:
             self.sync_interval_seconds = sync_interval_seconds
+        if ip_forget_days is not None:
+            self.ip_forget_days = ip_forget_days
         self._persist_settings()
 
 
